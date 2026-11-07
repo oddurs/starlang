@@ -39,5 +39,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Run integration & differential runtime suite
         run: cargo test
+      - name: Run Hub AST mutation testing & auto-test hardening
+        run: cargo run --quiet -- mutate --harden > /dev/null
       - name: Run property-based lens fuzzer
         run: cargo run --quiet -- fuzz 60

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StarLang v0.5 — 8-Spoke Bidirectional Compiler</title>
+  <title>StarLang v0.6 — 9-Spoke Bidirectional Compiler</title>
   <style>
     :root {
       --bg: #090d16;
@@ -93,6 +93,13 @@
       font-weight: 600;
     }
     button.trace-btn:hover { background: #1d4ed8; }
+    button.mut-btn {
+      background: #4c1d95;
+      border-color: #a855f7;
+      color: #f3e8ff;
+      font-weight: 600;
+    }
+    button.mut-btn:hover { background: #5b21b6; }
     .hub-banner {
       padding: 7px 18px;
       background: #0d1322;
@@ -288,7 +295,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -340,24 +347,26 @@
         <line id="edge-cpp" class="edge" x1="88" y1="32" x2="24" y2="24" />
         <line id="edge-swift" class="edge" x1="88" y1="32" x2="24" y2="40" />
         <line id="edge-java" class="edge" x1="88" y1="32" x2="24" y2="56" />
-        <line id="edge-go" class="edge" x1="88" y1="32" x2="150" y2="8" />
-        <line id="edge-python" class="edge" x1="88" y1="32" x2="150" y2="24" />
-        <line id="edge-typescript" class="edge" x1="88" y1="32" x2="150" y2="40" />
-        <line id="edge-star" class="edge" x1="88" y1="32" x2="150" y2="56" />
+        <line id="edge-go" class="edge" x1="88" y1="32" x2="150" y2="6" />
+        <line id="edge-python" class="edge" x1="88" y1="32" x2="150" y2="19" />
+        <line id="edge-ruby" class="edge" x1="88" y1="32" x2="150" y2="32" />
+        <line id="edge-typescript" class="edge" x1="88" y1="32" x2="150" y2="45" />
+        <line id="edge-star" class="edge" x1="88" y1="32" x2="150" y2="58" />
         <circle class="node-hub" cx="88" cy="32" r="11" />
         <text x="88" y="35" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
         <text class="node-lbl" x="4" y="11">RS</text>
         <text class="node-lbl" x="1" y="27">CPP</text>
         <text class="node-lbl" x="4" y="43">SW</text>
         <text class="node-lbl" x="4" y="59">JV</text>
-        <text class="node-lbl" x="153" y="11">GO</text>
-        <text class="node-lbl" x="153" y="27">PY</text>
-        <text class="node-lbl" x="153" y="43">TS</text>
-        <text class="node-lbl" x="153" y="59">IR</text>
+        <text class="node-lbl" x="153" y="9">GO</text>
+        <text class="node-lbl" x="153" y="22">PY</text>
+        <text class="node-lbl" x="153" y="35">RB</text>
+        <text class="node-lbl" x="153" y="48">TS</text>
+        <text class="node-lbl" x="153" y="61">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v0.5 — 8-Spoke Bidirectional Compiler</h1>
-        <p>Rust ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ TypeScript ⇄ Star IR · Live Tests, AST Coverage & 8-Engine Verification</p>
+        <h1>★ StarLang v0.6 — 9-Spoke Bidirectional Compiler</h1>
+        <p>Rust ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ TypeScript ⇄ Star IR · Mutation Testing, AST Coverage & 9-Engine Verification</p>
       </div>
     </div>
     <div class="controls">
@@ -365,8 +374,9 @@
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
       <button class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph & hotspots">🔍 Trace & Coverage</button>
-      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 8 languages">⚡ Optimize Hub</button>
-      <button class="run-btn" id="run-btn">▶ Run All 8 Engines (VM + rustc + clang++ + swiftc + javac + go + py + node)</button>
+      <button class="mut-btn" id="mut-btn" title="Run sub-ms Hub AST mutation testing & auto-synthesize missing boundary unit tests">🧬 Mutation Test</button>
+      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 9 languages">⚡ Optimize Hub</button>
+      <button class="run-btn" id="run-btn">▶ Run All 9 Engines (VM + rustc + clang++ + swiftc + javac + go + py + rb + node)</button>
     </div>
   </header>
 
@@ -387,6 +397,7 @@
       <span class="toggle-pill on" data-spoke="java">Java</span>
       <span class="toggle-pill on" data-spoke="go">Go</span>
       <span class="toggle-pill on" data-spoke="python">Python</span>
+      <span class="toggle-pill on" data-spoke="ruby">Ruby</span>
       <span class="toggle-pill on" data-spoke="typescript">TypeScript</span>
       <span class="toggle-pill on" data-spoke="star">Star IR</span>
     </div>
@@ -395,12 +406,12 @@
   <div class="refactor-bar">
     <div class="refactor-controls">
       <span style="color:var(--muted);font-weight:600;">Semantic Hub Refactor:</span>
-      <select id="symbol-select" title="Select a Hub symbol to rename across all 8 languages"></select>
+      <select id="symbol-select" title="Select a Hub symbol to rename across all 9 languages"></select>
       <input type="text" id="rename-input" placeholder="new_identifier" style="width:165px;" />
-      <button id="rename-btn">✎ Rename Across 8 Languages</button>
+      <button id="rename-btn">✎ Rename Across 9 Languages</button>
       <span class="action-msg" id="action-msg"></span>
     </div>
-    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 8 engines</span>
+    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 9 engines</span>
   </div>
 
   <div class="sem-bar" id="sem-bar"></div>
@@ -478,6 +489,18 @@
       <div class="diag-bar" id="diag-python"></div>
     </section>
 
+    <section class="pane" id="pane-ruby">
+      <div class="pane-header">
+        <span>Ruby + RBS (<code>.rb</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-ruby"></span>
+          <span class="status" id="status-ruby">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-ruby" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-ruby"></div>
+    </section>
+
     <section class="pane" id="pane-typescript">
       <div class="pane-header">
         <span>TypeScript (<code>.ts</code>)</span>
@@ -503,6 +526,17 @@
     </section>
   </main>
 
+  <section id="mut-drawer">
+    <div class="run-header">
+      <span id="mut-summary">Running semantic Hub AST mutation suite...</span>
+      <div style="display:flex;gap:8px;">
+        <button class="mut-btn" id="harden-btn">🛡 Auto-Harden Tests Across 9 Languages</button>
+        <button onclick="document.getElementById('mut-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="mut-cards"></div>
+  </section>
+
   <section id="trace-drawer">
     <div class="run-header">
       <span id="trace-summary">Tracing Hub AST execution & coverage...</span>
@@ -513,14 +547,14 @@
 
   <section id="run-drawer">
     <div class="run-header">
-      <span id="run-summary">Executing across Hub VM, rustc, clang++, swiftc, javac, go, python3, and node...</span>
+      <span id="run-summary">Executing across Hub VM, rustc, clang++, swiftc, javac, go, python3, ruby, and node...</span>
       <button onclick="document.getElementById('run-drawer').style.display='none'">Close</button>
     </div>
     <div class="run-cards" id="run-cards"></div>
   </section>
 
   <script>
-    const SPOKES = ["rust", "cpp", "swift", "java", "go", "python", "typescript", "star"];
+    const SPOKES = ["rust", "cpp", "swift", "java", "go", "python", "ruby", "typescript", "star"];
     let debounceTimer = null;
     const prevTexts = {};
 
@@ -678,7 +712,7 @@
         pane.classList.add("has-error");
         status.className = "status error";
         status.textContent = `Syntax Hold (L${data.diagnostic.line})`;
-        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 7 spokes held at last valid Hub AST`;
+        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 8 spokes held at last valid Hub AST`;
       }
     }
 
@@ -693,7 +727,7 @@
           e.preventDefault();
           const start = ed.selectionStart;
           const end = ed.selectionEnd;
-          const pad = spoke === "go" ? "\t" : (spoke === "typescript" || spoke === "star" ? "  " : "    ");
+          const pad = spoke === "go" ? "\t" : (spoke === "typescript" || spoke === "ruby" || spoke === "star" ? "  " : "    ");
           ed.value = ed.value.substring(0, start) + pad + ed.value.substring(end);
           ed.selectionStart = ed.selectionEnd = start + pad.length;
           clearTimeout(debounceTimer);
@@ -732,7 +766,7 @@
       if (data.ok) {
         document.getElementById("rename-input").value = "";
         applySnapshot(data.snapshot, null);
-        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 8 languages`, false);
+        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 9 languages`, false);
       } else {
         flashMessage(`✗ ${data.error}`, true);
       }
@@ -744,9 +778,64 @@
       if (data.ok) {
         applySnapshot(data.snapshot, null);
         if (data.rewrites > 0) {
-          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 8 languages`, false);
+          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 9 languages`, false);
         } else {
           flashMessage("AST is already in normal form (0 rewrites)", false);
+        }
+      }
+    });
+
+    function renderMutationReport(data) {
+      const summary = document.getElementById("mut-summary");
+      const cards = document.getElementById("mut-cards");
+      const hardenBtn = document.getElementById("harden-btn");
+      cards.innerHTML = "";
+
+      const color = data.score_pct === 100 ? "#34d399" : "#fbbf24";
+      summary.innerHTML = `<span style="color:${color};">🧬 Hub Mutation Score: ${data.score_pct}% (${data.killed}/${data.total_mutants} semantic AST mutants killed in ${data.elapsed_ms}ms)</span>`;
+      hardenBtn.disabled = data.survived === 0;
+
+      const outcomes = data.outcomes || [];
+      const survivors = outcomes.filter(m => !m.killed);
+      const killedList = outcomes.filter(m => m.killed);
+
+      const survCard = document.createElement("div");
+      survCard.className = "run-card";
+      survCard.innerHTML = `<strong>⚠ Surviving Mutants (${survivors.length})</strong><pre></pre>`;
+      survCard.querySelector("pre").textContent =
+        survivors.length === 0
+          ? "✓ 0 surviving mutants — unit tests catch every semantic AST mutation!"
+          : survivors.map(m => `[#${m.id} in ${m.func}] ${m.description} (SURVIVED)`).join("\n");
+      cards.appendChild(survCard);
+
+      const killCard = document.createElement("div");
+      killCard.className = "run-card";
+      killCard.innerHTML = `<strong>🛡 Killed Mutants (${killedList.length})</strong><pre></pre>`;
+      killCard.querySelector("pre").textContent =
+        killedList.map(m => `[#${m.id} in ${m.func}] ${m.description} -> caught by ${m.killed_by}`).join("\n") || "(none)";
+      cards.appendChild(killCard);
+    }
+
+    document.getElementById("mut-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("mut-drawer");
+      drawer.style.display = "block";
+      document.getElementById("mut-summary").textContent = "Mutating Hub AST & running polyglot unit tests...";
+      document.getElementById("mut-cards").innerHTML = "";
+      const res = await fetch("/api/mutate", { method: "POST", body: "{}" });
+      const data = await res.json();
+      if (data.ok) renderMutationReport(data);
+    });
+
+    document.getElementById("harden-btn").addEventListener("click", async () => {
+      const res = await fetch("/api/harden", { method: "POST", body: "{}" });
+      const data = await res.json();
+      if (data.ok) {
+        applySnapshot(data.snapshot, null);
+        renderMutationReport(data.mutation);
+        if (data.added_assertions > 0) {
+          flashMessage(`🛡 Synthesized ${data.added_assertions} boundary unit test assertion(s) across all 9 languages (${data.before_score_pct}% → ${data.after_score_pct}%)`, false);
+        } else {
+          flashMessage("No additional distinguishing boundary inputs found", false);
         }
       }
     });
@@ -819,13 +908,13 @@
       const summary = document.getElementById("run-summary");
       const cards = document.getElementById("run-cards");
       drawer.style.display = "block";
-      summary.textContent = "Executing Hub VM + rustc + clang++ (PCH) + swiftc + javac + go + python3 + node in parallel...";
+      summary.textContent = "Executing Hub VM + rustc + clang++ (PCH) + swiftc + javac + go + python3 + ruby + node in parallel...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/run", { method: "POST", body: "{}" });
       const data = await res.json();
       if (data.outputs_match) {
-        summary.innerHTML = `<span style="color:#34d399;">✓ 8/8 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
+        summary.innerHTML = `<span style="color:#34d399;">✓ 9/9 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
       } else {
         summary.innerHTML = `<span style="color:#f87171;">Runtime Check Completed (${data.wall_time_ms}ms — inspect outputs below)</span>`;
       }

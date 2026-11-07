@@ -122,10 +122,10 @@ enum RenameTarget {
 const RESERVED_WORDS: &[&str] = &[
     "fn", "func", "def", "function", "struct", "class", "enum", "type", "interface", "export",
     "import", "package", "from", "as", "const", "let", "var", "mut", "auto", "pub", "return",
-    "if", "else", "elif", "match", "switch", "case", "default", "for", "while", "in", "of",
-    "range", "break", "continue", "true", "false", "None", "void", "int", "int64", "int64_t",
-    "float", "float64", "double", "bool", "boolean", "str", "string", "number", "Vec", "String",
-    "main",
+    "if", "else", "elif", "elsif", "unless", "match", "switch", "case", "when", "default", "for",
+    "while", "in", "of", "range", "break", "continue", "next", "end", "module", "begin", "rescue",
+    "ensure", "nil", "true", "false", "None", "void", "int", "int64", "int64_t", "float",
+    "float64", "double", "bool", "boolean", "str", "string", "number", "Vec", "String", "main",
 ];
 
 fn validate_identifier(name: &str) -> Result<(), String> {

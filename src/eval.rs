@@ -227,6 +227,36 @@ pub fn eval_with_observer(
     Ok(())
 }
 
+/// Evaluate a single pure/helper function call `fn_name(arg_exprs)` directly in the Hub VM.
+/// Used by the Hub Mutation Hardener to probe distinguishing boundary inputs in sub-millisecond time.
+pub fn eval_fn_call(
+    hub: &HubModule,
+    fn_name: &str,
+    arg_exprs: &[Expr],
+    max_steps: usize,
+) -> Result<Value, String> {
+    let mut fns: HashMap<&str, &FnDecl> = HashMap::new();
+    for item in &hub.items {
+        if let Item::Function(f) = item {
+            fns.insert(f.name.as_str(), f);
+        }
+    }
+    let mut vm = HubVm {
+        fns,
+        stdout: String::new(),
+        steps: 0,
+        max_steps,
+        depth: 0,
+        observer: None,
+    };
+    let mut scopes = Scopes::new();
+    let mut vals = Vec::with_capacity(arg_exprs.len());
+    for e in arg_exprs {
+        vals.push(vm.eval_expr(e, &mut scopes)?);
+    }
+    vm.call_fn(fn_name, vals)
+}
+
 struct HubVm<'a, 'b> {
     fns: HashMap<&'a str, &'a FnDecl>,
     stdout: String,

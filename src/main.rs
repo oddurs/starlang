@@ -61,6 +61,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "mutate" => {
+            if let Err(e) = run_mutate_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "fuzz" => {
             if let Err(e) = run_fuzz_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -147,7 +153,7 @@ fn parse_target_spoke(args: &[String]) -> Result<Option<SpokeId>, String> {
 
 fn run_convert(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang convert <file> [--to rust|cpp|swift|java|go|python|ts|star]".to_string()
+        "usage: starlang convert <file> [--to rust|cpp|swift|java|go|python|ruby|ts|star]".to_string()
     })?;
     let (eng, src_spoke) = load_engine_from_path(input)?;
 
@@ -308,6 +314,93 @@ fn run_trace_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_mutate_cli(args: &[String]) -> Result<(), String> {
+    let mut file_path: Option<&str> = None;
+    let mut harden = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--harden" | "-H" => {
+                harden = true;
+                i += 1;
+            }
+            "--to" | "-t" => {
+                i += 2;
+            }
+            other if !other.starts_with('-') && file_path.is_none() => {
+                file_path = Some(other);
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    let (mut eng, src_spoke, label) = if let Some(p) = file_path {
+        let (e, spoke) = load_engine_from_path(p)?;
+        (e, spoke, format!("{} ({})", p, spoke.display_name()))
+    } else {
+        let sample = find_sample("alerts").ok_or("missing alerts sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            sample.initial_spoke,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let out_spoke = parse_target_spoke(args)?.unwrap_or(src_spoke);
+
+    if !harden {
+        let rep = eng.mutate();
+        println!("=== Hub AST Mutation Testing: {} ===", label);
+        println!(
+            "Mutation Score: {}% ({}/{} killed, {} survived in {}ms)",
+            rep.score_pct, rep.killed, rep.total_mutants, rep.survived, rep.elapsed_ms
+        );
+        if rep.survived > 0 {
+            println!("\nSurviving Mutants ({}):", rep.survived);
+            for m in rep.survivors() {
+                println!("  ⚠ [mutant #{} in {}()] {}", m.id, m.func, m.description);
+            }
+            println!("\nTip: run `cargo run -- mutate --harden` to synthesize boundary assertions across all 9 languages.");
+        } else {
+            println!("\n✓ 0 surviving mutants — unit test suite killed 100% of Hub mutants.");
+        }
+        return Ok(());
+    }
+
+    let (snap, hrep) = eng.harden_tests();
+    println!("=== Hub AST Mutation Testing & Auto-Test Hardening: {} ===", label);
+    println!(
+        "Before Hardening: {}% ({}/{} killed, {} survived)",
+        hrep.before.score_pct, hrep.before.killed, hrep.before.total_mutants, hrep.before.survived
+    );
+    println!(
+        "After Hardening:  {}% ({}/{} killed, {} survived) — synthesized {} boundary assertion(s)",
+        hrep.after.score_pct,
+        hrep.after.killed,
+        hrep.after.total_mutants,
+        hrep.after.survived,
+        hrep.added_assertions
+    );
+    let passed = snap.test_results.iter().filter(|t| t.passed).count();
+    println!(
+        "Polyglot Unit Tests: {}/{} passed via Hub VM\n",
+        passed,
+        snap.test_results.len()
+    );
+    println!(
+        "--- Hardened {} View (.{}) ---",
+        out_spoke.display_name(),
+        out_spoke.extension()
+    );
+    print!("{}", eng.project(out_spoke));
+    Ok(())
+}
+
 fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
     let mut count = 50usize;
     let mut seed: u64 = 0x57A4_2026_0500;
@@ -331,11 +424,11 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 
     let report = run_fuzz_suite(seed, count);
     println!(
-        "★ Property-Based 8-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
+        "★ Property-Based 9-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
         report.seed, report.programs_tested
     );
     println!(
-        "  • 8-spoke GetPut + cold Put round-trips: {}",
+        "  • 9-spoke GetPut + cold Put round-trips: {}",
         report.spoke_roundtrips
     );
     println!(
@@ -349,7 +442,7 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
     println!("  • Elapsed time:                          {}ms", report.elapsed_ms);
 
     if report.ok() {
-        println!("✓ 0 lens, typecheck, VM, or optimizer Counterexamples found.");
+        println!("✓ 0 lens, typecheck, VM, or optimizer counterexamples found.");
         Ok(())
     } else {
         for f in &report.failures {
@@ -362,7 +455,7 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 fn run_refactor(args: &[String]) -> Result<(), String> {
     if args.len() < 3 {
         return Err(
-            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|cpp|swift|java|go|python|ts|star]"
+            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|cpp|swift|java|go|python|ruby|ts|star]"
                 .to_string(),
         );
     }
@@ -380,7 +473,8 @@ fn run_refactor(args: &[String]) -> Result<(), String> {
 
 fn run_optimize(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang optimize <file> [--to rust|cpp|swift|java|go|python|ts|star]".to_string()
+        "usage: starlang optimize <file> [--to rust|cpp|swift|java|go|python|ruby|ts|star]"
+            .to_string()
     })?;
     let (mut eng, src_spoke) = load_engine_from_path(input)?;
     let (_, rewrites) = eng.optimize();
@@ -413,7 +507,7 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Outputs match across all 8 engines: {}",
+        "\nParallel wall time: {}ms | Outputs match across all 9 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
@@ -424,22 +518,23 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v0.5 — 8-Spoke Bidirectional Compiler (Rust <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> TypeScript <-> Star IR)
+        "starlang v0.6 — 9-Spoke Bidirectional Compiler (Rust <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> TypeScript <-> Star IR)
 
 USAGE:
-  cargo run                                         Start the 8-pane live web studio on http://127.0.0.1:7878
+  cargo run                                         Start the 9-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
-  cargo run -- watch [dir] [stem]                   Live-sync .rs, .cpp, .swift, .java, .go, .py, .ts, .star files
-  cargo run -- convert <file> [--to java]           Transpile a file into one or all other spokes
+  cargo run -- watch [dir] [stem]                   Live-sync .rs, .cpp, .swift, .java, .go, .py, .rb, .ts, .star files
+  cargo run -- convert <file> [--to ruby]           Transpile a file into one or all other spokes
   cargo run -- check <file>                         Run the central Hub static type & scope checker
   cargo run -- eval <file>                          Execute main() instantly in the native in-memory Hub VM
   cargo run -- test <file>                          Execute polyglot unit tests instantly in the Hub VM
   cargo run -- trace [file]                         Report Hub AST statement coverage %, hotspots & call trace
-  cargo run -- fuzz [count] [--seed N]              Run property-based 8-spoke GetPut & VM equivalence fuzzer
+  cargo run -- mutate [file] [--harden] [--to X]    Run Hub AST mutation testing & auto-harden boundary tests
+  cargo run -- fuzz [count] [--seed N]              Run property-based 9-spoke GetPut & VM equivalence fuzzer
   cargo run -- refactor <file> <sym> <new> [--to X] Scope-aware cross-language symbol rename
   cargo run -- optimize <file> [--to X]             Constant-fold & prune dead branches via the Hub
-  cargo run -- run <file>                           Verify across Hub VM + rustc + clang++ + swiftc + javac + go + py + node
-  cargo run -- demo                                 Run an end-to-end 8-spoke sync, trace, fuzz & 8-engine demo"
+  cargo run -- run <file>                           Verify across Hub VM + rustc + clang++ + swiftc + javac + go + py + ruby + node
+  cargo run -- demo                                 Run an end-to-end 9-spoke sync, mutation harden, fuzz & 9-engine demo"
     );
 }
 
@@ -461,35 +556,53 @@ fn run_cli_demo() -> Result<(), String> {
         init_snap.live_eval.stdout.trim()
     );
 
-    let java_before = engine.project(SpokeId::Java);
-    println!("--- Projected Modern Java 21 View ---\n{}", java_before);
+    let ruby_before = engine.project(SpokeId::Ruby);
+    println!("--- Projected Modern Ruby + RBS View ---\n{}", ruby_before);
 
-    println!("=== 2. Editing in Java 21 (escalating Critical weight 5L -> 10L) ===");
-    let java_edited = java_before.replace(
-        "            case Severity.Critical -> {\n                return 5L;\n            }",
-        "            case Severity.Critical -> {\n                // Escalated critical weight in Java 21\n                return 10L;\n            }",
+    println!("=== 2. Editing in Ruby (escalating Critical weight 5 -> 10) ===");
+    let ruby_edited = ruby_before.replace(
+        "  when Severity::Critical\n    return 5",
+        "  when Severity::Critical\n    # Escalated critical weight in Ruby\n    return 10",
     );
     engine
-        .apply_edit(SpokeId::Java, &java_edited)
+        .apply_edit(SpokeId::Ruby, &ruby_edited)
         .map_err(|d| d.to_string())?;
 
     println!("=== 3. Cross-Language Hub Refactor: `Severity::Critical` -> `Severity::Emergency` ===");
     let (snap, renamed_sites) = engine.rename_symbol("Severity::Critical", "Emergency")?;
     let passed_after = snap.test_results.iter().filter(|t| t.passed).count();
     println!(
-        "Renamed {} AST sites across all 8 languages | Coverage: {}% | Tests: {}/{} passed | Live Hub VM: {}\n",
+        "Renamed {} AST sites across all 9 languages | Coverage: {}% | Tests: {}/{} passed | Live Hub VM: {}\n",
         renamed_sites,
         snap.coverage_pct,
         passed_after,
         snap.test_results.len(),
         snap.live_eval.stdout.trim()
     );
+
+    println!("=== 4. Hub AST Mutation Testing & Auto-Test Hardening Across All 9 Languages ===");
+    let (hardened_snap, hrep) = engine.harden_tests();
+    let hardened_passed = hardened_snap
+        .test_results
+        .iter()
+        .filter(|t| t.passed)
+        .count();
     println!(
-        "--- Updated Rust View (`latencies: &[i64]` slice + `#[test]` survived Java 21 edit & Hub rename!) ---\n{}",
-        snap.views["rust"]
+        "Mutation Score: {}% -> {}% ({}/{} mutants killed; synthesized {} boundary assertion(s); {}/{} tests pass)\n",
+        hrep.before.score_pct,
+        hrep.after.score_pct,
+        hrep.after.killed,
+        hrep.after.total_mutants,
+        hrep.added_assertions,
+        hardened_passed,
+        hardened_snap.test_results.len()
+    );
+    println!(
+        "--- Updated Rust View (`latencies: &[i64]` slice + `test_mutation_hardened` survived Ruby edit & Hub rename!) ---\n{}",
+        hardened_snap.views["rust"]
     );
 
-    println!("=== 4. Differential Execution Across All 8 Engines (Hub VM + rustc + clang++ PCH + swiftc + javac + go + python3 + node) ===");
+    println!("=== 5. Differential Execution Across All 9 Engines (Hub VM + rustc + clang++ PCH + swiftc + javac + go + python3 + ruby + node) ===");
     let report = run_all_spokes(&engine);
     for r in &report.results {
         println!(
@@ -504,14 +617,14 @@ fn run_cli_demo() -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Byte-for-byte match across all 8 engines: {}",
+        "\nParallel wall time: {}ms | Byte-for-byte match across all 9 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
         return Err("runtime outputs diverged".to_string());
     }
 
-    println!("\n=== 5. Property-Based 8-Spoke Lens Fuzzer (25 Synthesized Programs × 8 Spokes) ===");
+    println!("\n=== 6. Property-Based 9-Spoke Lens Fuzzer (25 Synthesized Programs × 9 Spokes) ===");
     let fuzz = run_fuzz_suite(0x57A4_2026_0500, 25);
     println!(
         "Verified {} GetPut round-trips & {} test suites in {}ms — Failures: {}",

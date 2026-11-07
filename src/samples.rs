@@ -291,7 +291,7 @@ main()
     SamplePreset {
         id: "histogram",
         title: "Latency Bucket Histogram (Seeded from Java 21)",
-        description: "Modern Java 21 switch arrows, static value classes, Objects.equals assertions & 8-language sync",
+        description: "Modern Java 21 switch arrows, static value classes, Objects.equals assertions & 9-language sync",
         initial_spoke: SpokeId::Java,
         source: r#"import java.util.*;
 
@@ -367,6 +367,66 @@ class StarProgram {
         if (!Objects.equals(res, new Histogram(2L, 1L, 1L))) throw new AssertionError("assert_eq failed");
     }
 }
+"#,
+    },
+    SamplePreset {
+        id: "checkout",
+        title: "Cart Tier & Discount Engine (Seeded from Ruby)",
+        description: "Idiomatic Ruby Struct.new, RBS #: inline types, module enums & 9-language mutation hardening",
+        initial_spoke: SpokeId::Ruby,
+        source: r#"# Loyalty tier levels for checkout pricing
+module LoyaltyTier
+  Standard = 0
+  Silver = 1
+  Gold = 2
+end
+
+# Final invoice totals after discount rules
+#: fields(subtotal: Integer, discount: Integer, payable: Integer)
+Invoice = Struct.new(:subtotal, :discount, :payable, keyword_init: true)
+
+#: (tier: LoyaltyTier) -> Integer
+def tier_rate_pct(tier)
+  case tier
+  when LoyaltyTier::Standard
+    return 0
+  when LoyaltyTier::Silver
+    return 10
+  when LoyaltyTier::Gold
+    return 20
+  end
+end
+
+#: (prices: Array[Integer], tier: LoyaltyTier) -> Invoice
+def compute_invoice(prices, tier)
+  subtotal = 0
+  for p in prices
+    if p > 0
+      subtotal += p
+    end
+  end
+  rate = tier_rate_pct(tier)
+  discount = (subtotal * rate) / 100
+  payable = [subtotal - discount, 0].max
+  return Invoice.new(subtotal: subtotal, discount: discount, payable: payable)
+end
+
+#: () -> void
+def main()
+  cart = [120, 80, 50]
+  inv = compute_invoice(cart, LoyaltyTier::Silver)
+  puts(["subtotal:", inv.subtotal, "discount:", inv.discount, "payable:", inv.payable].join(" "))
+end
+
+def test_cart_discounts()
+  items = [100, 50]
+  gold_inv = compute_invoice(items, LoyaltyTier::Gold)
+  raise "assert_eq failed" unless (gold_inv) == (Invoice.new(subtotal: 150, discount: 30, payable: 120))
+end
+
+if __FILE__ == $0
+  main()
+end
 "#,
     },
 ];
