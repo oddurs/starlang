@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -444,6 +444,8 @@
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="actors-btn" title="Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer">📡 Actors & Vector Clocks</button>
+      <button class="verify-btn" id="modelcheck-btn" title="Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability & TLA+ Spec Synthesizer">📐 TLA+ & Model Check</button>
       <button class="wasm-btn" id="autodiff-btn" title="Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer">∇ AutoDiff & Tape</button>
       <button class="verify-btn" id="stability-btn" title="IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f & Quantization Auditor">🔬 Lipschitz & Stability</button>
       <button class="wasm-btn" id="microarch-btn" title="4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Hardware Simulator">🖥 CPU, Cache & Branch</button>
@@ -672,6 +674,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="actors-drawer">
+    <div class="run-header">
+      <span id="actors-summary">📡 Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer...</span>
+      <button onclick="document.getElementById('actors-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="actors-cards"></div>
+  </section>
+
+  <section id="modelcheck-drawer">
+    <div class="run-header">
+      <span id="modelcheck-summary">📐 Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability & TLA+ Spec...</span>
+      <button onclick="document.getElementById('modelcheck-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="modelcheck-cards"></div>
+  </section>
 
   <section id="autodiff-drawer">
     <div class="run-header">
@@ -2277,6 +2295,62 @@
         card.innerHTML = `<strong>🔬 ${fn.signature} (${fn.stability_grade})</strong><pre style="max-height:300px;overflow:auto;"></pre>`;
         card.querySelector("pre").textContent =
           `Condition Number κ: ${fn.condition_number_kappa} | Global Lipschitz L: ${fn.lipschitz_constant}\n\n[Numerical Precision & Overflow Audit]\n${hzLines}\n\n[Numerically Hardened 13-Spoke Lowering]\n${spk}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("actors-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("actors-drawer");
+      const summary = document.getElementById("actors-summary");
+      const cards = document.getElementById("actors-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Auditing Lamport Vector Clocks VC(e), Happens-Before (→) ordering, Wait-For Graph Deadlock Freedom & 13-Spoke Actor Lowerings...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/actors", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = (data.all_data_race_free && data.all_deadlock_free) ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">📡 Lamport Vector-Clock & Actor Verifier: ${data.total_actor_stages} actor stage(s) · ${data.total_vc_events} Vector-Clock events · ${data.total_races_detected} data race(s) · ${data.total_wait_for_cycles} deadlock cycle(s) · DRF=${data.all_data_race_free} (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const evLines = (fn.events || [])
+          .map(e => `  e${e.event_id} [${e.actor_name} · ${e.op_kind.padEnd(10)}] VC=[${(e.vector_clock || []).join(",")}] ${e.variable}\n    ↳ ${e.happens_before_note}`)
+          .join("\n");
+        const spk = Object.entries(fn.actor_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "go", "swift", "java", "python", "ruby", "star"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>📡 ${fn.signature} (${fn.topology_kind} · Cap=${fn.channel_capacity})</strong><pre style="max-height:320px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Data-Race Free: ${fn.data_race_free} | Deadlock Free: ${fn.deadlock_free}\n\n[Lamport Vector-Clock Happens-Before Trace]\n${evLines}\n\n[13-Spoke Actor / Channel Lowering]\n${spk}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("modelcheck-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("modelcheck-drawer");
+      const summary = document.getElementById("modelcheck-summary");
+      const cards = document.getElementById("modelcheck-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Exploring Kripke state space M=(S, S0, R, L), proving Temporal Safety (□I), Liveness (□◇) & Linearizability, and synthesizing TLA+ specs...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/modelcheck", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.all_verified ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">📐 TLA+ & Bounded Model Checker: ${data.total_reachable_states} reachable state(s) · ${data.total_transitions} transition(s) · ${data.verified_properties}/${data.total_properties} temporal & linearizability properties proven (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const pLines = (fn.properties || [])
+          .map(p => `  ${p.verified ? "✓" : "✗"} [${p.kind}] ${p.formula} (${p.states_checked} states)\n    ↳ ${p.proof_or_counterexample}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>📐 ${fn.signature} (${fn.reachable_states} states · ${fn.transitions_explored} transitions · depth ${fn.max_bfs_depth})</strong><pre style="max-height:340px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `[Temporal Safety (□I), Liveness (□◇) & Herlihy-Wing Linearizability]\n${pLines}\n\n[Synthesized TLA+ Specification]\n${fn.tla_plus_spec}\n\n[Mermaid Kripke State Diagram]\n${fn.mermaid_kripke}`;
         cards.appendChild(card);
       });
     });

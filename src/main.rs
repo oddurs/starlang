@@ -213,6 +213,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "actors" => {
+            if let Err(e) = run_actors_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "modelcheck" => {
+            if let Err(e) = run_modelcheck_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -2391,6 +2403,151 @@ fn run_stability_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_actors_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.actors();
+    println!(
+        "=== Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor Synthesizer: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Actor Stages: {} | Vector-Clock Events: {} | Concurrent Races: {} | Deadlock Cycles: {} | Data-Race Free: {} ({}ms)\n",
+        rep.total_functions,
+        rep.total_actor_stages,
+        rep.total_vc_events,
+        rep.total_races_detected,
+        rep.total_wait_for_cycles,
+        rep.all_data_race_free,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [{} | Cap: {} | DRF: {} | Deadlock-Free: {}]",
+            f.signature,
+            f.topology_kind,
+            f.channel_capacity,
+            f.data_race_free,
+            f.deadlock_free
+        );
+        for e in &f.events {
+            println!(
+                "  • e{} [{:<17} · {:<10}] VC={:?} {} — {}",
+                e.event_id,
+                e.actor_name,
+                e.op_kind,
+                e.vector_clock,
+                e.variable,
+                e.happens_before_note
+            );
+        }
+        println!();
+    }
+
+    if !rep.all_data_race_free || !rep.all_deadlock_free {
+        return Err("concurrency verifier detected a data race or deadlock cycle".to_string());
+    }
+    Ok(())
+}
+
+fn run_modelcheck_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.model_check();
+    println!(
+        "=== Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇) & TLA+ Synthesizer: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Reachable States: {} | Transitions: {} | Verified Properties: {}/{} | All Verified: {} ({}ms)\n",
+        rep.total_functions,
+        rep.total_reachable_states,
+        rep.total_transitions,
+        rep.verified_properties,
+        rep.total_properties,
+        rep.all_verified,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [States: {} | Transitions: {} | Max Depth: {}]",
+            f.signature, f.reachable_states, f.transitions_explored, f.max_bfs_depth
+        );
+        for p in &f.properties {
+            println!(
+                "  {} [{}] {} ({} states)\n      ↳ {}",
+                if p.verified { "✓" } else { "✗" },
+                p.kind,
+                p.formula,
+                p.states_checked,
+                p.proof_or_counterexample
+            );
+        }
+        println!("  --- Synthesized TLA+ Specification ---\n{}\n", f.tla_plus_spec);
+    }
+
+    if !rep.all_verified {
+        return Err("one or more temporal or linearizability properties failed".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -2595,13 +2752,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v2.0 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff & Lipschitz Numerical Stability Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64)
+        "starlang v2.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier & TLA+ Model Checker Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- actors [file|preset]                 Run Lamport Vector-Clock Happens-Before Race Detector, Deadlock Prover & 13-Spoke Actors
+  cargo run -- modelcheck [file|preset]             Run Explicit-State Bounded Model Checker, Temporal Safety/Liveness & TLA+ Spec Synth
   cargo run -- autodiff [file|preset] [--inject]    Run Forward-Mode Dual & Reverse-Mode Wengert-Tape AutoDiff + 13-Spoke Gradient Synth
   cargo run -- stability [file|preset]              Run IEEE-754 / Fixed-Point Numerical Stability, Condition κ & Lipschitz Bound Auditor
   cargo run -- microarch [file|preset]              Run 4-Wide Out-of-Order Superscalar CPU, 2-Bit Branch Predictor & 8-Way L1D Cache Sim
@@ -2786,6 +2945,8 @@ fn run_cli_demo() -> Result<(), String> {
     let sched_rep = repair_eng.schedule_instructions();
     let (ad_rep, _) = pipe_eng.autodiff(false);
     let stab_rep = repair_eng.numerical_stability();
+    let act_rep = repair_eng.actors();
+    let mc_rep = repair_eng.model_check();
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -2794,7 +2955,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2}\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2} | Actors: {} stages, {} VC events, DRF={} | TLA+ BMC: {} states, {}/{} temporal properties\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -2843,7 +3004,13 @@ fn run_cli_demo() -> Result<(), String> {
         ad_rep.total_partials,
         ad_rep.synthesized_grad_fn_name,
         stab_rep.max_condition_number,
-        stab_rep.max_lipschitz_constant
+        stab_rep.max_lipschitz_constant,
+        act_rep.total_actor_stages,
+        act_rep.total_vc_events,
+        act_rep.all_data_race_free,
+        mc_rep.total_reachable_states,
+        mc_rep.verified_properties,
+        mc_rep.total_properties
     );
     if !drep.ok
         || slice_len == 0
@@ -2865,8 +3032,10 @@ fn run_cli_demo() -> Result<(), String> {
         || sched_rep.total_instructions == 0
         || !ad_rep.all_gradients_verified
         || stab_rep.total_functions == 0
+        || !act_rep.all_data_race_free
+        || !mc_rep.all_verified
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, or Numerical Stability failed".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, Numerical Stability, Actor Concurrency, or TLA+ Model Checker failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

@@ -86,6 +86,10 @@ jobs:
         run: cargo run --quiet -- autodiff > /dev/null
       - name: Run IEEE-754 / Fixed-Point numerical stability & Lipschitz bound auditor
         run: cargo run --quiet -- stability > /dev/null
+      - name: Run Lamport vector-clock actor verifier & 13-spoke channel synthesizer
+        run: cargo run --quiet -- actors > /dev/null
+      - name: Run explicit-state bounded model checker & TLA+ spec synthesizer
+        run: cargo run --quiet -- modelcheck > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier
