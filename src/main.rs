@@ -81,6 +81,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "wasm" => {
+            if let Err(e) = run_wasm_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -615,6 +621,86 @@ fn run_merge_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_wasm_cli(args: &[String]) -> Result<(), String> {
+    let mut file_path: Option<&str> = None;
+    let mut emit_wat = false;
+    let mut out_wasm: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--wat" | "-w" => {
+                emit_wat = true;
+                i += 1;
+            }
+            "--out" | "-o" => {
+                let p = args
+                    .get(i + 1)
+                    .ok_or_else(|| "expected output path after --out".to_string())?;
+                out_wasm = Some(p.as_str());
+                i += 2;
+            }
+            other if !other.starts_with('-') && file_path.is_none() => {
+                file_path = Some(other);
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_path {
+        let (e, spoke) = load_engine_from_path(p)?;
+        (e, format!("{} ({})", p, spoke.display_name()))
+    } else {
+        let sample = find_sample("backoff").ok_or("missing backoff sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let art = eng.compile_wasm()?;
+    if let Some(out_path) = out_wasm {
+        fs::write(out_path, &art.bytes)
+            .map_err(|e| format!("failed writing '{}': {}", out_path, e))?;
+    }
+
+    if emit_wat {
+        print!("{}", art.wat);
+        return Ok(());
+    }
+
+    let rep = eng.run_wasm();
+    println!("=== Hub -> WebAssembly 1.0 Binary (.wasm) & V8 JIT Runner: {} ===", label);
+    println!(
+        "Binary Size: {} bytes (Code: {}B, Data: {}B, Functions: {}) | Exports: {:?}",
+        art.bytes.len(),
+        art.code_bytes,
+        art.data_bytes,
+        art.func_count,
+        art.exports
+    );
+    println!(
+        "V8 Wasm JIT: ok={} ({}ms) | Unit Tests: {}/{} passed | stdout: {}",
+        rep.ok,
+        rep.duration_ms,
+        rep.tests_passed,
+        rep.tests_total,
+        rep.stdout.trim()
+    );
+    if !rep.ok {
+        return Err(rep
+            .error
+            .unwrap_or_else(|| "V8 Wasm execution failed".to_string()));
+    }
+    println!("\n--- Symbolic WebAssembly Text Disassembly (.wat) ---");
+    print!("{}", art.wat);
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -725,11 +811,11 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 
     let report = run_fuzz_suite(seed, count);
     println!(
-        "★ Property-Based 11-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
+        "★ Property-Based 12-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
         report.seed, report.programs_tested
     );
     println!(
-        "  • 11-spoke GetPut + cold Put round-trips: {}",
+        "  • 12-spoke GetPut + cold Put round-trips: {}",
         report.spoke_roundtrips
     );
     println!(
@@ -808,7 +894,7 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Outputs match across all 11 engines: {}",
+        "\nParallel wall time: {}ms | Outputs match across all 13 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
@@ -819,13 +905,14 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v0.8 — 11-Spoke Bidirectional Compiler (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> TypeScript <-> Star IR)
+        "starlang v0.9 — 12-Spoke Bidirectional Compiler & WebAssembly Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> TypeScript <-> Star IR -> Wasm)
 
 USAGE:
-  cargo run                                         Start the 11-pane live web studio on http://127.0.0.1:7878
+  cargo run                                         Start the 12-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
-  cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .ts, .star files
-  cargo run -- convert <file> [--to zig]            Transpile a file into one or all other spokes
+  cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .ts, .star files
+  cargo run -- convert <file> [--to lua]            Transpile a file into one or all other spokes
+  cargo run -- wasm [file] [--wat] [--out a.wasm]   Compile Hub AST to W3C WebAssembly 1.0 (.wasm + .wat) & run in V8 JIT
   cargo run -- diff <left_file> <right_file>        Compute pure semantic Hub AST delta across any two languages
   cargo run -- merge [base left right] [--to X]     3-way concurrent cross-language Hub AST + metadata merger
   cargo run -- check <file>                         Run the central Hub static type & scope checker
@@ -834,11 +921,11 @@ USAGE:
   cargo run -- test <file>                          Execute polyglot unit tests instantly in the Hub VM
   cargo run -- trace [file]                         Report Hub AST statement coverage %, hotspots & call trace
   cargo run -- mutate [file] [--harden] [--to X]    Run Hub AST mutation testing & auto-harden boundary tests
-  cargo run -- fuzz [count] [--seed N]              Run property-based 11-spoke GetPut & VM equivalence fuzzer
+  cargo run -- fuzz [count] [--seed N]              Run property-based 12-spoke GetPut & VM equivalence fuzzer
   cargo run -- refactor <file> <sym> <new> [--to X] Scope-aware cross-language symbol rename
   cargo run -- optimize <file> [--to X]             Constant-fold & prune dead branches via the Hub
-  cargo run -- run <file>                           Verify across Hub VM + rustc + zig + clang + clang++ + swiftc + javac + go + py + ruby + node
-  cargo run -- demo                                 Run an end-to-end 11-spoke sync, 3-way merge, verify, mutate, fuzz & 11-engine demo"
+  cargo run -- run <file>                           Verify across Hub VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + ruby + luajit + node
+  cargo run -- demo                                 Run an end-to-end 12-spoke sync, Wasm JIT, 3-way merge, verify, mutate, fuzz & 13-engine demo"
     );
 }
 
@@ -938,7 +1025,28 @@ fn run_cli_demo() -> Result<(), String> {
     }
     println!();
 
-    println!("=== 6. Differential Execution Across All 11 Engines (Hub VM + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + node) ===");
+    println!("=== 6. Zero-Dependency Hub -> WebAssembly 1.0 (.wasm + .wat) & V8 JIT (`backoff` LuaJIT preset) ===");
+    let bo_sample = find_sample("backoff").ok_or("missing backoff sample")?;
+    let bo_eng = StarEngine::from_source(bo_sample.initial_spoke, bo_sample.source)
+        .map_err(|d| d.to_string())?;
+    let bo_wasm = bo_eng.compile_wasm()?;
+    let bo_jit = bo_eng.run_wasm();
+    println!(
+        "Compiled .wasm: {} bytes (Code: {}B, Data: {}B, {} functions) | V8 Wasm JIT ({}ms): {}/{} tests passed | stdout: {}\n",
+        bo_wasm.bytes.len(),
+        bo_wasm.code_bytes,
+        bo_wasm.data_bytes,
+        bo_wasm.func_count,
+        bo_jit.duration_ms,
+        bo_jit.tests_passed,
+        bo_jit.tests_total,
+        bo_jit.stdout.trim()
+    );
+    if !bo_jit.ok {
+        return Err(format!("Wasm JIT failed on backoff: {:?}", bo_jit.error));
+    }
+
+    println!("=== 7. Differential Execution Across All 13 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + node) ===");
     let report = run_all_spokes(&engine);
     for r in &report.results {
         println!(
@@ -953,14 +1061,14 @@ fn run_cli_demo() -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Byte-for-byte match across all 11 engines: {}",
+        "\nParallel wall time: {}ms | Byte-for-byte match across all 13 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
         return Err("runtime outputs diverged".to_string());
     }
 
-    println!("\n=== 7. Property-Based 11-Spoke Lens Fuzzer (25 Synthesized Programs × 11 Spokes) ===");
+    println!("\n=== 8. Property-Based 12-Spoke Lens Fuzzer (25 Synthesized Programs × 12 Spokes) ===");
     let fuzz = run_fuzz_suite(0x57A4_2026_0500, 25);
     println!(
         "Verified {} GetPut round-trips & {} test suites in {}ms — Failures: {}",

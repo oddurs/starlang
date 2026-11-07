@@ -13,6 +13,7 @@ use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
 use crate::trace::TraceReport;
 use crate::verify::{VerifyReport, VerifyStatus};
+use crate::wasm::encode_base64;
 
 const UI_HTML: &str = include_str!("ui.html");
 
@@ -21,9 +22,9 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v0.8 — 11-Spoke Bidirectional Compiler Studio running at:");
+    println!("StarLang v0.9 — 12-Spoke Bidirectional Compiler & WebAssembly Studio running at:");
     println!("  -> http://{}", addr);
-    println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, TypeScript, or Star S-Expr to sync all spokes, 3-way polyglot AST merge, symbolic safety proofs, tests, coverage & mutation testing.\n");
+    println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, TypeScript, or Star S-Expr to sync all 12 spokes, compile native .wasm/.wat, 3-way AST merge, symbolic safety proofs & 13-engine verification.\n");
 
     serve_listener(listener)
 }
@@ -307,6 +308,44 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                         "{{\"ok\":false,\"diagnostic\":{}}}",
                         diagnostic_to_json(&diag)
                     );
+                    send_response(&mut stream, 200, "application/json", &payload)
+                }
+            }
+        }
+        ("POST", "/api/wasm") => {
+            let (art_res, run_rep) = {
+                let eng = shared.lock().unwrap();
+                (eng.compile_wasm(), eng.run_wasm())
+            };
+            match art_res {
+                Ok(art) => {
+                    let exports_json: Vec<String> =
+                        art.exports.iter().map(|e| json_str(e)).collect();
+                    let err_json = run_rep
+                        .error
+                        .as_deref()
+                        .map(json_str)
+                        .unwrap_or_else(|| "null".to_string());
+                    let payload = format!(
+                        "{{\"ok\":true,\"wasm_b64\":{},\"wasm_size_bytes\":{},\"code_bytes\":{},\"data_bytes\":{},\"func_count\":{},\"exports\":[{}],\"wat\":{},\"jit_ok\":{},\"jit_stdout\":{},\"tests_passed\":{},\"tests_total\":{},\"duration_ms\":{},\"error\":{}}}",
+                        json_str(&encode_base64(&art.bytes)),
+                        art.bytes.len(),
+                        art.code_bytes,
+                        art.data_bytes,
+                        art.func_count,
+                        exports_json.join(","),
+                        json_str(&art.wat),
+                        run_rep.ok,
+                        json_str(&run_rep.stdout),
+                        run_rep.tests_passed,
+                        run_rep.tests_total,
+                        run_rep.duration_ms,
+                        err_json
+                    );
+                    send_response(&mut stream, 200, "application/json", &payload)
+                }
+                Err(err) => {
+                    let payload = format!("{{\"ok\":false,\"error\":{}}}", json_str(&err));
                     send_response(&mut stream, 200, "application/json", &payload)
                 }
             }

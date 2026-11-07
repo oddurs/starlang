@@ -38,7 +38,7 @@ impl fmt::Display for Diagnostic {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Int,
     Float,

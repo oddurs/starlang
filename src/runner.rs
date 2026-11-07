@@ -9,6 +9,7 @@ use std::time::Instant;
 use crate::engine::StarEngine;
 use crate::eval::eval_module_default;
 use crate::lens::SpokeId;
+use crate::wasm::run_wasm_jit;
 
 static RUN_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CPP_PCH_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -69,11 +70,11 @@ pub struct MultiRunReport {
     pub wall_time_ms: u128,
 }
 
-/// Execute the Hub Native VM plus Rust (`rustc`), Zig (`zig run -lc`), C11 (`clang -std=c11`),
-/// C++ (`clang++` with cached STL PCH), Swift (`swiftc`), Java (`javac` + `java`),
-/// Go (`go run`), Python (`python3`), Ruby (`ruby`), and TypeScript (`node`)
-/// concurrently using `std::thread::scope`, verifying byte-for-byte identical
-/// stdout across all 11 execution engines.
+/// Execute the Hub Native VM, Wasm (V8 JIT), Rust (`rustc`), Zig (`zig run -lc`),
+/// C11 (`clang -std=c11`), C++ (`clang++` with cached STL PCH), Swift (`swiftc`),
+/// Java (`javac` + `java`), Go (`go run`), Python (`python3`), Ruby (`ruby`),
+/// LuaJIT (`luajit`), and TypeScript (`node`) concurrently using `std::thread::scope`,
+/// verifying byte-for-byte identical stdout across all 13 execution engines.
 pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let wall_start = Instant::now();
     let run_id = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -94,10 +95,12 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let go_src = engine.project(SpokeId::Go);
     let py_src = engine.project(SpokeId::Python);
     let ruby_src = engine.project(SpokeId::Ruby);
+    let lua_src = engine.project(SpokeId::Lua);
     let ts_src = engine.project(SpokeId::TypeScript);
 
     let (
         hub_res,
+        wasm_res,
         rs_res,
         zig_res,
         c_res,
@@ -107,9 +110,11 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
         go_res,
         py_res,
         rb_res,
+        lua_res,
         ts_res,
     ) = thread::scope(|s| {
         let h_hub = s.spawn(|| run_hub_vm(&hub_clone));
+        let h_wasm = s.spawn(|| run_wasm_engine(&hub_clone));
         let h_rs = s.spawn(|| run_rust(&dir, &rust_src));
         let h_zig = s.spawn(|| run_zig(&dir, &zig_src));
         let h_c = s.spawn(|| run_c(&dir, &c_src));
@@ -119,9 +124,11 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
         let h_go = s.spawn(|| run_go(&dir, &go_src));
         let h_py = s.spawn(|| run_python(&dir, &py_src));
         let h_rb = s.spawn(|| run_ruby(&dir, &ruby_src));
+        let h_lua = s.spawn(|| run_lua(&dir, &lua_src));
         let h_ts = s.spawn(|| run_typescript(&dir, &ts_src));
         (
             h_hub.join().unwrap(),
+            h_wasm.join().unwrap(),
             h_rs.join().unwrap(),
             h_zig.join().unwrap(),
             h_c.join().unwrap(),
@@ -131,6 +138,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
             h_go.join().unwrap(),
             h_py.join().unwrap(),
             h_rb.join().unwrap(),
+            h_lua.join().unwrap(),
             h_ts.join().unwrap(),
         )
     });
@@ -138,8 +146,8 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let _ = fs::remove_dir_all(&dir);
 
     let results = vec![
-        hub_res, rs_res, zig_res, c_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res,
-        ts_res,
+        hub_res, wasm_res, rs_res, zig_res, c_res, cpp_res, swift_res, java_res, go_res, py_res,
+        rb_res, lua_res, ts_res,
     ];
     let all_succeeded = results.iter().all(|r| r.ok);
     let outputs_match = all_succeeded
@@ -164,6 +172,17 @@ fn run_hub_vm(hub: &crate::hub::HubModule) -> RuntimeOutput {
         stdout: ev.stdout,
         stderr: ev.error.unwrap_or_default(),
         duration_ms: start.elapsed().as_millis(),
+    }
+}
+
+fn run_wasm_engine(hub: &crate::hub::HubModule) -> RuntimeOutput {
+    let rep = run_wasm_jit(hub);
+    RuntimeOutput {
+        language: "Wasm (V8 JIT)",
+        ok: rep.ok,
+        stdout: rep.stdout,
+        stderr: rep.error.unwrap_or_default(),
+        duration_ms: rep.duration_ms,
     }
 }
 
@@ -571,6 +590,36 @@ fn run_ruby(dir: &PathBuf, src: &str) -> RuntimeOutput {
             ok: false,
             stdout: String::new(),
             stderr: format!("failed to invoke ruby: {}", e),
+            duration_ms: start.elapsed().as_millis(),
+        },
+    }
+}
+
+fn run_lua(dir: &PathBuf, src: &str) -> RuntimeOutput {
+    let lua_path = dir.join("prog.lua");
+    let start = Instant::now();
+    if let Err(e) = fs::write(&lua_path, src) {
+        return RuntimeOutput {
+            language: "LuaJIT (luajit)",
+            ok: false,
+            stdout: String::new(),
+            stderr: e.to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        };
+    }
+    match Command::new("luajit").arg(&lua_path).output() {
+        Ok(out) => RuntimeOutput {
+            language: "LuaJIT (luajit)",
+            ok: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        },
+        Err(e) => RuntimeOutput {
+            language: "LuaJIT (luajit)",
+            ok: false,
+            stdout: String::new(),
+            stderr: format!("failed to invoke luajit: {}", e),
             duration_ms: start.elapsed().as_millis(),
         },
     }

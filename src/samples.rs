@@ -551,6 +551,84 @@ test "ringbuf_downsample" {
 }
 "#,
     },
+    SamplePreset {
+        id: "backoff",
+        title: "Adaptive Retry Backoff Planner (Seeded from LuaJIT + LuaCATS)",
+        description: "LuaJIT 2.1 + LuaCATS @enum/@class/@param, 1-based indexing bijection, guarded star_idiv & Wasm JIT",
+        initial_spoke: SpokeId::Lua,
+        source: r#"-- Backoff policy for network retry schedules
+---@enum BackoffPolicy
+local BackoffPolicy = {
+    Linear = 0,
+    Doubled = 1,
+}
+
+-- Summary of retry delays across a batch of attempts
+---@class BackoffReport
+---@field retries integer
+---@field total_wait_ms integer
+---@field mean_wait_ms integer
+local BackoffReport = {}
+function BackoffReport.new(o) return o end
+
+---@param base_ms integer
+---@param attempt integer
+---@param policy BackoffPolicy
+---@return integer
+local function step_delay(base_ms, attempt, policy)
+    do -- @star-match
+        local __star_m = policy
+        if __star_m == BackoffPolicy.Linear then
+            return base_ms * attempt
+        elseif __star_m == BackoffPolicy.Doubled then
+            return base_ms * attempt * 2
+        end
+    end
+    return base_ms
+end
+
+---@param attempts integer[]
+---@param base_ms integer
+---@param cap_ms integer
+---@param policy BackoffPolicy
+---@return BackoffReport
+local function plan_retries(attempts, base_ms, cap_ms, policy)
+    local retries = 0
+    local total_wait = 0
+    for i = 0, #attempts - 1 do
+        local att = attempts[i + 1]
+        if att > 0 then
+            local raw = step_delay(base_ms, att, policy)
+            local bounded = math.min(raw, cap_ms)
+            retries = retries + 1
+            total_wait = total_wait + bounded
+        end
+    end
+    local mean_wait = 0
+    if retries > 0 then
+        mean_wait = math.max(0, star_idiv(total_wait, retries))
+    end
+    assert(mean_wait >= 0)
+    return BackoffReport.new({ retries = retries, total_wait_ms = total_wait, mean_wait_ms = mean_wait })
+end
+
+local function main()
+    ---@type integer[]
+    local schedule = { 1, 2, 0, 3, 5 }
+    local rep = plan_retries(schedule, 50, 400, BackoffPolicy.Doubled)
+    star_print("retries:", rep.retries, "wait:", rep.total_wait_ms, "mean:", rep.mean_wait_ms)
+end
+
+local function test_backoff_schedule()
+    ---@type integer[]
+    local probe = { 1, 3 }
+    local res = plan_retries(probe, 100, 500, BackoffPolicy.Linear)
+    assert(star_eql(res, BackoffReport.new({ retries = 2, total_wait_ms = 400, mean_wait_ms = 200 })))
+end
+
+main()
+"#,
+    },
 ];
 
 pub fn find_sample(id: &str) -> Option<&'static SamplePreset> {

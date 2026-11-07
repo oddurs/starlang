@@ -30,6 +30,8 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: "0.16.0"
+      - name: Install LuaJIT
+        run: HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install luajit
       - name: Cache Cargo build
         uses: actions/cache@v4
         with:
@@ -42,6 +44,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Run integration & differential runtime suite
         run: cargo test
+      - name: Run zero-dependency WebAssembly 1.0 compiler & V8 JIT runner
+        run: cargo run --quiet -- wasm > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier

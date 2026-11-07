@@ -10,6 +10,7 @@ use crate::spokes::lens_for;
 use crate::trace::{trace_module_default, TraceReport};
 use crate::typecheck::{check_module, SemanticDiagnostic};
 use crate::verify::{verify_module, VerifyReport};
+use crate::wasm::{compile_wasm, run_wasm_jit, WasmArtifact, WasmRunReport};
 
 const LIVE_PREVIEW_STEP_BUDGET: usize = 50_000;
 
@@ -107,6 +108,14 @@ impl StarEngine {
 
     pub fn verify(&self) -> VerifyReport {
         verify_module(self.hub())
+    }
+
+    pub fn compile_wasm(&self) -> Result<WasmArtifact, String> {
+        compile_wasm(self.hub())
+    }
+
+    pub fn run_wasm(&self) -> WasmRunReport {
+        run_wasm_jit(self.hub())
     }
 
     /// Compute the pure semantic Hub AST delta between the current Hub and `source` in `spoke`.
