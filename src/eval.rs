@@ -257,6 +257,31 @@ pub fn eval_fn_call(
     vm.call_fn(fn_name, vals)
 }
 
+/// Evaluate `fn_name(args)` with concrete `Value` arguments and return `(return_value, stdout, steps)`.
+pub fn eval_fn_with_values(
+    hub: &HubModule,
+    fn_name: &str,
+    args: Vec<Value>,
+    max_steps: usize,
+) -> Result<(Value, String, usize), String> {
+    let mut fns: HashMap<&str, &FnDecl> = HashMap::new();
+    for item in &hub.items {
+        if let Item::Function(f) = item {
+            fns.insert(f.name.as_str(), f);
+        }
+    }
+    let mut vm = HubVm {
+        fns,
+        stdout: String::new(),
+        steps: 0,
+        max_steps,
+        depth: 0,
+        observer: None,
+    };
+    let ret = vm.call_fn(fn_name, args)?;
+    Ok((ret, vm.stdout, vm.steps))
+}
+
 struct HubVm<'a, 'b> {
     fns: HashMap<&'a str, &'a FnDecl>,
     stdout: String,

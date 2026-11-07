@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,7 +436,7 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v1.0 — 13-Spoke Bidirectional Compiler, WebAssembly & Time-Travel Studio</h1>
+        <h1>★ StarLang v1.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O & QuickCheck Studio</h1>
         <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm & 14-Engine Verification</p>
       </div>
     </div>
@@ -445,6 +445,8 @@
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
       <button class="debug-btn" id="debug-btn" title="Scrub forward & backward through execution steps across all 13 languages simultaneously & compute dynamic backward slices">⏱ Time-Travel</button>
+      <button class="trace-btn" id="complexity-btn" title="Profile static & empirical Big-O complexity, cyclomatic complexity, gas cost & 13-spoke code density">📈 Big-O & Gas</button>
+      <button class="verify-btn" id="qc-btn" title="Run property-based QuickCheck, invariant discovery & minimal counterexample shrinking across all 13 languages">🎲 QuickCheck</button>
       <button class="wasm-btn" id="wasm-btn" title="Compile Central Hub AST directly to W3C WebAssembly 1.0 binary (.wasm) + .wat & execute in V8 / Browser Wasm VM">📦 Compile Wasm</button>
       <button class="merge-btn" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 13 languages">🔀 3-Way Merge</button>
       <button class="verify-btn" id="verify-btn" title="Prove div-by-zero, bounds & assertions via interval abstract interpretation + concolic witnesses">🛡 Symbolic Verify</button>
@@ -653,6 +655,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="complexity-drawer">
+    <div class="run-header">
+      <span id="complexity-summary">📈 Asymptotic Big-O, Cyclomatic Complexity, Gas Profiler & 13-Spoke Code Density...</span>
+      <button onclick="document.getElementById('complexity-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="complexity-cards"></div>
+  </section>
+
+  <section id="qc-drawer">
+    <div class="run-header">
+      <span id="qc-summary">🎲 Polyglot Property-Based QuickCheck, Invariant Discovery & Minimal Counterexample Shrinker...</span>
+      <button onclick="document.getElementById('qc-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="qc-cards"></div>
+  </section>
 
   <section id="debug-drawer">
     <div class="run-header">
@@ -1403,6 +1421,83 @@
     document.getElementById("debug-next-btn").addEventListener("click", () => {
       const cur = parseInt(document.getElementById("debug-slider").value, 10) || 0;
       renderDebugStep(cur + 1);
+    });
+
+    document.getElementById("complexity-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("complexity-drawer");
+      const summary = document.getElementById("complexity-summary");
+      const cards = document.getElementById("complexity-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Profiling static & empirical Big-O scaling (N=4..64), gas breakdown & 13-spoke density...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/complexity", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const mg = data.module_gas || {};
+      summary.innerHTML = `<span style="color:#38bdf8;">📈 Dominant Complexity: ${data.dominant_big_o} · Max Cyclomatic: ${data.max_cyclomatic} · Max Loop Depth: ${data.max_loop_depth} · Module Gas: ${mg.total_gas} (compute:${mg.compute_gas} mem:${mg.memory_gas} alloc:${mg.alloc_gas} branch:${mg.branch_gas}) · Wasm: ${data.wasm_bytes}B</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const curve = (fn.scaling_points || [])
+          .map(p => `N=${p.n} → ${p.total_gas} gas (${p.steps} steps)`)
+          .join("\n");
+        card.innerHTML = `<strong>⚡ ${fn.signature}</strong><pre></pre>`;
+        card.querySelector("pre").textContent =
+          `Static: ${fn.static_big_o} | Empirical: ${fn.empirical_big_o} (${fn.growth_ratio}x/2N)\n` +
+          `Cyclomatic: ${fn.cyclomatic_complexity} | Loop Depth: ${fn.max_loop_depth} | Heap Sites: ${fn.heap_alloc_sites}\n\n` +
+          `[Scaling Curve]\n${curve}`;
+        cards.appendChild(card);
+      });
+
+      const densityCard = document.createElement("div");
+      densityCard.className = "run-card";
+      densityCard.innerHTML = `<strong>📐 13-Spoke Code-Size & Token Density Matrix</strong><pre></pre>`;
+      densityCard.querySelector("pre").textContent =
+        (data.spoke_metrics || [])
+          .map(m => `${m.display_name.padEnd(11)} · ${String(m.logic_lines).padStart(3)} logic L (${String(m.total_lines).padStart(3)} total) · ${String(m.tokens).padStart(4)} tok · ${m.bytes} B`)
+          .join("\n") + `\nWebAssembly · binary .wasm = ${data.wasm_bytes} B`;
+      cards.appendChild(densityCard);
+    });
+
+    document.getElementById("qc-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("qc-drawer");
+      const summary = document.getElementById("qc-summary");
+      const cards = document.getElementById("qc-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Running property-based QuickCheck, optimizer equivalence & counterexample shrinking...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/quickcheck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trials: "64" })
+      });
+      const data = await res.json();
+      const color = data.all_passed ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">🎲 QuickCheck Suite: ${data.total_trials} trials across ${data.total_functions} functions · ${data.optimizer_checks} optimizer equivalence checks · ${data.total_invariants} algebraic invariant(s) discovered (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(f => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const statusBadge = f.contract_safe && f.optimizer_equivalent
+          ? `✓ ${f.passed_trials}/${f.trials_run} passed`
+          : `✗ counterexample found`;
+        let body = `[${statusBadge} · Opt-Eq: ${f.optimizer_equivalent} · Deterministic: ${f.deterministic}]\n`;
+        if ((f.discovered_invariants || []).length > 0) {
+          body += `\nInvariants:\n` + f.discovered_invariants.map(i => `  • ${i}`).join("\n");
+        }
+        if (f.counterexample) {
+          const ce = f.counterexample;
+          const reproLines = Object.entries(ce.repro_by_spoke || {})
+            .map(([sp, code]) => `  [${sp}] ${code}`)
+            .join("\n");
+          body += `\n\n✗ Shrunk Counterexample (${ce.shrink_steps} shrink steps):\n  Initial:   ${ce.original_args}\n  Minimized: ${ce.minimized_args}\n  Fault:     ${ce.fault}\n${reproLines}`;
+        }
+        card.innerHTML = `<strong>🎲 ${f.signature}</strong><pre></pre>`;
+        card.querySelector("pre").textContent = body;
+        cards.appendChild(card);
+      });
     });
 
     document.getElementById("undo-btn").addEventListener("click", async () => {

@@ -48,6 +48,10 @@ jobs:
         run: cargo run --quiet -- wasm > /dev/null
       - name: Run polyglot time-travel debugger & backward causal slicer
         run: cargo run --quiet -- debug > /dev/null
+      - name: Run asymptotic Big-O, gas profiler & 13-spoke density analyzer
+        run: cargo run --quiet -- complexity > /dev/null
+      - name: Run polyglot QuickCheck, invariant discovery & counterexample shrinker
+        run: cargo run --quiet -- quickcheck > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier

@@ -93,6 +93,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "complexity" => {
+            if let Err(e) = run_complexity_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "quickcheck" => {
+            if let Err(e) = run_quickcheck_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -794,6 +806,156 @@ fn run_debug_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_complexity_cli(args: &[String]) -> Result<(), String> {
+    let (eng, label) = if let Some(p) = args.first() {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.complexity();
+    println!("=== Polyglot Asymptotic Big-O, Gas Profiler & 13-Spoke Code Density: {} ===", label);
+    println!(
+        "Dominant Big-O: {} | Max Cyclomatic: {} | Max Loop Depth: {} | Wasm Binary: {} B",
+        rep.dominant_big_o, rep.max_cyclomatic, rep.max_loop_depth, rep.wasm_bytes
+    );
+    println!(
+        "Module Execution Gas: {} total (compute: {}, memory: {}, alloc: {}, branch: {} across {} VM steps)\n",
+        rep.module_gas.total_gas,
+        rep.module_gas.compute_gas,
+        rep.module_gas.memory_gas,
+        rep.module_gas.alloc_gas,
+        rep.module_gas.branch_gas,
+        rep.module_gas.total_steps
+    );
+
+    println!("Per-Function Complexity & Empirical Scaling (N = 4, 8, 16, 32, 64):");
+    for f in &rep.functions {
+        let curve: Vec<String> = f
+            .scaling_points
+            .iter()
+            .map(|p| format!("N={}->{}g", p.n, p.total_gas))
+            .collect();
+        println!(
+            "  • {:<54} | Static: {:<6} | Empirical: {:<6} ({:.2}x/2N) | Cyc: {:>2} | Depth: {} | {}",
+            f.signature,
+            f.static_big_o,
+            f.empirical_big_o,
+            f.growth_ratio,
+            f.cyclomatic_complexity,
+            f.max_loop_depth,
+            curve.join(", ")
+        );
+    }
+
+    println!("\n13-Spoke Code-Size & Token Density Matrix:");
+    for m in &rep.spoke_metrics {
+        println!(
+            "  • {:<11} ({:<10}): {:>3} logic lines ({:>3} total) | {:>4} tokens | {:>5} bytes",
+            m.display_name, m.spoke, m.logic_lines, m.total_lines, m.tokens, m.bytes
+        );
+    }
+    Ok(())
+}
+
+fn run_quickcheck_cli(args: &[String]) -> Result<(), String> {
+    let mut target_arg: Option<&str> = None;
+    let mut trials: Option<usize> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--trials" || args[i] == "-n" {
+            if let Some(val) = args.get(i + 1).and_then(|s| s.parse::<usize>().ok()) {
+                trials = Some(val);
+            }
+            i += 2;
+        } else if !args[i].starts_with('-') && target_arg.is_none() {
+            target_arg = Some(args[i].as_str());
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    let (eng, label) = if let Some(p) = target_arg {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.quickcheck(trials);
+    println!("=== Polyglot Property-Based QuickCheck, Invariant Synthesizer & Shrinker: {} ===", label);
+    println!(
+        "Functions: {} | Trials: {} ({}/fn) | Optimizer Equivalence Checks: {} | Invariants: {} | Status: {} ({}ms)\n",
+        rep.total_functions,
+        rep.total_trials,
+        rep.trials_per_fn,
+        rep.optimizer_checks,
+        rep.total_invariants,
+        if rep.all_passed { "ALL PASSED" } else { "COUNTEREXAMPLE FOUND" },
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "  • {} — {}/{} passed | Opt-Eq: {} | Deterministic: {}",
+            f.signature,
+            f.passed_trials,
+            f.trials_run,
+            f.optimizer_equivalent,
+            f.deterministic
+        );
+        for inv in &f.discovered_invariants {
+            println!("      ✓ Invariant: {}", inv);
+        }
+        if let Some(ce) = &f.counterexample {
+            println!(
+                "      ✗ Shrunk Counterexample ({} shrink steps): {} -> {} => {}",
+                ce.shrink_steps, ce.original_args, ce.minimized_args, ce.fault
+            );
+            for (sp, line) in &ce.repro_by_spoke {
+                println!("          [{:<10}] {}", sp, line);
+            }
+        }
+    }
+
+    if !rep.all_passed {
+        return Err("QuickCheck found a property violation or crash counterexample".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -998,7 +1160,7 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v1.0 — 13-Spoke Bidirectional Compiler, WebAssembly & Time-Travel Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
+        "starlang v1.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O & QuickCheck Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
@@ -1006,6 +1168,8 @@ USAGE:
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
   cargo run -- debug [file|preset] [--slice var]    Record time-travel trace across all 13 languages & compute backward causal slice
+  cargo run -- complexity [file|preset]             Profile static & empirical Big-O scaling, gas cost & 13-spoke code density
+  cargo run -- quickcheck [file|preset] [--trials N] Run property-based QuickCheck, invariant discovery & counterexample shrinking
   cargo run -- wasm [file] [--wat] [--out a.wasm]   Compile Hub AST to W3C WebAssembly 1.0 (.wasm + .wat) & run in V8 JIT
   cargo run -- diff <left_file> <right_file>        Compute pure semantic Hub AST delta across any two languages
   cargo run -- merge [base left right] [--to X]     3-way concurrent cross-language Hub AST + metadata merger
@@ -1019,7 +1183,7 @@ USAGE:
   cargo run -- refactor <file> <sym> <new> [--to X] Scope-aware cross-language symbol rename
   cargo run -- optimize <file> [--to X]             Constant-fold & prune dead branches via the Hub
   cargo run -- run <file>                           Verify across Hub VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + ruby + luajit + perl + node
-  cargo run -- demo                                 Run an end-to-end 13-spoke sync, Wasm JIT, time-travel debug, 3-way merge, verify, mutate, fuzz & 14-engine demo"
+  cargo run -- demo                                 Run an end-to-end 13-spoke sync, Wasm JIT, time-travel, Big-O, QuickCheck, merge, verify & 14-engine demo"
     );
 }
 
@@ -1140,21 +1304,32 @@ fn run_cli_demo() -> Result<(), String> {
         return Err(format!("Wasm JIT failed on backoff: {:?}", bo_jit.error));
     }
 
-    println!("=== 7. Polyglot Time-Travel Debugger & Backward Causal Slicer (`ratelimit` Perl 5.34 preset) ===");
+    println!("=== 7. Polyglot Time-Travel Debugger, Big-O Profiler & QuickCheck (`ratelimit` Perl 5.34 preset) ===");
     let rl_sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
     let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source)
         .map_err(|d| d.to_string())?;
     let drep = rl_eng.time_travel(Some("avg_cost"));
     let slice_len = drep.slice.as_ref().map(|s| s.slice_steps.len()).unwrap_or(0);
+    let crep = rl_eng.complexity();
+    let qrep = rl_eng.quickcheck(Some(32));
     println!(
-        "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}\n",
+        "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
         drep.max_depth,
         slice_len,
         drep.final_stdout.trim()
     );
-    if !drep.ok || slice_len == 0 {
-        return Err("Time-travel debugger check failed on ratelimit".to_string());
+    println!(
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants discovered)\n",
+        crep.dominant_big_o,
+        crep.max_cyclomatic,
+        crep.module_gas.total_gas,
+        qrep.optimizer_checks,
+        qrep.total_trials,
+        qrep.total_invariants
+    );
+    if !drep.ok || slice_len == 0 || !qrep.all_passed {
+        return Err("Time-travel debugger or QuickCheck failed on ratelimit".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

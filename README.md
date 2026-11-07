@@ -19,6 +19,8 @@ A zero-dependency **star-topology bidirectional 13-language compiler, WebAssembl
 ## Highlights
 
 - **13 Bidirectional Asymmetric Lenses (`get` / `put`)**: Hand-written lexers, recursive-descent parsers, and idiomatic pretty-printers for **Rust**, **Zig 0.16**, **Modern ISO C11**, **Modern C++17**, **Swift 6**, **Modern Java 21**, **Go**, **Python**, **Modern Ruby + RBS**, **LuaJIT + LuaCATS** (0-based ⇄ 1-based indexing bijection), **Modern Perl 5.34** (`use feature 'signatures'`, arrayref/hashref dereferencing & type-directed string vs. numeric operators), **TypeScript**, and **Star S-Expr IR** (`GetPut` verified via property-based fuzzing).
+- **Asymptotic Big-O, Resource-Gas & 13-Spoke Code-Density Profiler**: Statically classifies loop-nesting and recursion complexity (`O(1)`, `O(N)`, `O(N²)`, `O(2^N)`), computes cyclomatic complexity and heap allocation sites, empirically curve-fits instruction gas across $N \in \{4, 8, 16, 32, 64\}$, and compares logic lines, tokens, and byte density across all 13 languages + `.wasm`.
+- **Polyglot Property-Based QuickCheck, Invariant Synthesizer & Minimal Counterexample Shrinker**: Automatically property-tests every function across generated trials, verifies unoptimized-vs-optimized Hub equivalence, discovers algebraic postconditions (including conservation laws such as `result.accepted + result.rejected == len(costs)`), and Delta-Debug shrinks any failing input to a minimal counterexample rendered in all 13 languages.
 - **Polyglot Time-Travel Debugger, 13-Spoke Line Mapper & Dynamic Backward Slicer**: Records deterministic step-by-step Hub VM traces, maps every AST statement to its exact 1-based line number across **all 13 languages simultaneously**, and computes dynamic data + control dependency backward causal slices for any variable or assertion.
 - **Zero-Dependency WebAssembly 1.0 Binary (`.wasm`) & Text (`.wat`) Compiler**: Hand-encodes W3C WebAssembly 1.0 binary sections (`Type`, `Import`, `Function`, `Memory`, `Global`, `Export`, `Code`, `Data`) with bump-allocated 8-byte-slot structs/lists and structured loop control flow in pure `std` Rust, executing `main` and `test_*` exports in V8's `WebAssembly.instantiate` JIT and directly in the browser.
 - **3-Way Cross-Language Semantic AST Merger & Diff**: Reconciles concurrent edits made in **two different languages** (e.g., Python + Zig or Perl + C++) directly on `NodeId`-aligned and LCS-aligned Hub AST nodes + sidecar metadata, projecting the unified result across all 13 languages or reporting pinpoint semantic conflicts.
@@ -33,7 +35,9 @@ A zero-dependency **star-topology bidirectional 13-language compiler, WebAssembl
 
 ```bash
 cargo run                         # Start 13-pane live Web Studio at http://127.0.0.1:7878
-cargo run -- demo                 # End-to-end 13-spoke sync, Wasm JIT, time-travel debug, merge, verify, mutate & fuzz demo
+cargo run -- demo                 # End-to-end 13-spoke sync, Wasm JIT, time-travel, Big-O, QuickCheck, merge & verify demo
+cargo run -- complexity           # Profile static & empirical Big-O scaling (N=4..64), gas cost & 13-spoke density
+cargo run -- quickcheck           # Run property-based QuickCheck, invariant discovery & counterexample shrinking
 cargo run -- debug                # Record 13-language time-travel trace & compute backward causal slice
 cargo run -- wasm                 # Compile Hub AST to W3C WebAssembly 1.0 (.wasm + .wat) & run in V8 JIT
 cargo run -- merge                # 3-way concurrent cross-language Hub AST merge showcase

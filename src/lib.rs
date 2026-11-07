@@ -1,3 +1,4 @@
+pub mod complexity;
 pub mod debugger;
 pub mod engine;
 pub mod eval;
@@ -7,6 +8,7 @@ pub mod json;
 pub mod lens;
 pub mod merge;
 pub mod mutate;
+pub mod quickcheck;
 pub mod reconcile;
 pub mod refactor;
 pub mod runner;
