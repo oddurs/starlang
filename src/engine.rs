@@ -9,6 +9,9 @@ use crate::merge::{diff_modules, merge_concurrent_edits, MergeReport, SemanticDi
 use crate::mutate::{harden_tests, mutate_module, HardenReport, MutationReport};
 use crate::quickcheck::{run_quickcheck, run_quickcheck_default, QuickCheckReport};
 use crate::refactor::{list_symbols, optimize_module, rename_symbol, SymbolEntry};
+use crate::repair::{
+    check_module_equivalence, inject_demo_bug, repair_module, EquivalenceReport, RepairReport,
+};
 use crate::spokes::lens_for;
 use crate::trace::{trace_module_default, TraceReport};
 use crate::typecheck::{check_module, SemanticDiagnostic};
@@ -134,6 +137,41 @@ impl StarEngine {
             Some(n) => run_quickcheck(self.hub(), n, 0x57A4_2026_1100),
             None => run_quickcheck_default(self.hub()),
         }
+    }
+
+    /// Run Automated Program Repair (fault localization + 4-gate CEGIS patch synthesis).
+    /// If `inject_if_healthy` is true and the module currently has 0 failing tests / refutations,
+    /// injects a realistic fault first and then repairs it back to a verified state.
+    pub fn repair(&mut self, inject_if_healthy: bool) -> (SyncSnapshot, RepairReport, Option<String>) {
+        let mut injected_desc = None;
+        let target_hub = {
+            let initial_check = repair_module(self.hub());
+            if initial_check.already_healthy && inject_if_healthy {
+                let (buggy, desc) = inject_demo_bug(self.hub());
+                injected_desc = Some(desc);
+                buggy
+            } else {
+                self.hub().clone()
+            }
+        };
+
+        let report = repair_module(&target_hub);
+        if report.repaired && !report.already_healthy {
+            let active = self.current().spoke;
+            self.push_hub(report.repaired_hub.clone(), active);
+        }
+        (self.snapshot(), report, injected_desc)
+    }
+
+    /// Check α-equivalence and QuickCheck bisimulation equivalence between the current Hub and `source` in `spoke`.
+    pub fn equiv_with(
+        &self,
+        spoke: SpokeId,
+        source: &str,
+        trials: usize,
+    ) -> Result<EquivalenceReport, Diagnostic> {
+        let other_hub = lens_for(spoke).put(source, self.hub())?;
+        Ok(check_module_equivalence(self.hub(), &other_hub, trials))
     }
 
     /// Compute the pure semantic Hub AST delta between the current Hub and `source` in `spoke`.

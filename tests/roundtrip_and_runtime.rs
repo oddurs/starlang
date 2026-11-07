@@ -560,6 +560,73 @@ fn asymptotic_complexity_profiler_and_polyglot_quickcheck_shrinker_verify_and_mi
 }
 
 #[test]
+fn cegis_automated_program_repair_and_alpha_bisimulation_verifier_heal_faults_across_thirteen_languages()
+{
+    // 1. Corrupt `ratelimit` in Perl (`$accepted += 1` -> `$accepted -= 1`) so unit tests fail
+    let sample = find_sample("ratelimit").unwrap();
+    let base_eng = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+    let corrupted_pl = base_eng
+        .project(SpokeId::Perl)
+        .replace("$accepted += 1;", "$accepted -= 1;");
+    let mut broken_eng = StarEngine::from_source(SpokeId::Perl, &corrupted_pl).unwrap();
+    let broken_snap = broken_eng.snapshot();
+    assert!(
+        broken_snap.test_results.iter().any(|t| !t.passed),
+        "Expected corrupted Perl program to fail unit test"
+    );
+
+    // 2. Run CEGIS Automated Program Repair (`repair(false)`) and verify 4-gate patch synthesis
+    let (repaired_snap, rep, _) = broken_eng.repair(false);
+    assert!(!rep.already_healthy);
+    assert!(rep.repaired, "Expected CEGIS repair to succeed: {:?}", rep);
+    assert_eq!(rep.tests_passed_before, 0);
+    assert_eq!(rep.tests_passed_after, rep.tests_total);
+    assert_eq!(rep.safety_refuted_after, 0);
+    assert!(rep.quickcheck_passed);
+    assert!(!rep.faults.is_empty());
+
+    let patch = rep.patch.expect("Expected synthesized patch");
+    assert_eq!(patch.func, "evaluate_quota");
+    assert_eq!(patch.kind, "AccumulatorOpRepair");
+    for spoke in SpokeId::ALL {
+        let diff = patch
+            .diffs_by_spoke
+            .get(spoke.as_str())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !diff.trim().is_empty(),
+            "Expected non-empty unified repair diff for {:?}",
+            spoke
+        );
+    }
+    assert!(
+        repaired_snap.test_results.iter().all(|t| t.passed),
+        "All unit tests should pass after auto-repair"
+    );
+
+    // 3. Verify De Bruijn α-Equivalence & Bisimulation between repaired Hub and original Hub
+    let eq_rep = broken_eng
+        .equiv_with(SpokeId::Rust, &base_eng.project(SpokeId::Rust), 32)
+        .unwrap();
+    assert!(eq_rep.all_equivalent, "{:?}", eq_rep);
+    assert_eq!(eq_rep.alpha_identical_count, eq_rep.shared_functions);
+
+    // 4. Verify bisimulation catches non-equivalent programs and shrinks the distinguishing witness
+    let neq_rep = base_eng
+        .equiv_with(SpokeId::Perl, &corrupted_pl, 32)
+        .unwrap();
+    assert!(!neq_rep.all_equivalent);
+    let quota_eq = neq_rep
+        .functions
+        .iter()
+        .find(|f| f.name == "evaluate_quota")
+        .unwrap();
+    assert!(!quota_eq.equivalent);
+    assert!(quota_eq.distinguishing_counterexample.is_some());
+}
+
+#[test]
 fn lua_spoke_and_zero_dep_wasm_backend_compile_sync_and_execute_in_v8_jit() {
     // 1. Seed from `backoff` (LuaJIT + LuaCATS preset) and verify symbolic safety obligations
     let sample = find_sample("backoff").unwrap();
@@ -1195,6 +1262,12 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(qc_resp.contains("\"ok\":true"), "quickcheck failed: {}", qc_resp);
     assert!(qc_resp.contains("\"all_passed\":true"), "quickcheck failed: {}", qc_resp);
     assert!(qc_resp.contains("\"discovered_invariants\":["));
+
+    // Verify /api/repair endpoint with demo fault injection + CEGIS patch synthesis
+    let rep_resp = send_http("POST", "/api/repair", "{\"inject_demo\":\"true\"}");
+    assert!(rep_resp.contains("\"ok\":true"), "repair failed: {}", rep_resp);
+    assert!(rep_resp.contains("\"repaired\":true"), "repair failed: {}", rep_resp);
+    assert!(rep_resp.contains("\"diffs_by_spoke\":{"), "repair missing diffs: {}", rep_resp);
 
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");

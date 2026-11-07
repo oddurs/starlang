@@ -105,6 +105,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "repair" => {
+            if let Err(e) = run_repair_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "equiv" => {
+            if let Err(e) = run_equiv_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -956,6 +968,126 @@ fn run_quickcheck_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_repair_cli(args: &[String]) -> Result<(), String> {
+    let mut target_arg: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && target_arg.is_none() {
+            target_arg = Some(a.as_str());
+        }
+    }
+
+    let (mut eng, label) = if let Some(p) = target_arg {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let (_, rep, injected) = eng.repair(true);
+    println!("=== Counterexample-Guided Automated Program Repair (CEGIS): {} ===", label);
+    if let Some(inj) = &injected {
+        println!("Injected Demo Fault: {}", inj);
+    }
+    println!(
+        "Status: {} | Candidates Evaluated: {} | Tests: {}/{} -> {}/{} | Safety Refuted: {} -> {} | QuickCheck: {} ({}ms)\n",
+        if rep.repaired { "VERIFIED PATCH SYNTHESIZED" } else { "UNRESOLVED" },
+        rep.candidates_evaluated,
+        rep.tests_passed_before,
+        rep.tests_total,
+        rep.tests_passed_after,
+        rep.tests_total,
+        rep.safety_refuted_before,
+        rep.safety_refuted_after,
+        if rep.quickcheck_passed { "OK" } else { "FAIL" },
+        rep.elapsed_ms
+    );
+
+    if !rep.faults.is_empty() {
+        println!("Localized Faults via Time-Travel Backward Slice:");
+        for f in &rep.faults {
+            println!("  • [stmt #{} in {}()] {}", f.stmt_id, f.func, f.symptom);
+        }
+        println!();
+    }
+
+    if let Some(p) = &rep.patch {
+        println!(
+            "Synthesized Patch: [{}] in {}() (stmt #{}) :: {} -> {}",
+            p.kind, p.func, p.stmt_id, p.before_summary, p.after_summary
+        );
+        for spoke_key in ["rust", "zig", "c", "python", "lua", "perl"] {
+            if let Some(diff) = p.diffs_by_spoke.get(spoke_key) {
+                if !diff.trim().is_empty() {
+                    println!("  [{}]\n    {}", spoke_key, diff.replace('\n', "\n    "));
+                }
+            }
+        }
+    }
+
+    if !rep.repaired {
+        return Err("could not synthesize a 4-gate verified repair patch".to_string());
+    }
+    Ok(())
+}
+
+fn run_equiv_cli(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("usage: starlang equiv <left_file> <right_file>".to_string());
+    }
+    let (left_eng, left_spoke) = load_engine_from_path(&args[0])?;
+    let (right_spoke, right_src) = infer_spoke_and_read(&args[1])?;
+    let rep = left_eng
+        .equiv_with(right_spoke, &right_src, 32)
+        .map_err(|d| d.to_string())?;
+
+    println!(
+        "=== Polyglot α-Equivalence & Bisimulation Verifier: {} ({}) <-> {} ({}) ===",
+        args[0],
+        left_spoke.display_name(),
+        args[1],
+        right_spoke.display_name()
+    );
+    println!(
+        "Shared Functions: {} | De Bruijn α-Identical: {} | Bisimulation Trials: {} | Equivalent: {} ({}ms)",
+        rep.shared_functions,
+        rep.alpha_identical_count,
+        rep.total_trials,
+        rep.all_equivalent,
+        rep.elapsed_ms
+    );
+    for f in &rep.functions {
+        println!(
+            "  • {} — α-identical: {} | bisimulation ({} trials): {}",
+            f.signature, f.alpha_equivalent, f.bisimulation_trials, f.equivalent
+        );
+        if let Some(ce) = &f.distinguishing_counterexample {
+            println!(
+                "      ✗ Distinguishing Input ({} shrink steps): {} => {}",
+                ce.shrink_steps, ce.minimized_args, ce.fault
+            );
+        }
+    }
+    if !rep.all_equivalent {
+        return Err("modules are not behaviorally equivalent".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -1170,6 +1302,8 @@ USAGE:
   cargo run -- debug [file|preset] [--slice var]    Record time-travel trace across all 13 languages & compute backward causal slice
   cargo run -- complexity [file|preset]             Profile static & empirical Big-O scaling, gas cost & 13-spoke code density
   cargo run -- quickcheck [file|preset] [--trials N] Run property-based QuickCheck, invariant discovery & counterexample shrinking
+  cargo run -- repair [file|preset]                 Localize faults via backward slicing & synthesize a 4-gate verified AST patch
+  cargo run -- equiv <left_file> <right_file>       Verify De Bruijn α-equivalence & QuickCheck bisimulation across any two files
   cargo run -- wasm [file] [--wat] [--out a.wasm]   Compile Hub AST to W3C WebAssembly 1.0 (.wasm + .wat) & run in V8 JIT
   cargo run -- diff <left_file> <right_file>        Compute pure semantic Hub AST delta across any two languages
   cargo run -- merge [base left right] [--to X]     3-way concurrent cross-language Hub AST + metadata merger
@@ -1312,6 +1446,8 @@ fn run_cli_demo() -> Result<(), String> {
     let slice_len = drep.slice.as_ref().map(|s| s.slice_steps.len()).unwrap_or(0);
     let crep = rl_eng.complexity();
     let qrep = rl_eng.quickcheck(Some(32));
+    let mut repair_eng = rl_eng;
+    let (_, rrep, _) = repair_eng.repair(true);
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -1320,16 +1456,18 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants discovered)\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates)\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
         qrep.optimizer_checks,
         qrep.total_trials,
-        qrep.total_invariants
+        qrep.total_invariants,
+        rrep.repaired,
+        rrep.candidates_evaluated
     );
-    if !drep.ok || slice_len == 0 || !qrep.all_passed {
-        return Err("Time-travel debugger or QuickCheck failed on ratelimit".to_string());
+    if !drep.ok || slice_len == 0 || !qrep.all_passed || !rrep.repaired {
+        return Err("Time-travel debugger, QuickCheck, or Auto-Repair failed on ratelimit".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");
