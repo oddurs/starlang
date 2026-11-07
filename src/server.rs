@@ -7,6 +7,7 @@ use crate::engine::{StarEngine, SyncSnapshot};
 use crate::hub::Diagnostic;
 use crate::json::{json_str, parse_flat_json_object};
 use crate::lens::SpokeId;
+use crate::merge::{MergeReport, SemanticDiffReport};
 use crate::mutate::MutationReport;
 use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
@@ -20,9 +21,9 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v0.7 — 10-Spoke Bidirectional Compiler Studio running at:");
+    println!("StarLang v0.8 — 11-Spoke Bidirectional Compiler Studio running at:");
     println!("  -> http://{}", addr);
-    println!("Edit Rust, C11, C++, Swift, Java, Go, Python, Ruby, TypeScript, or Star S-Expr to sync all spokes, live VM, symbolic safety proofs, tests, coverage & mutation testing.\n");
+    println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, TypeScript, or Star S-Expr to sync all spokes, 3-way polyglot AST merge, symbolic safety proofs, tests, coverage & mutation testing.\n");
 
     serve_listener(listener)
 }
@@ -237,6 +238,78 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 snapshot_to_json(&snap)
             );
             send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/diff") => {
+            let parsed = match parse_flat_json_object(&body) {
+                Ok(m) => m,
+                Err(e) => {
+                    let err = format!("{{\"ok\":false,\"error\":{}}}", json_str(&e));
+                    return send_response(&mut stream, 400, "application/json", &err);
+                }
+            };
+            let spoke_name = parsed.get("spoke").map(|s| s.as_str()).unwrap_or("");
+            let source = parsed.get("source").cloned().unwrap_or_default();
+            let Some(spoke) = SpokeId::from_name_or_ext(spoke_name) else {
+                return send_response(
+                    &mut stream,
+                    400,
+                    "application/json",
+                    "{\"ok\":false,\"error\":\"unknown spoke\"}",
+                );
+            };
+            let eng = shared.lock().unwrap();
+            match eng.diff_with(spoke, &source) {
+                Ok(rep) => {
+                    let payload = diff_to_json(&rep);
+                    send_response(&mut stream, 200, "application/json", &payload)
+                }
+                Err(diag) => {
+                    let payload = format!(
+                        "{{\"ok\":false,\"diagnostic\":{}}}",
+                        diagnostic_to_json(&diag)
+                    );
+                    send_response(&mut stream, 200, "application/json", &payload)
+                }
+            }
+        }
+        ("POST", "/api/merge") => {
+            let parsed = match parse_flat_json_object(&body) {
+                Ok(m) => m,
+                Err(e) => {
+                    let err = format!("{{\"ok\":false,\"error\":{}}}", json_str(&e));
+                    return send_response(&mut stream, 400, "application/json", &err);
+                }
+            };
+            let left_name = parsed.get("left_spoke").map(|s| s.as_str()).unwrap_or("");
+            let left_src = parsed.get("left_source").cloned().unwrap_or_default();
+            let right_name = parsed.get("right_spoke").map(|s| s.as_str()).unwrap_or("");
+            let right_src = parsed.get("right_source").cloned().unwrap_or_default();
+            let (Some(left_spoke), Some(right_spoke)) = (
+                SpokeId::from_name_or_ext(left_name),
+                SpokeId::from_name_or_ext(right_name),
+            ) else {
+                return send_response(
+                    &mut stream,
+                    400,
+                    "application/json",
+                    "{\"ok\":false,\"error\":\"unknown left_spoke or right_spoke\"}",
+                );
+            };
+
+            let mut eng = shared.lock().unwrap();
+            match eng.merge_concurrent(left_spoke, &left_src, right_spoke, &right_src) {
+                Ok((snap, rep)) => {
+                    let payload = merge_to_json(&snap, &rep);
+                    send_response(&mut stream, 200, "application/json", &payload)
+                }
+                Err(diag) => {
+                    let payload = format!(
+                        "{{\"ok\":false,\"diagnostic\":{}}}",
+                        diagnostic_to_json(&diag)
+                    );
+                    send_response(&mut stream, 200, "application/json", &payload)
+                }
+            }
         }
         ("POST", "/api/run") => {
             let report = {
@@ -497,6 +570,65 @@ fn verify_to_json(report: &VerifyReport) -> String {
         report.elapsed_ms,
         ob_entries.join(","),
         dead_entries.join(",")
+    )
+}
+
+fn diff_to_json(report: &SemanticDiffReport) -> String {
+    let entries: Vec<String> = report
+        .deltas
+        .iter()
+        .map(|d| {
+            format!(
+                "{{\"kind\":{},\"scope\":{},\"summary\":{}}}",
+                json_str(d.kind),
+                json_str(&d.scope),
+                json_str(&d.summary)
+            )
+        })
+        .collect();
+    format!(
+        "{{\"ok\":true,\"identical\":{},\"deltas\":[{}]}}",
+        report.identical,
+        entries.join(",")
+    )
+}
+
+fn merge_to_json(snap: &SyncSnapshot, report: &MergeReport) -> String {
+    let applied: Vec<String> = report
+        .applied_changes
+        .iter()
+        .map(|a| {
+            format!(
+                "{{\"spoke\":{},\"scope\":{},\"summary\":{}}}",
+                json_str(a.spoke.display_name()),
+                json_str(&a.scope),
+                json_str(&a.summary)
+            )
+        })
+        .collect();
+    let conflicts: Vec<String> = report
+        .conflicts
+        .iter()
+        .map(|c| {
+            format!(
+                "{{\"node_id\":{},\"scope\":{},\"description\":{},\"base_summary\":{},\"left_spoke\":{},\"left_summary\":{},\"right_spoke\":{},\"right_summary\":{}}}",
+                c.node_id,
+                json_str(&c.scope),
+                json_str(&c.description),
+                json_str(&c.base_summary),
+                json_str(c.left_spoke.display_name()),
+                json_str(&c.left_summary),
+                json_str(c.right_spoke.display_name()),
+                json_str(&c.right_summary)
+            )
+        })
+        .collect();
+    format!(
+        "{{\"ok\":true,\"clean\":{},\"applied_changes\":[{}],\"conflicts\":[{}],\"snapshot\":{}}}",
+        report.clean,
+        applied.join(","),
+        conflicts.join(","),
+        snapshot_to_json(snap)
     )
 }
 

@@ -5,7 +5,9 @@ use std::thread;
 use starlang::engine::StarEngine;
 use starlang::eval::eval_module;
 use starlang::fuzzer::run_fuzz_suite;
+use starlang::json::json_str;
 use starlang::lens::SpokeId;
+use starlang::merge::diff_sources;
 use starlang::runner::run_all_spokes;
 use starlang::samples::{find_sample, SAMPLES};
 use starlang::server::serve_listener;
@@ -194,10 +196,10 @@ fn cpp_swift_java_go_and_ruby_edits_on_enums_and_metadata_sync_across_all_nine_s
     assert_eq!(snap3.live_eval.stdout.trim(), "checked=3 score=15");
 
     let report = run_all_spokes(&engine);
-    assert_eq!(report.results.len(), 10);
+    assert_eq!(report.results.len(), 11);
     assert!(
         report.outputs_match,
-        "10-engine outputs diverged: {:?}",
+        "11-engine outputs diverged: {:?}",
         report.results
     );
     assert_eq!(report.results[0].stdout.trim(), "checked=3 score=15");
@@ -261,6 +263,7 @@ fn polyglot_unit_tests_and_assertions_sync_and_catch_regressions_live() {
     let snap = engine.snapshot();
     assert!(snap.views["rust"].contains("#[test]\nfn test_token_bucket_burst()"));
     assert!(snap.views["rust"].contains("assert_eq!(result, BucketState"));
+    assert!(snap.views["zig"].contains("test \"token_bucket_burst\""));
     assert!(snap.views["c"].contains("void test_token_bucket_burst(void)"));
     assert!(snap.views["cpp"].contains("void test_token_bucket_burst()"));
     assert!(snap.views["swift"].contains("func test_token_bucket_burst()"));
@@ -343,6 +346,7 @@ fn hub_mutation_testing_detects_weak_tests_and_auto_hardens_across_nine_spokes()
             snap.views[key]
         );
     }
+    assert!(snap.views["zig"].contains("test \"mutation_hardened\""));
 
     let hardened_hub = engine.hub().clone();
     for spoke in SpokeId::ALL {
@@ -358,7 +362,7 @@ fn hub_mutation_testing_detects_weak_tests_and_auto_hardens_across_nine_spokes()
 }
 
 #[test]
-fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_ten_spokes() {
+fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_eleven_spokes() {
     let report = run_fuzz_suite(0x57A4_2026_0500, 50);
     assert!(
         report.ok(),
@@ -367,9 +371,105 @@ fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_ten_spokes()
         report.failures.join("\n\n")
     );
     assert_eq!(report.programs_tested, 50);
-    assert_eq!(report.spoke_roundtrips, 50 * 10);
+    assert_eq!(report.spoke_roundtrips, 50 * 11);
     assert_eq!(report.assertions_passed, 50);
     assert_eq!(report.optimizer_checks, 50);
+}
+
+#[test]
+fn three_way_cross_language_ast_merger_reconciles_concurrent_edits_and_detects_conflicts() {
+    let sample = find_sample("alerts").unwrap();
+    let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+
+    // 1. Cross-language semantic diff between projected Zig and Python views of the same Hub is empty
+    let zig_base = engine.project(SpokeId::Zig);
+    let py_base = engine.project(SpokeId::Python);
+    let initial_diff = diff_sources(SpokeId::Zig, &zig_base, SpokeId::Python, &py_base).unwrap();
+    assert!(
+        initial_diff.identical,
+        "Projected Zig and Python views of same Hub should have 0 semantic deltas, got {:?}",
+        initial_diff.deltas
+    );
+
+    // 2. Concurrent non-overlapping edits off the same base Hub:
+    //    - Alice (Zig 0.16): adds `Fatal = 3` variant + `ms >= 1000` threshold + `.Fatal => return 10`
+    //    - Bob (C++): switches `latencies` to pass-by-value (`cpp.pass=value`) AND updates `main()` window
+    let zig_alice = zig_base
+        .replace(
+            "    Critical = 2,\n};",
+            "    Critical = 2,\n    Fatal = 3,\n};",
+        )
+        .replace(
+            "    if (ms >= 500) {\n        return Severity.Critical;",
+            "    if (ms >= 1000) {\n        return Severity.Fatal;\n    } else if (ms >= 500) {\n        return Severity.Critical;",
+        )
+        .replace(
+            "        Severity.Critical => {\n            return 5;\n        },",
+            "        Severity.Critical => {\n            return 5;\n        },\n        Severity.Fatal => {\n            return 10;\n        },",
+        );
+
+    let cpp_base = engine.project(SpokeId::Cpp);
+    let cpp_bob = cpp_base
+        .replace(
+            "const std::vector<int64_t>& latencies",
+            "std::vector<int64_t> latencies",
+        )
+        .replace(
+            "std::vector<int64_t>{80, -1, 240, 610, 520, 90}",
+            "std::vector<int64_t>{80, -1, 1200, 240, 90}",
+        )
+        .replace(
+            "evaluate_window(samples, int64_t(6))",
+            "evaluate_window(samples, int64_t(15))",
+        );
+
+    let (merged_snap, mrep) = engine
+        .merge_concurrent(SpokeId::Zig, &zig_alice, SpokeId::Cpp, &cpp_bob)
+        .expect("3-way merge should parse cleanly");
+
+    assert!(mrep.clean, "Expected clean 3-way merge, got conflicts: {:?}", mrep.conflicts);
+    assert!(mrep.conflicts.is_empty());
+    assert!(mrep.applied_changes.len() >= 3, "{:?}", mrep.applied_changes);
+    assert!(merged_snap.semantic_diagnostics.is_empty(), "{:?}", merged_snap.semantic_diagnostics);
+
+    // Unified Hub preserves Rust `&[i64]` slice metadata + Bob's C++ value metadata + Alice's Zig enum!
+    assert!(merged_snap.views["rust"].contains("latencies: &[i64]"));
+    assert!(merged_snap.views["rust"].contains("    Fatal,\n"));
+    assert!(merged_snap.views["cpp"].contains("std::string evaluate_window(std::vector<int64_t> latencies"));
+    assert!(merged_snap.views["zig"].contains("Fatal = 3,"));
+    assert!(merged_snap.views["python"].contains("samples = [80, -1, 1200, 240, 90]"));
+    assert_eq!(merged_snap.live_eval.stdout.trim(), "checked=4 score=11");
+
+    // Idempotence check: merging identical forks produces 0 conflicts and preserves Hub
+    let zig_after = engine.project(SpokeId::Zig);
+    let (_, idem_rep) = engine
+        .merge_concurrent(SpokeId::Zig, &zig_after, SpokeId::Zig, &zig_after)
+        .unwrap();
+    assert!(idem_rep.clean);
+    assert!(idem_rep.conflicts.is_empty());
+
+    // 3. Conflicting concurrent edits to the SAME `Match` arm in Zig vs Ruby:
+    let rev_before_conflict = engine.revision();
+    let zig_conflict = engine.project(SpokeId::Zig).replace(
+        "        Severity.Fatal => {\n            return 10;\n        },",
+        "        Severity.Fatal => {\n            return 25;\n        },",
+    );
+    let rb_conflict = engine.project(SpokeId::Ruby).replace(
+        "  when Severity::Fatal\n    return 10",
+        "  when Severity::Fatal\n    return 99",
+    );
+    let (_, crep) = engine
+        .merge_concurrent(SpokeId::Zig, &zig_conflict, SpokeId::Ruby, &rb_conflict)
+        .unwrap();
+    assert!(!crep.clean, "Expected Modify/Modify conflict on .Fatal return weight");
+    assert!(!crep.conflicts.is_empty());
+    assert!(
+        crep.conflicts.iter().any(|c| c.scope.contains("severity_weight")),
+        "Expected conflict scoped to severity_weight, got {:?}",
+        crep.conflicts
+    );
+    // Engine revision must NOT advance when merge has conflicts!
+    assert_eq!(engine.revision(), rev_before_conflict);
 }
 
 #[test]
@@ -586,6 +686,7 @@ fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_nine_spokes
     // `25 * 4` -> `100`, `(sample + 0) * 1` -> `sample`, and `if (false)` pruned in every language!
     for spoke_key in [
         "rust",
+        "zig",
         "c",
         "cpp",
         "swift",
@@ -694,11 +795,11 @@ fn undo_and_redo_walk_cross_language_history_stack() {
 }
 
 #[test]
-fn all_samples_compile_and_produce_identical_output_across_ten_engines() {
+fn all_samples_compile_and_produce_identical_output_across_eleven_engines() {
     for sample in SAMPLES {
         let engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
         let report = run_all_spokes(&engine);
-        assert_eq!(report.results.len(), 10);
+        assert_eq!(report.results.len(), 11);
 
         for r in &report.results {
             assert!(
@@ -710,6 +811,7 @@ fn all_samples_compile_and_produce_identical_output_across_ten_engines() {
                 r.stderr,
                 match r.language {
                     "Rust (rustc)" => engine.project(SpokeId::Rust),
+                    "Zig (zig)" => engine.project(SpokeId::Zig),
                     "C11 (clang)" => engine.project(SpokeId::C),
                     "C++ (clang++)" => engine.project(SpokeId::Cpp),
                     "Swift (swiftc)" => engine.project(SpokeId::Swift),
@@ -731,7 +833,7 @@ fn all_samples_compile_and_produce_identical_output_across_ten_engines() {
 }
 
 #[test]
-fn web_studio_http_api_syncs_verifies_traces_mutates_hardens_and_runs_ten_engines() {
+fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_eleven_engines() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
@@ -755,6 +857,7 @@ fn web_studio_http_api_syncs_verifies_traces_mutates_hardens_and_runs_ten_engine
 
     let state_resp = send_http("GET", "/api/state", "");
     assert!(state_resp.contains("HTTP/1.1 200 OK"));
+    assert!(state_resp.contains("\"zig\":"));
     assert!(state_resp.contains("\"c\":"));
     assert!(state_resp.contains("\"swift\":"));
     assert!(state_resp.contains("\"java\":"));
@@ -811,10 +914,27 @@ fn web_studio_http_api_syncs_verifies_traces_mutates_hardens_and_runs_ten_engine
     assert!(ref_resp.contains("static long clamp_sensor("));
     assert!(ref_resp.contains("def clamp_sensor("));
 
-    // Execute across all 10 engines via /api/run
+    // Verify /api/diff and /api/merge endpoints
+    let py_fork = "# Calibrate sensor readings with foldable constants and algebraic identities\ndef clamp_sensor(sample: int) -> int:\n    ceiling = 100\n    adjusted = sample\n    return min(adjusted, ceiling)\n\ndef main() -> None:\n    readings = [12, 85, 140, 64]\n    total = 0\n    for r in readings:\n        total += clamp_sensor(r)\n    print(\"calibrated_sum:\", total)\n\ndef test_calibration_ceiling() -> None:\n    assert clamp_sensor(42) == 42\n    assert clamp_sensor(180) == 100\n\nif __name__ == \"__main__\":\n    main()\n";
+    let diff_body = format!("{{\"spoke\":\"python\",\"source\":{}}}", json_str(py_fork));
+    let diff_resp = send_http("POST", "/api/diff", &diff_body);
+    assert!(diff_resp.contains("\"ok\":true"), "diff failed: {}", diff_resp);
+    assert!(diff_resp.contains("\"identical\":true"), "diff expected identical: {}", diff_resp);
+
+    let merge_body = format!(
+        "{{\"left_spoke\":\"python\",\"left_source\":{},\"right_spoke\":\"python\",\"right_source\":{}}}",
+        json_str(py_fork),
+        json_str(py_fork)
+    );
+    let merge_resp = send_http("POST", "/api/merge", &merge_body);
+    assert!(merge_resp.contains("\"ok\":true"), "merge failed: {}", merge_resp);
+    assert!(merge_resp.contains("\"clean\":true"), "merge expected clean: {}", merge_resp);
+
+    // Execute across all 11 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
     assert!(run_resp.contains("Hub VM (native)"));
+    assert!(run_resp.contains("Zig (zig)"));
     assert!(run_resp.contains("C11 (clang)"));
     assert!(run_resp.contains("C++ (clang++)"));
     assert!(run_resp.contains("Swift (swiftc)"));

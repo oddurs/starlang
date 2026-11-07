@@ -62,7 +62,7 @@ pub fn watch_directory(dir: &Path, stem: &str) -> Result<(), String> {
     for (spoke, path) in &paths {
         println!("  - {:<12} {}", spoke.display_name(), path.display());
     }
-    println!("Edit and save ANY file above — the other 9 will update automatically. (Ctrl+C to stop)\n");
+    println!("Edit and save ANY file above — the other 10 will update automatically. (Ctrl+C to stop)\n");
 
     loop {
         thread::sleep(Duration::from_millis(180));
@@ -105,7 +105,7 @@ pub fn watch_directory(dir: &Path, stem: &str) -> Result<(), String> {
                     }
 
                     println!(
-                        "[rev {}] Synced edit from {} -> updated other 9 spokes ({} Hub nodes)",
+                        "[rev {}] Synced edit from {} -> updated other 10 spokes ({} Hub nodes)",
                         snap.revision,
                         spoke.display_name(),
                         snap.node_count
