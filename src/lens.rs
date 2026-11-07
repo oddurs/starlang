@@ -11,12 +11,13 @@ pub enum SpokeId {
     Go,
     Python,
     Ruby,
+    Lua,
     TypeScript,
     Star,
 }
 
 impl SpokeId {
-    pub const ALL: [SpokeId; 11] = [
+    pub const ALL: [SpokeId; 12] = [
         SpokeId::Rust,
         SpokeId::Zig,
         SpokeId::C,
@@ -26,6 +27,7 @@ impl SpokeId {
         SpokeId::Go,
         SpokeId::Python,
         SpokeId::Ruby,
+        SpokeId::Lua,
         SpokeId::TypeScript,
         SpokeId::Star,
     ];
@@ -41,6 +43,7 @@ impl SpokeId {
             SpokeId::Go => "go",
             SpokeId::Python => "python",
             SpokeId::Ruby => "ruby",
+            SpokeId::Lua => "lua",
             SpokeId::TypeScript => "typescript",
             SpokeId::Star => "star",
         }
@@ -57,6 +60,7 @@ impl SpokeId {
             SpokeId::Go => "Go",
             SpokeId::Python => "Python",
             SpokeId::Ruby => "Ruby",
+            SpokeId::Lua => "Lua",
             SpokeId::TypeScript => "TypeScript",
             SpokeId::Star => "Star S-Expr",
         }
@@ -73,6 +77,7 @@ impl SpokeId {
             SpokeId::Go => "go",
             SpokeId::Python => "py",
             SpokeId::Ruby => "rb",
+            SpokeId::Lua => "lua",
             SpokeId::TypeScript => "ts",
             SpokeId::Star => "star",
         }
@@ -91,6 +96,7 @@ impl SpokeId {
             SpokeId::Go => Some("go."),
             SpokeId::Python => Some("py."),
             SpokeId::Ruby => Some("ruby."),
+            SpokeId::Lua => Some("lua."),
             SpokeId::TypeScript => Some("ts."),
             SpokeId::Star => None,
         }
@@ -107,6 +113,7 @@ impl SpokeId {
             "go" | "golang" | ".go" => Some(SpokeId::Go),
             "python" | "py" | ".py" => Some(SpokeId::Python),
             "ruby" | "rb" | ".rb" => Some(SpokeId::Ruby),
+            "lua" | "luajit" | ".lua" => Some(SpokeId::Lua),
             "typescript" | "ts" | ".ts" => Some(SpokeId::TypeScript),
             "star" | "sexpr" | "lisp" | ".star" => Some(SpokeId::Star),
             _ => None,

@@ -14,6 +14,7 @@ use starlang::server::serve_listener;
 use starlang::spokes::lens_for;
 use starlang::typecheck::check_module;
 use starlang::verify::{ObligationKind, VerifyStatus};
+use starlang::wasm::{compile_wasm, run_wasm_jit};
 
 #[test]
 fn get_put_law_holds_across_all_spokes_and_samples() {
@@ -196,10 +197,10 @@ fn cpp_swift_java_go_and_ruby_edits_on_enums_and_metadata_sync_across_all_nine_s
     assert_eq!(snap3.live_eval.stdout.trim(), "checked=3 score=15");
 
     let report = run_all_spokes(&engine);
-    assert_eq!(report.results.len(), 11);
+    assert_eq!(report.results.len(), 13);
     assert!(
         report.outputs_match,
-        "11-engine outputs diverged: {:?}",
+        "13-engine outputs diverged: {:?}",
         report.results
     );
     assert_eq!(report.results[0].stdout.trim(), "checked=3 score=15");
@@ -337,6 +338,7 @@ fn hub_mutation_testing_detects_weak_tests_and_auto_hardens_across_nine_spokes()
         "go",
         "python",
         "ruby",
+        "lua",
         "typescript",
     ] {
         assert!(
@@ -371,9 +373,64 @@ fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_eleven_spoke
         report.failures.join("\n\n")
     );
     assert_eq!(report.programs_tested, 50);
-    assert_eq!(report.spoke_roundtrips, 50 * 11);
+    assert_eq!(report.spoke_roundtrips, 50 * 12);
     assert_eq!(report.assertions_passed, 50);
     assert_eq!(report.optimizer_checks, 50);
+}
+
+#[test]
+fn lua_spoke_and_zero_dep_wasm_backend_compile_sync_and_execute_in_v8_jit() {
+    // 1. Seed from `backoff` (LuaJIT + LuaCATS preset) and verify symbolic safety obligations
+    let sample = find_sample("backoff").unwrap();
+    let engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+    let ver = engine.verify();
+    assert_eq!(ver.total_obligations, 3, "{:?}", ver);
+    assert_eq!(ver.proven_safe, 3, "{:?}", ver);
+    assert_eq!(ver.refuted, 0, "{:?}", ver);
+    assert!(ver.all_safe());
+
+    // 2. Verify 1-based Lua `attempts[i + 1]` and `for i = 0, #attempts - 1 do` lifted to 0-based Hub
+    let rs_view = engine.project(SpokeId::Rust);
+    assert!(rs_view.contains("for i in 0..attempts.len() as i64"), "{}", rs_view);
+    assert!(rs_view.contains("attempts[i as usize]"), "{}", rs_view);
+
+    // 3. Edit Lua on `scores` preset (which has Rust `&[i64]` slice metadata) using 1-based indexing
+    let scores = find_sample("scores").unwrap();
+    let mut sc_eng = StarEngine::from_source(scores.initial_spoke, scores.source).unwrap();
+    let lua_scores = sc_eng.project(SpokeId::Lua);
+    assert!(lua_scores.contains("---@param scores integer[]"));
+    let lua_edited = lua_scores.replace("clamp_scores(raw, 100)", "clamp_scores(raw, 85)");
+    let sc_snap = sc_eng.apply_edit(SpokeId::Lua, &lua_edited).unwrap();
+    assert!(sc_snap.views["rust"].contains("scores: &[i64]"));
+    assert!(sc_snap.views["rust"].contains("clamp_scores(&raw, 85)"));
+
+    // 4. Compile every built-in preset to W3C WebAssembly 1.0 binary (.wasm) + .wat and run in V8 JIT
+    for preset in SAMPLES {
+        let eng = StarEngine::from_source(preset.initial_spoke, preset.source).unwrap();
+        let snap = eng.snapshot();
+        let art = compile_wasm(eng.hub()).unwrap_or_else(|e| {
+            panic!("Failed compiling '{}' to Wasm: {}", preset.id, e)
+        });
+        assert_eq!(&art.bytes[0..8], b"\0asm\x01\x00\x00\x00");
+        assert!(art.wat.contains("(module"));
+        assert!(art.exports.contains(&"memory".to_string()));
+        assert!(art.exports.contains(&"main".to_string()));
+
+        let wrep = run_wasm_jit(eng.hub());
+        assert!(
+            wrep.ok,
+            "Wasm V8 JIT failed on preset '{}': {:?}\nWAT:\n{}",
+            preset.id, wrep.error, art.wat
+        );
+        assert_eq!(
+            wrep.stdout.trim(),
+            snap.live_eval.stdout.trim(),
+            "Wasm stdout mismatch on '{}'",
+            preset.id
+        );
+        assert_eq!(wrep.tests_total, snap.test_results.len());
+        assert_eq!(wrep.tests_passed, snap.test_results.len());
+    }
 }
 
 #[test]
@@ -694,6 +751,7 @@ fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_nine_spokes
         "go",
         "python",
         "ruby",
+        "lua",
         "typescript",
         "star",
     ] {
@@ -799,7 +857,7 @@ fn all_samples_compile_and_produce_identical_output_across_eleven_engines() {
     for sample in SAMPLES {
         let engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
         let report = run_all_spokes(&engine);
-        assert_eq!(report.results.len(), 11);
+        assert_eq!(report.results.len(), 13);
 
         for r in &report.results {
             assert!(
@@ -819,6 +877,7 @@ fn all_samples_compile_and_produce_identical_output_across_eleven_engines() {
                     "Go (go run)" => engine.project(SpokeId::Go),
                     "Python (python3)" => engine.project(SpokeId::Python),
                     "Ruby (ruby)" => engine.project(SpokeId::Ruby),
+                    "LuaJIT (luajit)" => engine.project(SpokeId::Lua),
                     "TypeScript (node)" => engine.project(SpokeId::TypeScript),
                     _ => engine.project(SpokeId::Star),
                 }
@@ -930,15 +989,24 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(merge_resp.contains("\"ok\":true"), "merge failed: {}", merge_resp);
     assert!(merge_resp.contains("\"clean\":true"), "merge expected clean: {}", merge_resp);
 
-    // Execute across all 11 engines via /api/run
+    // Verify /api/wasm endpoint compiles Wasm binary + WAT and runs V8 JIT
+    let wasm_resp = send_http("POST", "/api/wasm", "{}");
+    assert!(wasm_resp.contains("\"ok\":true"), "wasm failed: {}", wasm_resp);
+    assert!(wasm_resp.contains("\"jit_ok\":true"), "wasm jit failed: {}", wasm_resp);
+    assert!(wasm_resp.contains("\"wat\":"));
+    assert!(wasm_resp.contains("\"wasm_b64\":"));
+
+    // Execute across all 13 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
     assert!(run_resp.contains("Hub VM (native)"));
+    assert!(run_resp.contains("Wasm (V8 JIT)"));
     assert!(run_resp.contains("Zig (zig)"));
     assert!(run_resp.contains("C11 (clang)"));
     assert!(run_resp.contains("C++ (clang++)"));
     assert!(run_resp.contains("Swift (swiftc)"));
     assert!(run_resp.contains("Java (javac)"));
     assert!(run_resp.contains("Ruby (ruby)"));
+    assert!(run_resp.contains("LuaJIT (luajit)"));
     assert!(run_resp.contains("calibrated_sum: 261"));
 }

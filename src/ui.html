@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StarLang v0.8 — 11-Spoke Bidirectional Compiler</title>
+  <title>StarLang v0.9 — 12-Spoke Bidirectional Compiler & WebAssembly Studio</title>
   <style>
     :root {
       --bg: #090d16;
@@ -114,6 +114,13 @@
       font-weight: 600;
     }
     button.merge-btn:hover { background: #9a3412; }
+    button.wasm-btn {
+      background: #1e293b;
+      border-color: #38bdf8;
+      color: #e0f2fe;
+      font-weight: 600;
+    }
+    button.wasm-btn:hover { background: #0f172a; }
     .hub-banner {
       padding: 7px 18px;
       background: #0d1322;
@@ -320,7 +327,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -398,11 +405,12 @@
         <line id="edge-cpp" class="edge" x1="88" y1="34" x2="24" y2="39" />
         <line id="edge-swift" class="edge" x1="88" y1="34" x2="24" y2="51" />
         <line id="edge-java" class="edge" x1="88" y1="34" x2="24" y2="63" />
-        <line id="edge-go" class="edge" x1="88" y1="34" x2="150" y2="6" />
-        <line id="edge-python" class="edge" x1="88" y1="34" x2="150" y2="19" />
-        <line id="edge-ruby" class="edge" x1="88" y1="34" x2="150" y2="33" />
-        <line id="edge-typescript" class="edge" x1="88" y1="34" x2="150" y2="47" />
-        <line id="edge-star" class="edge" x1="88" y1="34" x2="150" y2="61" />
+        <line id="edge-go" class="edge" x1="88" y1="34" x2="150" y2="5" />
+        <line id="edge-python" class="edge" x1="88" y1="34" x2="150" y2="16" />
+        <line id="edge-ruby" class="edge" x1="88" y1="34" x2="150" y2="27" />
+        <line id="edge-lua" class="edge" x1="88" y1="34" x2="150" y2="39" />
+        <line id="edge-typescript" class="edge" x1="88" y1="34" x2="150" y2="51" />
+        <line id="edge-star" class="edge" x1="88" y1="34" x2="150" y2="63" />
         <circle class="node-hub" cx="88" cy="34" r="11" />
         <text x="88" y="37" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
         <text class="node-lbl" x="4" y="8">RS</text>
@@ -411,27 +419,29 @@
         <text class="node-lbl" x="1" y="42">CPP</text>
         <text class="node-lbl" x="4" y="54">SW</text>
         <text class="node-lbl" x="4" y="65">JV</text>
-        <text class="node-lbl" x="153" y="9">GO</text>
-        <text class="node-lbl" x="153" y="22">PY</text>
-        <text class="node-lbl" x="153" y="36">RB</text>
-        <text class="node-lbl" x="153" y="50">TS</text>
-        <text class="node-lbl" x="153" y="64">IR</text>
+        <text class="node-lbl" x="153" y="8">GO</text>
+        <text class="node-lbl" x="153" y="19">PY</text>
+        <text class="node-lbl" x="153" y="30">RB</text>
+        <text class="node-lbl" x="153" y="42">LUA</text>
+        <text class="node-lbl" x="153" y="54">TS</text>
+        <text class="node-lbl" x="153" y="65">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v0.8 — 11-Spoke Bidirectional Compiler</h1>
-        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ TypeScript ⇄ Star IR · 3-Way Polyglot Merge, Symbolic Verifier & 11-Engine Verification</p>
+        <h1>★ StarLang v0.9 — 12-Spoke Bidirectional Compiler & WebAssembly Studio</h1>
+        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ TypeScript ⇄ Star IR ➔ Native .wasm/.wat & 13-Engine Verification</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
-      <button class="merge-btn" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 11 languages">🔀 3-Way Merge</button>
+      <button class="wasm-btn" id="wasm-btn" title="Compile Central Hub AST directly to W3C WebAssembly 1.0 binary (.wasm) + .wat & execute in V8 / Browser Wasm VM">📦 Compile Wasm</button>
+      <button class="merge-btn" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 12 languages">🔀 3-Way Merge</button>
       <button class="verify-btn" id="verify-btn" title="Prove div-by-zero, bounds & assertions via interval abstract interpretation + concolic witnesses">🛡 Symbolic Verify</button>
       <button class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph & hotspots">🔍 Trace & Coverage</button>
       <button class="mut-btn" id="mut-btn" title="Run sub-ms Hub AST mutation testing & auto-synthesize missing boundary unit tests">🧬 Mutation Test</button>
-      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 11 languages">⚡ Optimize Hub</button>
-      <button class="run-btn" id="run-btn">▶ Run All 11 Engines (VM + rustc + zig + clang + clang++ + swiftc + javac + go + py + rb + node)</button>
+      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 12 languages">⚡ Optimize Hub</button>
+      <button class="run-btn" id="run-btn">▶ Run All 13 Engines (VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + rb + luajit + node)</button>
     </div>
   </header>
 
@@ -456,6 +466,7 @@
       <span class="toggle-pill on" data-spoke="go">Go</span>
       <span class="toggle-pill on" data-spoke="python">Python</span>
       <span class="toggle-pill on" data-spoke="ruby">Ruby</span>
+      <span class="toggle-pill on" data-spoke="lua">Lua</span>
       <span class="toggle-pill on" data-spoke="typescript">TypeScript</span>
       <span class="toggle-pill on" data-spoke="star">Star IR</span>
     </div>
@@ -464,12 +475,12 @@
   <div class="refactor-bar">
     <div class="refactor-controls">
       <span style="color:var(--muted);font-weight:600;">Semantic Hub Refactor:</span>
-      <select id="symbol-select" title="Select a Hub symbol to rename across all 11 languages"></select>
+      <select id="symbol-select" title="Select a Hub symbol to rename across all 12 languages"></select>
       <input type="text" id="rename-input" placeholder="new_identifier" style="width:165px;" />
-      <button id="rename-btn">✎ Rename Across 11 Languages</button>
+      <button id="rename-btn">✎ Rename Across 12 Languages</button>
       <span class="action-msg" id="action-msg"></span>
     </div>
-    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 11 engines</span>
+    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 13 engines</span>
   </div>
 
   <div class="sem-bar" id="sem-bar"></div>
@@ -583,6 +594,18 @@
       <div class="diag-bar" id="diag-ruby"></div>
     </section>
 
+    <section class="pane" id="pane-lua">
+      <div class="pane-header">
+        <span>LuaJIT + LuaCATS (<code>.lua</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-lua"></span>
+          <span class="status" id="status-lua">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-lua" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-lua"></div>
+    </section>
+
     <section class="pane" id="pane-typescript">
       <div class="pane-header">
         <span>TypeScript (<code>.ts</code>)</span>
@@ -608,12 +631,23 @@
     </section>
   </main>
 
+  <section id="wasm-drawer">
+    <div class="run-header">
+      <span id="wasm-summary">📦 Zero-Dependency WebAssembly 1.0 Binary (.wasm) & Text (.wat) Compiler...</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="wasm-btn" id="wasm-browser-btn">⚡ Run .wasm in Browser</button>
+        <button onclick="document.getElementById('wasm-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="wasm-cards"></div>
+  </section>
+
   <section id="merge-drawer">
     <div class="run-header">
-      <span id="merge-summary">🔀 3-Way Concurrent Polyglot Merger — Fork current Hub into two different languages, edit both concurrently, and merge onto all 11 spokes:</span>
+      <span id="merge-summary">🔀 3-Way Concurrent Polyglot Merger — Fork current Hub into two different languages, edit both concurrently, and merge onto all 12 spokes:</span>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button id="merge-fork-btn">↻ Fork Current Hub</button>
-        <button class="merge-btn" id="merge-exec-btn">🔀 Merge Concurrent Edits Across All 11 Languages</button>
+        <button class="merge-btn" id="merge-exec-btn">🔀 Merge Concurrent Edits Across All 12 Languages</button>
         <button onclick="document.getElementById('merge-drawer').style.display='none'">Close</button>
       </div>
     </div>
@@ -672,7 +706,8 @@
   </section>
 
   <script>
-    const SPOKES = ["rust", "zig", "c", "cpp", "swift", "java", "go", "python", "ruby", "typescript", "star"];
+    const SPOKES = ["rust", "zig", "c", "cpp", "swift", "java", "go", "python", "ruby", "lua", "typescript", "star"];
+    let lastWasmBase64 = null;
     let debounceTimer = null;
     const prevTexts = {};
 
@@ -1143,6 +1178,95 @@
     document.getElementById("verify-btn").addEventListener("click", triggerVerify);
     document.getElementById("safety-pill").addEventListener("click", triggerVerify);
 
+    document.getElementById("wasm-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("wasm-drawer");
+      const summary = document.getElementById("wasm-summary");
+      const cards = document.getElementById("wasm-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Compiling Hub AST to W3C WebAssembly 1.0 binary (.wasm) + .wat & running in V8 JIT...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/wasm", { method: "POST", body: "{}" });
+      const data = await res.json();
+      if (!data.ok) {
+        summary.innerHTML = `<span style="color:#f87171;">✗ Wasm Compilation Error: ${data.error || "failed"}</span>`;
+        return;
+      }
+      lastWasmBase64 = data.wasm_b64;
+      const color = data.jit_ok ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">📦 WebAssembly 1.0 Binary: ${data.wasm_size_bytes} bytes (Code: ${data.code_bytes}B, Data: ${data.data_bytes}B, ${data.func_count} funcs) · V8 JIT: ${data.tests_passed}/${data.tests_total} tests passed (${data.duration_ms}ms)</span>`;
+
+      const jitCard = document.createElement("div");
+      jitCard.className = "run-card";
+      jitCard.id = "wasm-jit-card";
+      jitCard.innerHTML = `<strong>⚡ V8 & Browser WebAssembly JIT Output</strong><pre></pre>`;
+      jitCard.querySelector("pre").textContent =
+        `[V8 Wasm JIT (${data.duration_ms}ms) · Exports: ${(data.exports || []).join(", ")}]\n` +
+        ((data.jit_stdout || "").trim() || "(no stdout)") +
+        (data.error ? `\n[error] ${data.error}` : "");
+      cards.appendChild(jitCard);
+
+      const watCard = document.createElement("div");
+      watCard.className = "run-card";
+      watCard.style.gridColumn = "span 2";
+      watCard.innerHTML = `<strong>📜 Symbolic WebAssembly Text Disassembly (.wat)</strong><pre style="max-height:300px;overflow:auto;"></pre>`;
+      watCard.querySelector("pre").textContent = data.wat || "";
+      cards.appendChild(watCard);
+    });
+
+    document.getElementById("wasm-browser-btn").addEventListener("click", async () => {
+      if (!lastWasmBase64) return;
+      const raw = atob(lastWasmBase64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const decoder = new TextDecoder("utf-8");
+      const encoder = new TextEncoder();
+      let memory = null;
+      let allocFn = null;
+      let outBuf = "";
+      const t0 = performance.now();
+      const imports = {
+        env: {
+          print_i64(v) { outBuf += v.toString(); },
+          print_f64(v) { outBuf += (Object.is(v, -0) ? "0" : String(v)); },
+          print_bool(v) { outBuf += (v !== 0 ? "true" : "false"); },
+          print_str(packed) {
+            const u = BigInt.asUintN(64, packed);
+            const ptr = Number(u & 0xffffffffn);
+            const len = Number(u >> 32n);
+            outBuf += decoder.decode(new Uint8Array(memory.buffer, ptr, len));
+          },
+          print_sep() { outBuf += " "; },
+          print_nl() { outBuf += "\n"; },
+          tostr_f64(v) {
+            const s = Object.is(v, -0) ? "0" : String(v);
+            const b = encoder.encode(s);
+            const ptr = allocFn(b.length) >>> 0;
+            new Uint8Array(memory.buffer, ptr, b.length).set(b);
+            return BigInt(ptr) | (BigInt(b.length) << 32n);
+          }
+        }
+      };
+      const { instance } = await WebAssembly.instantiate(bytes, imports);
+      memory = instance.exports.memory;
+      allocFn = instance.exports.__star_alloc;
+      if (typeof instance.exports.main === "function") instance.exports.main();
+      const mainOut = outBuf.trim();
+      let passed = 0, total = 0;
+      for (const [k, fn] of Object.entries(instance.exports)) {
+        if (k.startsWith("test_") && typeof fn === "function") {
+          total++;
+          fn();
+          passed++;
+        }
+      }
+      const dt = (performance.now() - t0).toFixed(2);
+      const jitCard = document.getElementById("wasm-jit-card");
+      if (jitCard) {
+        jitCard.querySelector("pre").textContent += `\n\n[Browser WebAssembly.instantiate (${dt}ms) · ${passed}/${total} tests passed]\n${mainOut}`;
+      }
+    });
+
     document.getElementById("trace-btn").addEventListener("click", triggerTrace);
     document.getElementById("cov-pill").addEventListener("click", triggerTrace);
 
@@ -1174,13 +1298,13 @@
       const summary = document.getElementById("run-summary");
       const cards = document.getElementById("run-cards");
       drawer.style.display = "block";
-      summary.textContent = "Executing Hub VM + rustc + zig run -lc + clang -std=c11 + clang++ (PCH) + swiftc + javac + go + python3 + ruby + node in parallel...";
+      summary.textContent = "Executing Hub VM + Wasm (V8 JIT) + rustc + zig + clang -std=c11 + clang++ (PCH) + swiftc + javac + go + python3 + ruby + luajit + node in parallel...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/run", { method: "POST", body: "{}" });
       const data = await res.json();
       if (data.outputs_match) {
-        summary.innerHTML = `<span style="color:#34d399;">✓ 11/11 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
+        summary.innerHTML = `<span style="color:#34d399;">✓ 13/13 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
       } else {
         summary.innerHTML = `<span style="color:#f87171;">Runtime Check Completed (${data.wall_time_ms}ms — inspect outputs below)</span>`;
       }
