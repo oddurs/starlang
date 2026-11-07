@@ -12,6 +12,9 @@ use crate::eval::{eval_module, eval_tests_default, EvalResult, TestResult};
 use crate::hub::{Diagnostic, HubModule};
 use crate::lens::SpokeId;
 use crate::merge::{diff_modules, merge_concurrent_edits, MergeReport, SemanticDiffReport};
+use crate::microarch::{
+    schedule_instructions, simulate_microarch, InstructionScheduleReport, MicroArchReport,
+};
 use crate::mutate::{harden_tests, mutate_module, HardenReport, MutationReport};
 use crate::polyhedral::{
     analyze_polyhedral, prove_termination_and_wcet, PolyhedralReport, TerminationWcetReport,
@@ -288,6 +291,17 @@ impl StarEngine {
     /// Return-Value Optimization (RVO) & 13-Spoke Stack/Arena Lifetime Synthesis.
     pub fn escape_analysis(&self) -> EscapeAnalysisReport {
         analyze_escape_and_lifetimes(self.hub())
+    }
+
+    /// Run 4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor &
+    /// 8-Way Set-Associative L1D Cache Hardware Simulation.
+    pub fn microarch(&self) -> MicroArchReport {
+        simulate_microarch(self.hub())
+    }
+
+    /// Run Gibbons-Muchnick Critical-Path DAG List Instruction Scheduling & Pipeline Stall Elimination.
+    pub fn schedule_instructions(&self) -> InstructionScheduleReport {
+        schedule_instructions(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.
