@@ -1,4 +1,5 @@
 pub mod complexity;
+pub mod concolic;
 pub mod debugger;
 pub mod engine;
 pub mod eval;

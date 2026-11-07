@@ -62,6 +62,10 @@ jobs:
         run: cargo run --quiet -- ssa > /dev/null
       - name: Run Hoare-Logic DbC contract synthesizer & Weakest-Precondition verifier
         run: cargo run --quiet -- contracts > /dev/null
+      - name: Run whitebox concolic path explorer & test synthesizer
+        run: cargo run --quiet -- concolic > /dev/null
+      - name: Run Denning lattice taint & constant-time security auditor
+        run: cargo run --quiet -- security > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier
