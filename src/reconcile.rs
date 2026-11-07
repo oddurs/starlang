@@ -461,7 +461,7 @@ fn reconcile_stmts(
                         if pty.is_some() {
                             *ty = pty.clone();
                         }
-                    } else if edited_spoke == SpokeId::C
+                    } else if matches!(edited_spoke, SpokeId::C | SpokeId::Zig)
                         && pty.is_none()
                         && !matches!(value, Expr::List(items) if items.is_empty())
                     {

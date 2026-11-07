@@ -8,12 +8,14 @@ pub mod rust;
 pub mod star;
 pub mod swift;
 pub mod typescript;
+pub mod zig;
 
 use crate::lens::{LanguageLens, SpokeId};
 
 pub fn all_lenses() -> Vec<Box<dyn LanguageLens>> {
     vec![
         Box::new(rust::RustLens),
+        Box::new(zig::ZigLens),
         Box::new(c::CLens),
         Box::new(cpp::CppLens),
         Box::new(swift::SwiftLens),
@@ -29,6 +31,7 @@ pub fn all_lenses() -> Vec<Box<dyn LanguageLens>> {
 pub fn lens_for(id: SpokeId) -> Box<dyn LanguageLens> {
     match id {
         SpokeId::Rust => Box::new(rust::RustLens),
+        SpokeId::Zig => Box::new(zig::ZigLens),
         SpokeId::C => Box::new(c::CLens),
         SpokeId::Cpp => Box::new(cpp::CppLens),
         SpokeId::Swift => Box::new(swift::SwiftLens),

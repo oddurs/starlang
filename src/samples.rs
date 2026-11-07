@@ -476,10 +476,78 @@ int main(void) {
     return 0;
 }
 
-void test_packet_mtu_filter(void) {
+        void test_packet_mtu_filter(void) {
     const StarList_int64_t sample = StarList_int64_t_of((const int64_t[]){100, 200, 9000}, 3);
     const PacketStats res = analyze_packets(sample, 1500);
     assert(PacketStats_eq(res, (PacketStats){ .accepted = 2, .dropped = 1, .mean_bytes = 150 }));
+}
+"#,
+    },
+    SamplePreset {
+        id: "ringbuf",
+        title: "Sensor Ring-Buffer Downsampler (Seeded from Zig 0.16)",
+        description: "Zig 0.16 comptime StarList(i64), enum(i64) switch, guarded @divTrunc & 11-language sync",
+        initial_spoke: SpokeId::Zig,
+        source: r#"const std = @import("std");
+
+// Downsampling mode for ring-buffer sensor windows
+pub const FilterMode = enum(i64) {
+    KeepAll = 0,
+    AboveFloor = 1,
+};
+
+// Aggregated metrics over a filtered sensor window
+pub const WindowSummary = struct {
+    kept: i64,
+    dropped: i64,
+    average: i64,
+};
+
+pub fn should_keep(sample: i64, mode: FilterMode, floor: i64) bool {
+    switch (mode) {
+        .KeepAll => {
+            return true;
+        },
+        .AboveFloor => {
+            return sample >= floor;
+        },
+    }
+}
+
+pub fn downsample_window(readings: StarList(i64), mode: FilterMode, floor: i64) WindowSummary {
+    var kept: i64 = 0;
+    var dropped: i64 = 0;
+    var kept_sum: i64 = 0;
+    {
+        var i: i64 = 0;
+        while (i < readings.len()) : (i += 1) {
+            const val: i64 = readings.get(i);
+            if (should_keep(val, mode, floor) and val >= 0) {
+                kept += 1;
+                kept_sum += val;
+            } else {
+                dropped += 1;
+            }
+        }
+    }
+    var average: i64 = 0;
+    if (kept > 0) {
+        average = @divTrunc(kept_sum, kept);
+    }
+    std.debug.assert(average >= 0);
+    return WindowSummary{ .kept = kept, .dropped = dropped, .average = average };
+}
+
+pub fn main() void {
+    const window: StarList(i64) = StarList(i64).of(&[_]i64{ 12, 4, 28, 9, 32 });
+    const summary: WindowSummary = downsample_window(window, FilterMode.AboveFloor, 10);
+    starPrintln(.{ "kept:", summary.kept, "dropped:", summary.dropped, "avg:", summary.average });
+}
+
+test "ringbuf_downsample" {
+    const probe: StarList(i64) = StarList(i64).of(&[_]i64{ 5, 20, 40 });
+    const res: WindowSummary = downsample_window(probe, FilterMode.AboveFloor, 10);
+    try std.testing.expect(starEql(res, WindowSummary{ .kept = 2, .dropped = 1, .average = 30 }));
 }
 "#,
     },

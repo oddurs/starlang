@@ -127,7 +127,10 @@ const RESERVED_WORDS: &[&str] = &[
     "default", "for", "while", "do", "goto", "in", "of", "range", "break", "continue", "next",
     "end", "module", "begin", "rescue", "ensure", "nil", "NULL", "true", "false", "None", "void",
     "char", "short", "long", "signed", "unsigned", "int", "int64", "int64_t", "float", "float64",
-    "double", "bool", "boolean", "str", "string", "number", "Vec", "String", "main",
+    "double", "bool", "boolean", "str", "string", "number", "Vec", "String", "main", "comptime",
+    "defer", "errdefer", "orelse", "unreachable", "anytype", "anyopaque", "align", "noalias",
+    "threadlocal", "test", "try", "catch", "error", "undefined", "and", "or", "i64", "f64", "u8",
+    "usize", "std",
 ];
 
 fn validate_identifier(name: &str) -> Result<(), String> {

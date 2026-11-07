@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::eval::{eval_module, eval_tests_default, EvalResult, TestResult};
 use crate::hub::{Diagnostic, HubModule};
 use crate::lens::SpokeId;
+use crate::merge::{diff_modules, merge_concurrent_edits, MergeReport, SemanticDiffReport};
 use crate::mutate::{harden_tests, mutate_module, HardenReport, MutationReport};
 use crate::refactor::{list_symbols, optimize_module, rename_symbol, SymbolEntry};
 use crate::spokes::lens_for;
@@ -108,7 +109,31 @@ impl StarEngine {
         verify_module(self.hub())
     }
 
-    /// Auto-synthesize boundary unit test assertions to kill surviving Hub AST mutants across all 9 spokes.
+    /// Compute the pure semantic Hub AST delta between the current Hub and `source` in `spoke`.
+    pub fn diff_with(&self, spoke: SpokeId, source: &str) -> Result<SemanticDiffReport, Diagnostic> {
+        let next_hub = lens_for(spoke).put(source, self.hub())?;
+        Ok(diff_modules(self.hub(), &next_hub))
+    }
+
+    /// Perform a 3-way concurrent semantic AST + sidecar metadata merge of edits made in
+    /// `left_spoke` and `right_spoke` off the current Hub AST. If the merge is conflict-free
+    /// and non-empty, commits the merged Hub AST to history and projects all 11 spokes.
+    pub fn merge_concurrent(
+        &mut self,
+        left_spoke: SpokeId,
+        left_src: &str,
+        right_spoke: SpokeId,
+        right_src: &str,
+    ) -> Result<(SyncSnapshot, MergeReport), Diagnostic> {
+        let report =
+            merge_concurrent_edits(self.hub(), left_spoke, left_src, right_spoke, right_src)?;
+        if report.clean && !report.applied_changes.is_empty() {
+            self.push_hub(report.merged_hub.clone(), left_spoke);
+        }
+        Ok((self.snapshot(), report))
+    }
+
+    /// Auto-synthesize boundary unit test assertions to kill surviving Hub AST mutants across all 11 spokes.
     pub fn harden_tests(&mut self) -> (SyncSnapshot, HardenReport) {
         let (new_hub, report) = harden_tests(self.hub());
         let active = self.current().spoke;

@@ -1,7 +1,7 @@
 [package]
 name = "starlang"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
-description = "A star-topology bidirectional 10-language compiler (Rust <-> C11 <-> C++ <-> Swift <-> Java <-> Go <-> Python <-> Ruby <-> TypeScript <-> Star IR)"
+description = "A star-topology bidirectional 11-language compiler (Rust <-> Zig <-> C11 <-> C++ <-> Swift <-> Java <-> Go <-> Python <-> Ruby <-> TypeScript <-> Star IR)"
 
 [dependencies]

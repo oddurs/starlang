@@ -69,11 +69,11 @@ pub struct MultiRunReport {
     pub wall_time_ms: u128,
 }
 
-/// Execute the Hub Native VM plus Rust (`rustc`), C11 (`clang -std=c11`),
+/// Execute the Hub Native VM plus Rust (`rustc`), Zig (`zig run -lc`), C11 (`clang -std=c11`),
 /// C++ (`clang++` with cached STL PCH), Swift (`swiftc`), Java (`javac` + `java`),
 /// Go (`go run`), Python (`python3`), Ruby (`ruby`), and TypeScript (`node`)
 /// concurrently using `std::thread::scope`, verifying byte-for-byte identical
-/// stdout across all 10 execution engines.
+/// stdout across all 11 execution engines.
 pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let wall_start = Instant::now();
     let run_id = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -86,6 +86,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
 
     let hub_clone = engine.hub().clone();
     let rust_src = engine.project(SpokeId::Rust);
+    let zig_src = engine.project(SpokeId::Zig);
     let c_src = engine.project(SpokeId::C);
     let cpp_src = engine.project(SpokeId::Cpp);
     let swift_src = engine.project(SpokeId::Swift);
@@ -95,36 +96,50 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let ruby_src = engine.project(SpokeId::Ruby);
     let ts_src = engine.project(SpokeId::TypeScript);
 
-    let (hub_res, rs_res, c_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res, ts_res) =
-        thread::scope(|s| {
-            let h_hub = s.spawn(|| run_hub_vm(&hub_clone));
-            let h_rs = s.spawn(|| run_rust(&dir, &rust_src));
-            let h_c = s.spawn(|| run_c(&dir, &c_src));
-            let h_cpp = s.spawn(|| run_cpp(&dir, &cpp_src));
-            let h_swift = s.spawn(|| run_swift(&dir, &swift_src));
-            let h_java = s.spawn(|| run_java(&dir, &java_src));
-            let h_go = s.spawn(|| run_go(&dir, &go_src));
-            let h_py = s.spawn(|| run_python(&dir, &py_src));
-            let h_rb = s.spawn(|| run_ruby(&dir, &ruby_src));
-            let h_ts = s.spawn(|| run_typescript(&dir, &ts_src));
-            (
-                h_hub.join().unwrap(),
-                h_rs.join().unwrap(),
-                h_c.join().unwrap(),
-                h_cpp.join().unwrap(),
-                h_swift.join().unwrap(),
-                h_java.join().unwrap(),
-                h_go.join().unwrap(),
-                h_py.join().unwrap(),
-                h_rb.join().unwrap(),
-                h_ts.join().unwrap(),
-            )
-        });
+    let (
+        hub_res,
+        rs_res,
+        zig_res,
+        c_res,
+        cpp_res,
+        swift_res,
+        java_res,
+        go_res,
+        py_res,
+        rb_res,
+        ts_res,
+    ) = thread::scope(|s| {
+        let h_hub = s.spawn(|| run_hub_vm(&hub_clone));
+        let h_rs = s.spawn(|| run_rust(&dir, &rust_src));
+        let h_zig = s.spawn(|| run_zig(&dir, &zig_src));
+        let h_c = s.spawn(|| run_c(&dir, &c_src));
+        let h_cpp = s.spawn(|| run_cpp(&dir, &cpp_src));
+        let h_swift = s.spawn(|| run_swift(&dir, &swift_src));
+        let h_java = s.spawn(|| run_java(&dir, &java_src));
+        let h_go = s.spawn(|| run_go(&dir, &go_src));
+        let h_py = s.spawn(|| run_python(&dir, &py_src));
+        let h_rb = s.spawn(|| run_ruby(&dir, &ruby_src));
+        let h_ts = s.spawn(|| run_typescript(&dir, &ts_src));
+        (
+            h_hub.join().unwrap(),
+            h_rs.join().unwrap(),
+            h_zig.join().unwrap(),
+            h_c.join().unwrap(),
+            h_cpp.join().unwrap(),
+            h_swift.join().unwrap(),
+            h_java.join().unwrap(),
+            h_go.join().unwrap(),
+            h_py.join().unwrap(),
+            h_rb.join().unwrap(),
+            h_ts.join().unwrap(),
+        )
+    });
 
     let _ = fs::remove_dir_all(&dir);
 
     let results = vec![
-        hub_res, rs_res, c_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res, ts_res,
+        hub_res, rs_res, zig_res, c_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res,
+        ts_res,
     ];
     let all_succeeded = results.iter().all(|r| r.ok);
     let outputs_match = all_succeeded
@@ -203,6 +218,42 @@ fn run_rust(dir: &PathBuf, src: &str) -> RuntimeOutput {
                 stderr: e.to_string(),
                 duration_ms: start.elapsed().as_millis(),
             },
+        },
+    }
+}
+
+fn run_zig(dir: &PathBuf, src: &str) -> RuntimeOutput {
+    let zig_path = dir.join("prog.zig");
+    let start = Instant::now();
+    if let Err(e) = fs::write(&zig_path, src) {
+        return RuntimeOutput {
+            language: "Zig (zig)",
+            ok: false,
+            stdout: String::new(),
+            stderr: e.to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        };
+    }
+
+    match Command::new("zig")
+        .arg("run")
+        .arg(&zig_path)
+        .arg("-lc")
+        .output()
+    {
+        Ok(out) => RuntimeOutput {
+            language: "Zig (zig)",
+            ok: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        },
+        Err(e) => RuntimeOutput {
+            language: "Zig (zig)",
+            ok: false,
+            stdout: String::new(),
+            stderr: format!("failed to invoke zig: {}", e),
+            duration_ms: start.elapsed().as_millis(),
         },
     }
 }

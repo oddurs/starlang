@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StarLang v0.7 — 10-Spoke Bidirectional Compiler</title>
+  <title>StarLang v0.8 — 11-Spoke Bidirectional Compiler</title>
   <style>
     :root {
       --bg: #090d16;
@@ -107,6 +107,13 @@
       font-weight: 600;
     }
     button.verify-btn:hover { background: #047857; }
+    button.merge-btn {
+      background: #7c2d12;
+      border-color: #fb923c;
+      color: #ffedd5;
+      font-weight: 600;
+    }
+    button.merge-btn:hover { background: #9a3412; }
     .hub-banner {
       padding: 7px 18px;
       background: #0d1322;
@@ -313,11 +320,35 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
       padding: 12px 16px;
+    }
+    .merge-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .merge-box {
+      background: #090d16;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      min-height: 220px;
+    }
+    .merge-box-hdr {
+      padding: 6px 10px;
+      background: var(--panel-header);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 600;
     }
     .run-header {
       display: flex;
@@ -360,44 +391,47 @@
 <body>
   <header>
     <div class="brand">
-      <svg class="star-svg" viewBox="0 0 176 64">
-        <line id="edge-rust" class="edge" x1="88" y1="32" x2="24" y2="6" />
-        <line id="edge-c" class="edge" x1="88" y1="32" x2="24" y2="19" />
-        <line id="edge-cpp" class="edge" x1="88" y1="32" x2="24" y2="32" />
-        <line id="edge-swift" class="edge" x1="88" y1="32" x2="24" y2="45" />
-        <line id="edge-java" class="edge" x1="88" y1="32" x2="24" y2="58" />
-        <line id="edge-go" class="edge" x1="88" y1="32" x2="150" y2="6" />
-        <line id="edge-python" class="edge" x1="88" y1="32" x2="150" y2="19" />
-        <line id="edge-ruby" class="edge" x1="88" y1="32" x2="150" y2="32" />
-        <line id="edge-typescript" class="edge" x1="88" y1="32" x2="150" y2="45" />
-        <line id="edge-star" class="edge" x1="88" y1="32" x2="150" y2="58" />
-        <circle class="node-hub" cx="88" cy="32" r="11" />
-        <text x="88" y="35" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
-        <text class="node-lbl" x="4" y="9">RS</text>
-        <text class="node-lbl" x="1" y="22">C11</text>
-        <text class="node-lbl" x="1" y="35">CPP</text>
-        <text class="node-lbl" x="4" y="48">SW</text>
-        <text class="node-lbl" x="4" y="61">JV</text>
+      <svg class="star-svg" viewBox="0 0 176 68">
+        <line id="edge-rust" class="edge" x1="88" y1="34" x2="24" y2="5" />
+        <line id="edge-zig" class="edge" x1="88" y1="34" x2="24" y2="16" />
+        <line id="edge-c" class="edge" x1="88" y1="34" x2="24" y2="27" />
+        <line id="edge-cpp" class="edge" x1="88" y1="34" x2="24" y2="39" />
+        <line id="edge-swift" class="edge" x1="88" y1="34" x2="24" y2="51" />
+        <line id="edge-java" class="edge" x1="88" y1="34" x2="24" y2="63" />
+        <line id="edge-go" class="edge" x1="88" y1="34" x2="150" y2="6" />
+        <line id="edge-python" class="edge" x1="88" y1="34" x2="150" y2="19" />
+        <line id="edge-ruby" class="edge" x1="88" y1="34" x2="150" y2="33" />
+        <line id="edge-typescript" class="edge" x1="88" y1="34" x2="150" y2="47" />
+        <line id="edge-star" class="edge" x1="88" y1="34" x2="150" y2="61" />
+        <circle class="node-hub" cx="88" cy="34" r="11" />
+        <text x="88" y="37" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
+        <text class="node-lbl" x="4" y="8">RS</text>
+        <text class="node-lbl" x="1" y="19">ZIG</text>
+        <text class="node-lbl" x="1" y="30">C11</text>
+        <text class="node-lbl" x="1" y="42">CPP</text>
+        <text class="node-lbl" x="4" y="54">SW</text>
+        <text class="node-lbl" x="4" y="65">JV</text>
         <text class="node-lbl" x="153" y="9">GO</text>
         <text class="node-lbl" x="153" y="22">PY</text>
-        <text class="node-lbl" x="153" y="35">RB</text>
-        <text class="node-lbl" x="153" y="48">TS</text>
-        <text class="node-lbl" x="153" y="61">IR</text>
+        <text class="node-lbl" x="153" y="36">RB</text>
+        <text class="node-lbl" x="153" y="50">TS</text>
+        <text class="node-lbl" x="153" y="64">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v0.7 — 10-Spoke Bidirectional Compiler</h1>
-        <p>Rust ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ TypeScript ⇄ Star IR · Symbolic Verifier, Mutation Testing & 10-Engine Verification</p>
+        <h1>★ StarLang v0.8 — 11-Spoke Bidirectional Compiler</h1>
+        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ TypeScript ⇄ Star IR · 3-Way Polyglot Merge, Symbolic Verifier & 11-Engine Verification</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="merge-btn" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 11 languages">🔀 3-Way Merge</button>
       <button class="verify-btn" id="verify-btn" title="Prove div-by-zero, bounds & assertions via interval abstract interpretation + concolic witnesses">🛡 Symbolic Verify</button>
       <button class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph & hotspots">🔍 Trace & Coverage</button>
       <button class="mut-btn" id="mut-btn" title="Run sub-ms Hub AST mutation testing & auto-synthesize missing boundary unit tests">🧬 Mutation Test</button>
-      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 10 languages">⚡ Optimize Hub</button>
-      <button class="run-btn" id="run-btn">▶ Run All 10 Engines (VM + rustc + clang + clang++ + swiftc + javac + go + py + rb + node)</button>
+      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 11 languages">⚡ Optimize Hub</button>
+      <button class="run-btn" id="run-btn">▶ Run All 11 Engines (VM + rustc + zig + clang + clang++ + swiftc + javac + go + py + rb + node)</button>
     </div>
   </header>
 
@@ -414,6 +448,7 @@
     <div class="spoke-toggles" id="spoke-toggles">
       <span style="color:var(--muted);font-size:11px;">Spokes:</span>
       <span class="toggle-pill on" data-spoke="rust">Rust</span>
+      <span class="toggle-pill on" data-spoke="zig">Zig</span>
       <span class="toggle-pill on" data-spoke="c">C11</span>
       <span class="toggle-pill on" data-spoke="cpp">C++</span>
       <span class="toggle-pill on" data-spoke="swift">Swift</span>
@@ -429,12 +464,12 @@
   <div class="refactor-bar">
     <div class="refactor-controls">
       <span style="color:var(--muted);font-weight:600;">Semantic Hub Refactor:</span>
-      <select id="symbol-select" title="Select a Hub symbol to rename across all 10 languages"></select>
+      <select id="symbol-select" title="Select a Hub symbol to rename across all 11 languages"></select>
       <input type="text" id="rename-input" placeholder="new_identifier" style="width:165px;" />
-      <button id="rename-btn">✎ Rename Across 10 Languages</button>
+      <button id="rename-btn">✎ Rename Across 11 Languages</button>
       <span class="action-msg" id="action-msg"></span>
     </div>
-    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 10 engines</span>
+    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 11 engines</span>
   </div>
 
   <div class="sem-bar" id="sem-bar"></div>
@@ -450,6 +485,18 @@
       </div>
       <textarea id="ed-rust" spellcheck="false"></textarea>
       <div class="diag-bar" id="diag-rust"></div>
+    </section>
+
+    <section class="pane" id="pane-zig">
+      <div class="pane-header">
+        <span>Zig 0.16 (<code>.zig</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-zig"></span>
+          <span class="status" id="status-zig">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-zig" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-zig"></div>
     </section>
 
     <section class="pane" id="pane-c">
@@ -561,6 +608,34 @@
     </section>
   </main>
 
+  <section id="merge-drawer">
+    <div class="run-header">
+      <span id="merge-summary">🔀 3-Way Concurrent Polyglot Merger — Fork current Hub into two different languages, edit both concurrently, and merge onto all 11 spokes:</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button id="merge-fork-btn">↻ Fork Current Hub</button>
+        <button class="merge-btn" id="merge-exec-btn">🔀 Merge Concurrent Edits Across All 11 Languages</button>
+        <button onclick="document.getElementById('merge-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="merge-grid">
+      <div class="merge-box">
+        <div class="merge-box-hdr">
+          <span>Left Developer Fork</span>
+          <select id="merge-left-spoke"></select>
+        </div>
+        <textarea id="merge-left-ed" spellcheck="false"></textarea>
+      </div>
+      <div class="merge-box">
+        <div class="merge-box-hdr">
+          <span>Right Developer Fork</span>
+          <select id="merge-right-spoke"></select>
+        </div>
+        <textarea id="merge-right-ed" spellcheck="false"></textarea>
+      </div>
+    </div>
+    <div class="run-cards" id="merge-cards"></div>
+  </section>
+
   <section id="verify-drawer">
     <div class="run-header">
       <span id="verify-summary">Running Hub interval abstract interpretation & concolic witness search...</span>
@@ -573,7 +648,7 @@
     <div class="run-header">
       <span id="mut-summary">Running semantic Hub AST mutation suite...</span>
       <div style="display:flex;gap:8px;">
-        <button class="mut-btn" id="harden-btn">🛡 Auto-Harden Tests Across 10 Languages</button>
+        <button class="mut-btn" id="harden-btn">🛡 Auto-Harden Tests Across 11 Languages</button>
         <button onclick="document.getElementById('mut-drawer').style.display='none'">Close</button>
       </div>
     </div>
@@ -590,14 +665,14 @@
 
   <section id="run-drawer">
     <div class="run-header">
-      <span id="run-summary">Executing across Hub VM, rustc, clang -std=c11, clang++, swiftc, javac, go, python3, ruby, and node...</span>
+      <span id="run-summary">Executing across Hub VM, rustc, zig, clang -std=c11, clang++, swiftc, javac, go, python3, ruby, and node...</span>
       <button onclick="document.getElementById('run-drawer').style.display='none'">Close</button>
     </div>
     <div class="run-cards" id="run-cards"></div>
   </section>
 
   <script>
-    const SPOKES = ["rust", "c", "cpp", "swift", "java", "go", "python", "ruby", "typescript", "star"];
+    const SPOKES = ["rust", "zig", "c", "cpp", "swift", "java", "go", "python", "ruby", "typescript", "star"];
     let debounceTimer = null;
     const prevTexts = {};
 
@@ -770,7 +845,7 @@
         pane.classList.add("has-error");
         status.className = "status error";
         status.textContent = `Syntax Hold (L${data.diagnostic.line})`;
-        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 9 spokes held at last valid Hub AST`;
+        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 10 spokes held at last valid Hub AST`;
       }
     }
 
@@ -824,7 +899,7 @@
       if (data.ok) {
         document.getElementById("rename-input").value = "";
         applySnapshot(data.snapshot, null);
-        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 10 languages`, false);
+        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 11 languages`, false);
       } else {
         flashMessage(`✗ ${data.error}`, true);
       }
@@ -836,7 +911,7 @@
       if (data.ok) {
         applySnapshot(data.snapshot, null);
         if (data.rewrites > 0) {
-          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 10 languages`, false);
+          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 11 languages`, false);
         } else {
           flashMessage("AST is already in normal form (0 rewrites)", false);
         }
@@ -891,7 +966,7 @@
         applySnapshot(data.snapshot, null);
         renderMutationReport(data.mutation);
         if (data.added_assertions > 0) {
-          flashMessage(`🛡 Synthesized ${data.added_assertions} boundary unit test assertion(s) across all 10 languages (${data.before_score_pct}% → ${data.after_score_pct}%)`, false);
+          flashMessage(`🛡 Synthesized ${data.added_assertions} boundary unit test assertion(s) across all 11 languages (${data.before_score_pct}% → ${data.after_score_pct}%)`, false);
         } else {
           flashMessage("No additional distinguishing boundary inputs found", false);
         }
@@ -982,6 +1057,89 @@
       cards.appendChild(deadCard);
     }
 
+    const leftMergeSel = document.getElementById("merge-left-spoke");
+    const rightMergeSel = document.getElementById("merge-right-spoke");
+    SPOKES.forEach(s => {
+      const o1 = document.createElement("option");
+      o1.value = s;
+      o1.textContent = s;
+      leftMergeSel.appendChild(o1);
+      const o2 = document.createElement("option");
+      o2.value = s;
+      o2.textContent = s;
+      rightMergeSel.appendChild(o2);
+    });
+    leftMergeSel.value = "python";
+    rightMergeSel.value = "zig";
+
+    function forkCurrentHubIntoMerge() {
+      const ls = leftMergeSel.value;
+      const rs = rightMergeSel.value;
+      document.getElementById("merge-left-ed").value = prevTexts[ls] || "";
+      document.getElementById("merge-right-ed").value = prevTexts[rs] || "";
+      document.getElementById("merge-cards").innerHTML = "";
+    }
+
+    leftMergeSel.addEventListener("change", () => {
+      document.getElementById("merge-left-ed").value = prevTexts[leftMergeSel.value] || "";
+    });
+    rightMergeSel.addEventListener("change", () => {
+      document.getElementById("merge-right-ed").value = prevTexts[rightMergeSel.value] || "";
+    });
+    document.getElementById("merge-fork-btn").addEventListener("click", forkCurrentHubIntoMerge);
+
+    document.getElementById("merge-btn").addEventListener("click", () => {
+      const drawer = document.getElementById("merge-drawer");
+      drawer.style.display = "block";
+      forkCurrentHubIntoMerge();
+    });
+
+    document.getElementById("merge-exec-btn").addEventListener("click", async () => {
+      const left_spoke = leftMergeSel.value;
+      const right_spoke = rightMergeSel.value;
+      const left_source = document.getElementById("merge-left-ed").value;
+      const right_source = document.getElementById("merge-right-ed").value;
+      const summary = document.getElementById("merge-summary");
+      const cards = document.getElementById("merge-cards");
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ left_spoke, left_source, right_spoke, right_source })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        const d = data.diagnostic;
+        summary.innerHTML = `<span style="color:#f87171;">✗ Syntax error in ${d ? d.language : "fork"}: ${d ? `L${d.line}:${d.col} ${d.message}` : (data.error || "failed")}</span>`;
+        return;
+      }
+
+      if (data.clean) {
+        applySnapshot(data.snapshot, null);
+        forkCurrentHubIntoMerge();
+        summary.innerHTML = `<span style="color:#34d399;">✓ Clean 3-Way Hub AST Merge! Applied ${(data.applied_changes || []).length} concurrent cross-language edit(s) across all 11 spokes</span>`;
+      } else {
+        summary.innerHTML = `<span style="color:#f87171;">⚠ Semantic Merge Conflict (${(data.conflicts || []).length} conflict(s)) — Hub held safely at base revision</span>`;
+      }
+
+      const appCard = document.createElement("div");
+      appCard.className = "run-card";
+      appCard.innerHTML = `<strong>✓ Applied Cross-Language Edits (${(data.applied_changes || []).length})</strong><pre></pre>`;
+      appCard.querySelector("pre").textContent =
+        (data.applied_changes || []).map(a => `[${a.spoke} · ${a.scope}] ${a.summary}`).join("\n") || "(no non-conflicting edits)";
+      cards.appendChild(appCard);
+
+      const confCard = document.createElement("div");
+      confCard.className = "run-card";
+      confCard.innerHTML = `<strong>⚡ Semantic AST Conflicts (${(data.conflicts || []).length})</strong><pre></pre>`;
+      confCard.querySelector("pre").textContent =
+        (data.conflicts || []).length === 0
+          ? "✓ 0 semantic AST or metadata conflicts."
+          : data.conflicts.map(c => `[#${c.node_id} in ${c.scope}] ${c.description}\n  base: ${c.base_summary}\n  ${c.left_spoke}: ${c.left_summary}\n  ${c.right_spoke}: ${c.right_summary}`).join("\n");
+      cards.appendChild(confCard);
+    });
+
     document.getElementById("verify-btn").addEventListener("click", triggerVerify);
     document.getElementById("safety-pill").addEventListener("click", triggerVerify);
 
@@ -1016,13 +1174,13 @@
       const summary = document.getElementById("run-summary");
       const cards = document.getElementById("run-cards");
       drawer.style.display = "block";
-      summary.textContent = "Executing Hub VM + rustc + clang -std=c11 + clang++ (PCH) + swiftc + javac + go + python3 + ruby + node in parallel...";
+      summary.textContent = "Executing Hub VM + rustc + zig run -lc + clang -std=c11 + clang++ (PCH) + swiftc + javac + go + python3 + ruby + node in parallel...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/run", { method: "POST", body: "{}" });
       const data = await res.json();
       if (data.outputs_match) {
-        summary.innerHTML = `<span style="color:#34d399;">✓ 10/10 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
+        summary.innerHTML = `<span style="color:#34d399;">✓ 11/11 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
       } else {
         summary.innerHTML = `<span style="color:#f87171;">Runtime Check Completed (${data.wall_time_ms}ms — inspect outputs below)</span>`;
       }

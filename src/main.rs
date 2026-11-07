@@ -6,6 +6,7 @@ use starlang::engine::StarEngine;
 use starlang::eval::{eval_module_default, eval_tests_default};
 use starlang::fuzzer::run_fuzz_suite;
 use starlang::lens::SpokeId;
+use starlang::merge::diff_sources;
 use starlang::runner::run_all_spokes;
 use starlang::samples::find_sample;
 use starlang::server::serve_web_studio;
@@ -64,6 +65,18 @@ fn main() {
         }
         "verify" => {
             if let Err(e) = run_verify_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "diff" => {
+            if let Err(e) = run_diff_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "merge" => {
+            if let Err(e) = run_merge_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
@@ -160,7 +173,8 @@ fn parse_target_spoke(args: &[String]) -> Result<Option<SpokeId>, String> {
 
 fn run_convert(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang convert <file> [--to rust|c|cpp|swift|java|go|python|ruby|ts|star]".to_string()
+        "usage: starlang convert <file> [--to rust|zig|c|cpp|swift|java|go|python|ruby|ts|star]"
+            .to_string()
     })?;
     let (eng, src_spoke) = load_engine_from_path(input)?;
 
@@ -410,6 +424,197 @@ fn run_verify_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn infer_spoke_and_read(path_str: &str) -> Result<(SpokeId, String), String> {
+    let path = Path::new(path_str);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .ok_or_else(|| format!("cannot infer language extension from '{}'", path_str))?;
+    let spoke = SpokeId::from_name_or_ext(ext)
+        .ok_or_else(|| format!("unsupported file extension '.{}'", ext))?;
+    let src = fs::read_to_string(path)
+        .map_err(|e| format!("failed reading '{}': {}", path.display(), e))?;
+    Ok((spoke, src))
+}
+
+fn run_diff_cli(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("usage: starlang diff <left_file> <right_file>".to_string());
+    }
+    let (left_spoke, left_src) = infer_spoke_and_read(&args[0])?;
+    let (right_spoke, right_src) = infer_spoke_and_read(&args[1])?;
+    let rep = diff_sources(left_spoke, &left_src, right_spoke, &right_src)
+        .map_err(|d| d.to_string())?;
+
+    println!(
+        "=== Cross-Language Hub AST Semantic Diff: {} ({}) <-> {} ({}) ===",
+        args[0],
+        left_spoke.display_name(),
+        args[1],
+        right_spoke.display_name()
+    );
+    if rep.identical {
+        println!("✓ Semantically identical Hub ASTs (0 deltas).");
+    } else {
+        println!("Found {} semantic AST delta(s):", rep.deltas.len());
+        for d in &rep.deltas {
+            println!("  • [{:<8} in {}] {}", d.kind, d.scope, d.summary);
+        }
+    }
+    Ok(())
+}
+
+fn run_merge_cli(args: &[String]) -> Result<(), String> {
+    let positional: Vec<&str> = args
+        .iter()
+        .enumerate()
+        .filter(|(idx, a)| {
+            !a.starts_with('-')
+                && (*idx == 0 || (args[*idx - 1] != "--to" && args[*idx - 1] != "-t"))
+        })
+        .map(|(_, a)| a.as_str())
+        .collect();
+
+    let out_target = parse_target_spoke(args)?;
+
+    if positional.is_empty() {
+        let sample = find_sample("alerts").ok_or("missing alerts sample")?;
+        let mut eng = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+
+        // Alice forks into Zig 0.16 and escalates `Severity.Critical` weight (5 -> 10) + adds `Fatal = 3`
+        let base_zig = eng.project(SpokeId::Zig);
+        let alice_zig = base_zig
+            .replace(
+                "    Critical = 2,\n};",
+                "    Critical = 2,\n    Fatal = 3,\n};",
+            )
+            .replace(
+                "    if (ms >= 500) {\n        return Severity.Critical;",
+                "    if (ms >= 1000) {\n        return Severity.Fatal;\n    } else if (ms >= 500) {\n        return Severity.Critical;",
+            )
+            .replace(
+                "        Severity.Critical => {\n            return 5;\n        },",
+                "        Severity.Critical => {\n            return 5;\n        },\n        Severity.Fatal => {\n            return 10;\n        },",
+            );
+
+        // Concurrently, Bob forks into Python off the SAME base Hub and updates `main()` window + adds a comment
+        let base_py = eng.project(SpokeId::Python);
+        let bob_py = base_py
+            .replace(
+                "        if ms < 0:\n            continue",
+                "        # Skip negative jitter samples\n        if ms < 0:\n            continue",
+            )
+            .replace(
+                "    samples = [80, -1, 240, 610, 520, 90]\n    report = evaluate_window(samples, 6)",
+                "    samples = [80, -1, 1200, 240, 90]\n    report = evaluate_window(samples, 15)",
+            );
+
+        let (snap, rep) = eng
+            .merge_concurrent(SpokeId::Zig, &alice_zig, SpokeId::Python, &bob_py)
+            .map_err(|d| d.to_string())?;
+
+        let passed = snap.test_results.iter().filter(|t| t.passed).count();
+        if let Some(proj_spoke) = out_target {
+            eprintln!(
+                "✓ Clean 3-way merge ({} edits, 0 conflicts, {}/{} tests passed) -> projecting {}:",
+                rep.applied_changes.len(),
+                passed,
+                snap.test_results.len(),
+                proj_spoke.display_name()
+            );
+            print!("{}", eng.project(proj_spoke));
+        } else {
+            println!("=== 3-Way Concurrent Cross-Language Hub AST Merge Showcase (`alerts`) ===");
+            println!(
+                "Clean Merge: {} | Applied Edits: {} | Conflicts: {} | Hub Typecheck Issues: {}",
+                rep.clean,
+                rep.applied_changes.len(),
+                rep.conflicts.len(),
+                snap.semantic_diagnostics.len()
+            );
+            for ch in &rep.applied_changes {
+                println!(
+                    "  ✓ [{:<6} · {}] {}",
+                    ch.spoke.display_name(),
+                    ch.scope,
+                    ch.summary
+                );
+            }
+            println!(
+                "Merged Hub VM stdout: {} | Unit Tests: {}/{} passed | Sidecar Metadata: {:?}\n",
+                snap.live_eval.stdout.trim(),
+                passed,
+                snap.test_results.len(),
+                snap.metadata_badges
+            );
+            println!("--- Unified Rust View (.rs) ---");
+            print!("{}", eng.project(SpokeId::Rust));
+        }
+
+        if !rep.clean || !snap.semantic_diagnostics.is_empty() {
+            return Err("built-in 3-way merge showcase failed".to_string());
+        }
+        return Ok(());
+    }
+
+    if positional.len() != 3 {
+        return Err(
+            "usage: starlang merge [<base_file> <left_file> <right_file>] [--to rust|zig|c|cpp|swift|java|go|python|ruby|ts|star]"
+                .to_string(),
+        );
+    }
+
+    let (mut base_eng, base_spoke) = load_engine_from_path(positional[0])?;
+    let (left_spoke, left_src) = infer_spoke_and_read(positional[1])?;
+    let (right_spoke, right_src) = infer_spoke_and_read(positional[2])?;
+
+    let (snap, rep) = base_eng
+        .merge_concurrent(left_spoke, &left_src, right_spoke, &right_src)
+        .map_err(|d| d.to_string())?;
+
+    eprintln!(
+        "=== 3-Way Hub AST Merge: base={} ({}) | left={} ({}) | right={} ({}) ===",
+        positional[0],
+        base_spoke.display_name(),
+        positional[1],
+        left_spoke.display_name(),
+        positional[2],
+        right_spoke.display_name()
+    );
+    for ch in &rep.applied_changes {
+        eprintln!(
+            "  ✓ [{} · {}] {}",
+            ch.spoke.display_name(),
+            ch.scope,
+            ch.summary
+        );
+    }
+
+    if !rep.clean {
+        for c in &rep.conflicts {
+            eprintln!(
+                "  ✗ CONFLICT [#{} in {}] {}\n      base:  {}\n      {}: {}\n      {}: {}",
+                c.node_id,
+                c.scope,
+                c.description,
+                c.base_summary,
+                c.left_spoke.display_name(),
+                c.left_summary,
+                c.right_spoke.display_name(),
+                c.right_summary
+            );
+        }
+        return Err(format!("{} semantic merge conflict(s)", rep.conflicts.len()));
+    }
+
+    let proj_spoke = out_target.unwrap_or(base_spoke);
+    if let Some(code) = snap.views.get(proj_spoke.as_str()) {
+        print!("{}", code);
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -461,7 +666,7 @@ fn run_mutate_cli(args: &[String]) -> Result<(), String> {
             for m in rep.survivors() {
                 println!("  ⚠ [mutant #{} in {}()] {}", m.id, m.func, m.description);
             }
-            println!("\nTip: run `cargo run -- mutate --harden` to synthesize boundary assertions across all 10 languages.");
+            println!("\nTip: run `cargo run -- mutate --harden` to synthesize boundary assertions across all 11 languages.");
         } else {
             println!("\n✓ 0 surviving mutants — unit test suite killed 100% of Hub mutants.");
         }
@@ -520,11 +725,11 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 
     let report = run_fuzz_suite(seed, count);
     println!(
-        "★ Property-Based 10-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
+        "★ Property-Based 11-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
         report.seed, report.programs_tested
     );
     println!(
-        "  • 10-spoke GetPut + cold Put round-trips: {}",
+        "  • 11-spoke GetPut + cold Put round-trips: {}",
         report.spoke_roundtrips
     );
     println!(
@@ -551,7 +756,7 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 fn run_refactor(args: &[String]) -> Result<(), String> {
     if args.len() < 3 {
         return Err(
-            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|c|cpp|swift|java|go|python|ruby|ts|star]"
+            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|zig|c|cpp|swift|java|go|python|ruby|ts|star]"
                 .to_string(),
         );
     }
@@ -569,7 +774,7 @@ fn run_refactor(args: &[String]) -> Result<(), String> {
 
 fn run_optimize(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang optimize <file> [--to rust|c|cpp|swift|java|go|python|ruby|ts|star]"
+        "usage: starlang optimize <file> [--to rust|zig|c|cpp|swift|java|go|python|ruby|ts|star]"
             .to_string()
     })?;
     let (mut eng, src_spoke) = load_engine_from_path(input)?;
@@ -603,7 +808,7 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Outputs match across all 10 engines: {}",
+        "\nParallel wall time: {}ms | Outputs match across all 11 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
@@ -614,24 +819,26 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v0.7 — 10-Spoke Bidirectional Compiler (Rust <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> TypeScript <-> Star IR)
+        "starlang v0.8 — 11-Spoke Bidirectional Compiler (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> TypeScript <-> Star IR)
 
 USAGE:
-  cargo run                                         Start the 10-pane live web studio on http://127.0.0.1:7878
+  cargo run                                         Start the 11-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
-  cargo run -- watch [dir] [stem]                   Live-sync .rs, .c, .cpp, .swift, .java, .go, .py, .rb, .ts, .star files
-  cargo run -- convert <file> [--to c]              Transpile a file into one or all other spokes
+  cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .ts, .star files
+  cargo run -- convert <file> [--to zig]            Transpile a file into one or all other spokes
+  cargo run -- diff <left_file> <right_file>        Compute pure semantic Hub AST delta across any two languages
+  cargo run -- merge [base left right] [--to X]     3-way concurrent cross-language Hub AST + metadata merger
   cargo run -- check <file>                         Run the central Hub static type & scope checker
   cargo run -- verify [file]                        Prove safety obligations & detect UNSAT dead branches via Hub abstract interpretation
   cargo run -- eval <file>                          Execute main() instantly in the native in-memory Hub VM
   cargo run -- test <file>                          Execute polyglot unit tests instantly in the Hub VM
   cargo run -- trace [file]                         Report Hub AST statement coverage %, hotspots & call trace
   cargo run -- mutate [file] [--harden] [--to X]    Run Hub AST mutation testing & auto-harden boundary tests
-  cargo run -- fuzz [count] [--seed N]              Run property-based 10-spoke GetPut & VM equivalence fuzzer
+  cargo run -- fuzz [count] [--seed N]              Run property-based 11-spoke GetPut & VM equivalence fuzzer
   cargo run -- refactor <file> <sym> <new> [--to X] Scope-aware cross-language symbol rename
   cargo run -- optimize <file> [--to X]             Constant-fold & prune dead branches via the Hub
-  cargo run -- run <file>                           Verify across Hub VM + rustc + clang + clang++ + swiftc + javac + go + py + ruby + node
-  cargo run -- demo                                 Run an end-to-end 10-spoke sync, symbolic verify, mutation harden, fuzz & 10-engine demo"
+  cargo run -- run <file>                           Verify across Hub VM + rustc + zig + clang + clang++ + swiftc + javac + go + py + ruby + node
+  cargo run -- demo                                 Run an end-to-end 11-spoke sync, 3-way merge, verify, mutate, fuzz & 11-engine demo"
     );
 }
 
@@ -655,24 +862,33 @@ fn run_cli_demo() -> Result<(), String> {
         init_snap.live_eval.stdout.trim()
     );
 
-    let c_before = engine.project(SpokeId::C);
-    println!("--- Projected Modern ISO C11 View ---\n{}", c_before);
+    let zig_before = engine.project(SpokeId::Zig);
+    println!("--- Projected Zig 0.16 View ---\n{}", zig_before);
 
-    println!("=== 2. Editing in Ruby (escalating Critical weight 5 -> 10) ===");
-    let ruby_before = engine.project(SpokeId::Ruby);
-    let ruby_edited = ruby_before.replace(
-        "  when Severity::Critical\n    return 5",
-        "  when Severity::Critical\n    # Escalated critical weight in Ruby\n    return 10",
+    println!("=== 2. 3-Way Concurrent Polyglot Merge (Zig 0.16 + Python off Shared Rust Base) ===");
+    let zig_fork = zig_before.replace(
+        "        Severity.Critical => {\n            return 5;\n        },",
+        "        Severity.Critical => {\n            // Escalated critical weight in Zig 0.16\n            return 10;\n        },",
     );
-    engine
-        .apply_edit(SpokeId::Ruby, &ruby_edited)
+    let py_fork = engine.project(SpokeId::Python).replace(
+        "        if ms < 0:\n            continue",
+        "        # Skip negative jitter samples in Python\n        if ms < 0:\n            continue",
+    );
+    let (_, mrep) = engine
+        .merge_concurrent(SpokeId::Zig, &zig_fork, SpokeId::Python, &py_fork)
         .map_err(|d| d.to_string())?;
+    println!(
+        "Clean 3-way merge: {} | Applied {} concurrent cross-language edit(s) | Conflicts: {}\n",
+        mrep.clean,
+        mrep.applied_changes.len(),
+        mrep.conflicts.len()
+    );
 
     println!("=== 3. Cross-Language Hub Refactor: `Severity::Critical` -> `Severity::Emergency` ===");
     let (snap, renamed_sites) = engine.rename_symbol("Severity::Critical", "Emergency")?;
     let passed_after = snap.test_results.iter().filter(|t| t.passed).count();
     println!(
-        "Renamed {} AST sites across all 10 languages | Coverage: {}% | Tests: {}/{} passed | Live Hub VM: {}\n",
+        "Renamed {} AST sites across all 11 languages | Coverage: {}% | Tests: {}/{} passed | Live Hub VM: {}\n",
         renamed_sites,
         snap.coverage_pct,
         passed_after,
@@ -680,7 +896,7 @@ fn run_cli_demo() -> Result<(), String> {
         snap.live_eval.stdout.trim()
     );
 
-    println!("=== 4. Hub AST Mutation Testing & Auto-Test Hardening Across All 10 Languages ===");
+    println!("=== 4. Hub AST Mutation Testing & Auto-Test Hardening Across All 11 Languages ===");
     let (hardened_snap, hrep) = engine.harden_tests();
     let hardened_passed = hardened_snap
         .test_results
@@ -698,11 +914,11 @@ fn run_cli_demo() -> Result<(), String> {
         hardened_snap.test_results.len()
     );
 
-    println!("=== 5. Hub Symbolic Safety & Dead-Branch Verifier (`packets` C11 preset) ===");
-    let pkt_sample = find_sample("packets").ok_or("missing packets sample")?;
-    let pkt_eng = StarEngine::from_source(pkt_sample.initial_spoke, pkt_sample.source)
+    println!("=== 5. Hub Symbolic Safety & Dead-Branch Verifier (`ringbuf` Zig 0.16 preset) ===");
+    let rb_sample = find_sample("ringbuf").ok_or("missing ringbuf sample")?;
+    let rb_eng = StarEngine::from_source(rb_sample.initial_spoke, rb_sample.source)
         .map_err(|d| d.to_string())?;
-    let vrep = pkt_eng.verify();
+    let vrep = rb_eng.verify();
     println!(
         "Proven Safe: {}/{} obligations ({}ms) | Refuted: {} | UNSAT Dead Branches: {}",
         vrep.proven_safe,
@@ -722,7 +938,7 @@ fn run_cli_demo() -> Result<(), String> {
     }
     println!();
 
-    println!("=== 6. Differential Execution Across All 10 Engines (Hub VM + rustc + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + node) ===");
+    println!("=== 6. Differential Execution Across All 11 Engines (Hub VM + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + node) ===");
     let report = run_all_spokes(&engine);
     for r in &report.results {
         println!(
@@ -737,14 +953,14 @@ fn run_cli_demo() -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Byte-for-byte match across all 10 engines: {}",
+        "\nParallel wall time: {}ms | Byte-for-byte match across all 11 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
         return Err("runtime outputs diverged".to_string());
     }
 
-    println!("\n=== 7. Property-Based 10-Spoke Lens Fuzzer (25 Synthesized Programs × 10 Spokes) ===");
+    println!("\n=== 7. Property-Based 11-Spoke Lens Fuzzer (25 Synthesized Programs × 11 Spokes) ===");
     let fuzz = run_fuzz_suite(0x57A4_2026_0500, 25);
     println!(
         "Verified {} GetPut round-trips & {} test suites in {}ms — Failures: {}",
