@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -444,6 +444,8 @@
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="autodiff-btn" title="Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer">∇ AutoDiff & Tape</button>
+      <button class="verify-btn" id="stability-btn" title="IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f & Quantization Auditor">🔬 Lipschitz & Stability</button>
       <button class="wasm-btn" id="microarch-btn" title="4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Hardware Simulator">🖥 CPU, Cache & Branch</button>
       <button class="opt-btn" id="schedule-btn" title="Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Pipeline Stall Eliminator">📐 List Scheduler & ILP</button>
       <button class="wasm-btn" id="regalloc-btn" title="Chaitin-Briggs Kempe-stack graph-coloring & Poletto-Sarkar linear-scan register allocator + Dual-Target AArch64 / x86_64 Native Assembly">🎛 RegAlloc & ASM</button>
@@ -670,6 +672,25 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="autodiff-drawer">
+    <div class="run-header">
+      <span id="autodiff-summary">∇ Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer...</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="wasm-btn" id="autodiff-inject-btn">∇ Inject Synthesized Gradient Function + Test Into All 13 Spokes</button>
+        <button onclick="document.getElementById('autodiff-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="autodiff-cards"></div>
+  </section>
+
+  <section id="stability-drawer">
+    <div class="run-header">
+      <span id="stability-summary">🔬 IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f & Quantization Auditor...</span>
+      <button onclick="document.getElementById('stability-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="stability-cards"></div>
+  </section>
 
   <section id="microarch-drawer">
     <div class="run-header">
@@ -2184,6 +2205,78 @@
           `[Unscheduled In-Order Pipeline (${fn.in_order_cycles_before}c, ${fn.stall_bubbles_before} bubble cycles)]\n${fn.unscheduled_listing}\n` +
           `[Gibbons-Muchnick Critical-Path List Schedule (${fn.scheduled_cycles_after}c, ${fn.stall_bubbles_after} bubble cycles)]\n${fn.scheduled_listing}\n` +
           `[Mermaid Instruction Data-Dependence DAG]\n${fn.mermaid_dag}`;
+        cards.appendChild(card);
+      });
+    });
+
+    async function triggerAutoDiff(injectFlag) {
+      const drawer = document.getElementById("autodiff-drawer");
+      const summary = document.getElementById("autodiff-summary");
+      const cards = document.getElementById("autodiff-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Computing Forward-Mode Dual Numbers (a + bε) & Reverse-Mode Wengert Tape Adjoints across all Hub functions...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/autodiff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inject: injectFlag ? "true" : "false" })
+      });
+      const data = await res.json();
+      if (data.snapshot && injectFlag) {
+        applySnapshot(data.snapshot, null);
+      }
+      const color = data.all_gradients_verified ? "#34d399" : "#38bdf8";
+      summary.innerHTML = `<span style="color:${color};">∇ Forward/Reverse AutoDiff: ${data.verified_partials}/${data.total_partials} partials verified (Dual == Reverse Tape) · ${data.total_tape_nodes} Wengert tape nodes · Max Lipschitz L=${data.max_lipschitz_bound} · Synthesized \`${data.synthesized_grad_fn_name}\` (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const pLines = (fn.partials || [])
+          .map(p => `  • ${p.symbolic_derivative} @ ${p.sample_point} => Primal=${p.primal_value} | Forward Dual=${p.forward_dual_deriv} | Reverse Tape=${p.reverse_tape_adjoint} | Finite-Diff=${p.finite_diff_approx} [${p.dual_matches_reverse ? "✓ MATCH" : "⚠"}]`)
+          .join("\n") || "  (no numeric parameters)";
+        const tLines = (fn.reverse_tape || [])
+          .map(t => `  [v${t.tape_idx} · ${t.op_kind.padEnd(5)}] val=${String(t.primal_val).padEnd(6)} adj=${String(t.adjoint_grad).padEnd(6)} :: ${t.expr_label}`)
+          .join("\n");
+        const spk = Object.entries(fn.grad_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "c", "python", "perl", "star"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>∇ ${fn.signature} (Lipschitz L=${fn.lipschitz_bound} · Tape Nodes: ${fn.tape_nodes_count})</strong><pre style="max-height:320px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `[Forward Dual vs. Reverse Tape Partial Derivatives]\n${pLines}\n\n[Reverse-Mode Wengert Tape Adjoint Sweep]\n${tLines}\n\n[13-Spoke Differentiable Codegen (${fn.grad_fn_name})]\n${spk}`;
+        cards.appendChild(card);
+      });
+    }
+
+    document.getElementById("autodiff-btn").addEventListener("click", () => triggerAutoDiff(false));
+    document.getElementById("autodiff-inject-btn").addEventListener("click", () => triggerAutoDiff(true));
+
+    document.getElementById("stability-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("stability-drawer");
+      const summary = document.getElementById("stability-summary");
+      const cards = document.getElementById("stability-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Auditing condition number κ_f, Lipschitz bound L_f, truncating division quantization & 64-bit overflow hazards...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/stability", { method: "POST", body: "{}" });
+      const data = await res.json();
+      summary.innerHTML = `<span style="color:#34d399;">🔬 Numerical Stability & Lipschitz Auditor: ${data.total_functions} functions · Max Condition κ=${data.max_condition_number} · Max Lipschitz L=${data.max_lipschitz_constant} · ${data.quantization_sites} quantization site(s) · ${data.overflow_sites} overflow guard site(s) (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const hzLines = (fn.hazards || [])
+          .map(h => `  • [#${h.site_id} · ${h.kind} (${h.severity})] ${h.expr_summary}\n    Max Error: ${h.max_error_ulps_or_bits} bits/ULPs — ${h.recommendation}`)
+          .join("\n\n") || "  ✓ 0 numerical hazards (exact affine integer operations)";
+        const spk = Object.entries(fn.hardened_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "c", "python"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>🔬 ${fn.signature} (${fn.stability_grade})</strong><pre style="max-height:300px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Condition Number κ: ${fn.condition_number_kappa} | Global Lipschitz L: ${fn.lipschitz_constant}\n\n[Numerical Precision & Overflow Audit]\n${hzLines}\n\n[Numerically Hardened 13-Spoke Lowering]\n${spk}`;
         cards.appendChild(card);
       });
     });

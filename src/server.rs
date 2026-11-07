@@ -3,6 +3,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::autodiff::{AutoDiffReport, NumericalStabilityReport};
 use crate::complexity::ComplexityReport;
 use crate::concolic::{ConcolicReport, SecurityFlowReport};
 use crate::debugger::TimeTravelReport;
@@ -33,7 +34,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v1.9 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc, Escape Analysis, Superscalar OoO CPU/Cache/Branch Sim & Critical-Path List Scheduler Studio running at:");
+    println!("StarLang v2.0 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc, Escape Analysis, Superscalar OoO CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff & Lipschitz Numerical Stability Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -547,6 +548,27 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.schedule_instructions()
             };
             let payload = schedule_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/autodiff") | ("GET", "/api/autodiff") => {
+            let parsed = parse_flat_json_object(&body).unwrap_or_default();
+            let inject = parsed
+                .get("inject")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false);
+            let (rep, snap_opt) = {
+                let mut eng = shared.lock().unwrap();
+                eng.autodiff(inject)
+            };
+            let payload = autodiff_to_json(&rep, snap_opt.as_ref());
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/stability") | ("GET", "/api/stability") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.numerical_stability()
+            };
+            let payload = stability_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -2016,6 +2038,142 @@ fn schedule_to_json(rep: &InstructionScheduleReport) -> String {
         rep.total_bubbles_eliminated,
         rep.total_reordered_insts,
         rep.overall_speedup,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn autodiff_to_json(rep: &AutoDiffReport, snap: Option<&SyncSnapshot>) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let pts: Vec<String> = f
+                .partials
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{{\"param_name\":{},\"param_ty\":{},\"symbolic_derivative\":{},\"sample_point\":{},\"primal_value\":{},\"forward_dual_deriv\":{:.3},\"reverse_tape_adjoint\":{:.3},\"finite_diff_approx\":{:.3},\"dual_matches_reverse\":{}}}",
+                        json_str(&p.param_name),
+                        json_str(&p.param_ty),
+                        json_str(&p.symbolic_derivative),
+                        json_str(&p.sample_point),
+                        p.primal_value,
+                        p.forward_dual_deriv,
+                        p.reverse_tape_adjoint,
+                        p.finite_diff_approx,
+                        p.dual_matches_reverse
+                    )
+                })
+                .collect();
+            let tp: Vec<String> = f
+                .reverse_tape
+                .iter()
+                .map(|t| {
+                    format!(
+                        "{{\"tape_idx\":{},\"op_kind\":{},\"expr_label\":{},\"primal_val\":{:.2},\"adjoint_grad\":{:.3}}}",
+                        t.tape_idx,
+                        json_str(&t.op_kind),
+                        json_str(&t.expr_label),
+                        t.primal_val,
+                        t.adjoint_grad
+                    )
+                })
+                .collect();
+            let gsp: Vec<String> = f
+                .grad_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"differentiable_params\":{},\"tape_nodes_count\":{},\"lipschitz_bound\":{:.2},\"jacobian_norm_l1\":{:.2},\"all_partials_verified\":{},\"grad_fn_name\":{},\"partials\":[{}],\"reverse_tape\":[{}],\"grad_by_spoke\":{{{}}}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.differentiable_params,
+                f.tape_nodes_count,
+                f.lipschitz_bound,
+                f.jacobian_norm_l1,
+                f.all_partials_verified,
+                json_str(&f.grad_fn_name),
+                pts.join(","),
+                tp.join(","),
+                gsp.join(",")
+            )
+        })
+        .collect();
+
+    let snap_json = snap
+        .map(snapshot_to_json)
+        .unwrap_or_else(|| "null".to_string());
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"differentiable_functions\":{},\"total_partials\":{},\"verified_partials\":{},\"total_tape_nodes\":{},\"max_lipschitz_bound\":{:.2},\"all_gradients_verified\":{},\"synthesized_grad_fn_name\":{},\"elapsed_ms\":{},\"functions\":[{}],\"snapshot\":{}}}",
+        rep.total_functions,
+        rep.differentiable_functions,
+        rep.total_partials,
+        rep.verified_partials,
+        rep.total_tape_nodes,
+        rep.max_lipschitz_bound,
+        rep.all_gradients_verified,
+        json_str(&rep.synthesized_grad_fn_name),
+        rep.elapsed_ms,
+        fns_json.join(","),
+        snap_json
+    )
+}
+
+fn stability_to_json(rep: &NumericalStabilityReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let hzs: Vec<String> = f
+                .hazards
+                .iter()
+                .map(|h| {
+                    format!(
+                        "{{\"site_id\":{},\"fn_name\":{},\"kind\":{},\"severity\":{},\"expr_summary\":{},\"max_error_ulps_or_bits\":{:.2},\"recommendation\":{}}}",
+                        h.site_id,
+                        json_str(&h.fn_name),
+                        json_str(&h.kind),
+                        json_str(&h.severity),
+                        json_str(&h.expr_summary),
+                        h.max_error_ulps_or_bits,
+                        json_str(&h.recommendation)
+                    )
+                })
+                .collect();
+            let hsp: Vec<String> = f
+                .hardened_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"condition_number_kappa\":{:.2},\"lipschitz_constant\":{:.2},\"overflow_risk_sites\":{},\"quantization_sites\":{},\"cancellation_sites\":{},\"stability_grade\":{},\"hazards\":[{}],\"hardened_by_spoke\":{{{}}}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.condition_number_kappa,
+                f.lipschitz_constant,
+                f.overflow_risk_sites,
+                f.quantization_sites,
+                f.cancellation_sites,
+                json_str(&f.stability_grade),
+                hzs.join(","),
+                hsp.join(",")
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_hazards\":{},\"overflow_sites\":{},\"quantization_sites\":{},\"cancellation_sites\":{},\"max_condition_number\":{:.2},\"max_lipschitz_constant\":{:.2},\"well_conditioned_functions\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_hazards,
+        rep.overflow_sites,
+        rep.quantization_sites,
+        rep.cancellation_sites,
+        rep.max_condition_number,
+        rep.max_lipschitz_constant,
+        rep.well_conditioned_functions,
         rep.elapsed_ms,
         fns_json.join(",")
     )

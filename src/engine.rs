@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 
+use crate::autodiff::{
+    audit_numerical_stability, differentiate_module, AutoDiffReport, NumericalStabilityReport,
+};
 use crate::complexity::{analyze_complexity, ComplexityReport};
 use crate::concolic::{
     analyze_security_flow, explore_concolic_paths, ConcolicReport, SecurityFlowReport,
@@ -302,6 +305,27 @@ impl StarEngine {
     /// Run Gibbons-Muchnick Critical-Path DAG List Instruction Scheduling & Pipeline Stall Elimination.
     pub fn schedule_instructions(&self) -> InstructionScheduleReport {
         schedule_instructions(self.hub())
+    }
+
+    /// Run Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation.
+    /// If `inject_into_hub` is true, appends the synthesized gradient function and unit test
+    /// into the active Hub module and projects across all 13 spokes.
+    pub fn autodiff(&mut self, inject_into_hub: bool) -> (AutoDiffReport, Option<SyncSnapshot>) {
+        let rep = differentiate_module(self.hub());
+        let snap = if inject_into_hub && rep.differentiable_functions > 0 {
+            let active = self.current().spoke;
+            self.push_hub(rep.augmented_hub.clone(), active);
+            Some(self.snapshot())
+        } else {
+            None
+        };
+        (rep, snap)
+    }
+
+    /// Run IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f,
+    /// Truncating Division Quantization & 64-Bit Overflow Risk Audit.
+    pub fn numerical_stability(&self) -> NumericalStabilityReport {
+        audit_numerical_stability(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.
