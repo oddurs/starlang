@@ -15,6 +15,7 @@ use crate::quickcheck::QuickCheckReport;
 use crate::repair::RepairReport;
 use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
+use crate::synth::{ModuleCfgReport, SynthReport};
 use crate::trace::TraceReport;
 use crate::verify::{VerifyReport, VerifyStatus};
 use crate::wasm::encode_base64;
@@ -26,7 +27,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v1.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck & Auto-Repair Studio running at:");
+    println!("StarLang v1.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair & PBE Synthesizer Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -395,6 +396,36 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.repair(inject_demo)
             };
             let payload = repair_to_json(&snap, &rep, injected_desc.as_deref());
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/synth") => {
+            let parsed = parse_flat_json_object(&body).unwrap_or_default();
+            let spec_str = parsed.get("spec").map(|s| s.as_str());
+            let inject = parsed
+                .get("inject")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false);
+            let res = {
+                let mut eng = shared.lock().unwrap();
+                eng.synthesize(spec_str, inject)
+            };
+            match res {
+                Ok((rep, snap)) => {
+                    let payload = synth_to_json(&rep, snap.as_ref());
+                    send_response(&mut stream, 200, "application/json", &payload)
+                }
+                Err(err) => {
+                    let payload = format!("{{\"ok\":false,\"error\":{}}}", json_str(&err));
+                    send_response(&mut stream, 400, "application/json", &payload)
+                }
+            }
+        }
+        ("POST", "/api/cfg") | ("GET", "/api/cfg") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.cfg()
+            };
+            let payload = cfg_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -1013,6 +1044,89 @@ fn repair_to_json(
         faults_json.join(","),
         patch_json,
         snapshot_to_json(snap)
+    )
+}
+
+fn synth_to_json(rep: &SynthReport, snap: Option<&SyncSnapshot>) -> String {
+    let views_entries: Vec<String> = rep
+        .views_by_spoke
+        .iter()
+        .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+        .collect();
+    let snap_json = snap
+        .map(snapshot_to_json)
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "{{\"ok\":true,\"synthesized\":{},\"fn_name\":{},\"signature\":{},\"examples_count\":{},\"candidates_enumerated\":{},\"observationally_unique\":{},\"pruned_equivalents\":{},\"synthesized_summary\":{},\"test_passed\":{},\"safety_proven\":{},\"elapsed_ms\":{},\"views\":{{{}}},\"snapshot\":{}}}",
+        rep.ok,
+        json_str(&rep.fn_name),
+        json_str(&rep.signature),
+        rep.examples_count,
+        rep.candidates_explored,
+        rep.candidates_explored.saturating_sub(rep.pruned_by_obs_equiv),
+        rep.pruned_by_obs_equiv,
+        json_str(&rep.program_summary),
+        rep.tests_passed,
+        rep.safety_proven,
+        rep.elapsed_ms,
+        views_entries.join(","),
+        snap_json
+    )
+}
+
+fn cfg_to_json(rep: &ModuleCfgReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let bbs: Vec<String> = f
+                .blocks
+                .iter()
+                .map(|b| {
+                    let stmts: Vec<String> = b.stmts.iter().map(|s| json_str(s)).collect();
+                    let succs: Vec<String> = b
+                        .successors
+                        .iter()
+                        .map(|(dst, _)| dst.to_string())
+                        .collect();
+                    let preds: Vec<String> = b.predecessors.iter().map(|i| i.to_string()).collect();
+                    let doms: Vec<String> = b.dominators.iter().map(|i| i.to_string()).collect();
+                    format!(
+                        "{{\"id\":{},\"label\":{},\"stmts\":[{}],\"terminator\":{},\"successors\":[{}],\"predecessors\":[{}],\"dominators\":[{}]}}",
+                        b.id,
+                        json_str(&b.label),
+                        stmts.join(","),
+                        json_str(&b.kind),
+                        succs.join(","),
+                        preds.join(","),
+                        doms.join(",")
+                    )
+                })
+                .collect();
+            let back_edges: Vec<String> = f
+                .back_edges
+                .iter()
+                .map(|(u, v)| format!("[{},{}]", u, v))
+                .collect();
+            format!(
+                "{{\"name\":{},\"signature\":{},\"natural_loop_count\":{},\"back_edges\":[{}],\"blocks\":[{}],\"mermaid\":{},\"graphviz_dot\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.natural_loops,
+                back_edges.join(","),
+                bbs.join(","),
+                json_str(&f.mermaid),
+                json_str(&f.dot)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_blocks\":{},\"total_edges\":{},\"total_natural_loops\":{},\"functions\":[{}]}}",
+        rep.total_blocks,
+        rep.total_edges,
+        rep.total_natural_loops,
+        fns_json.join(",")
     )
 }
 

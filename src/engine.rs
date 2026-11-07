@@ -13,6 +13,10 @@ use crate::repair::{
     check_module_equivalence, inject_demo_bug, repair_module, EquivalenceReport, RepairReport,
 };
 use crate::spokes::lens_for;
+use crate::synth::{
+    analyze_cfg, default_list_synth_spec, default_synth_spec, parse_synth_spec,
+    synthesize_from_examples, ModuleCfgReport, SynthReport,
+};
 use crate::trace::{trace_module_default, TraceReport};
 use crate::typecheck::{check_module, SemanticDiagnostic};
 use crate::verify::{verify_module, VerifyReport};
@@ -172,6 +176,54 @@ impl StarEngine {
     ) -> Result<EquivalenceReport, Diagnostic> {
         let other_hub = lens_for(spoke).put(source, self.hub())?;
         Ok(check_module_equivalence(self.hub(), &other_hub, trials))
+    }
+
+    /// Analyze Control-Flow Graphs (Basic Blocks, Dominator Trees, Natural Loops, Mermaid & DOT).
+    pub fn cfg(&self) -> ModuleCfgReport {
+        analyze_cfg(self.hub())
+    }
+
+    /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.
+    /// If `inject_into_hub` is true and synthesis succeeds, appends the synthesized function
+    /// and its unit test into the active Hub module and projects across all 13 spokes.
+    pub fn synthesize(
+        &mut self,
+        spec_input: Option<&str>,
+        inject_into_hub: bool,
+    ) -> Result<(SynthReport, Option<SyncSnapshot>), String> {
+        let spec = match spec_input.map(|s| s.trim()) {
+            None | Some("") | Some("default") | Some("clamp_bonus") => default_synth_spec(),
+            Some("sum_above") | Some("list") => default_list_synth_spec(),
+            Some(raw) => parse_synth_spec(raw)?,
+        };
+        let report = synthesize_from_examples(&spec);
+        let snap = if inject_into_hub && report.ok {
+            let mut next_hub = self.hub().clone();
+            if let Some(new_fn) = &report.synthesized_fn {
+                next_hub.items.retain(|existing| match existing {
+                    crate::hub::Item::Function(f) => f.name != new_fn.name,
+                    _ => true,
+                });
+                next_hub
+                    .items
+                    .push(crate::hub::Item::Function(new_fn.clone()));
+            }
+            if let Some(new_test) = &report.synthesized_test {
+                next_hub.items.retain(|existing| match existing {
+                    crate::hub::Item::Test(t) => t.name != new_test.name,
+                    _ => true,
+                });
+                next_hub
+                    .items
+                    .push(crate::hub::Item::Test(new_test.clone()));
+            }
+            let active = self.current().spoke;
+            self.push_hub(next_hub, active);
+            Some(self.snapshot())
+        } else {
+            None
+        };
+        Ok((report, snap))
     }
 
     /// Compute the pure semantic Hub AST delta between the current Hub and `source` in `spoke`.

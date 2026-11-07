@@ -117,6 +117,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "synth" => {
+            if let Err(e) = run_synth_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "cfg" => {
+            if let Err(e) = run_cfg_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -1088,6 +1100,115 @@ fn run_equiv_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_synth_cli(args: &[String]) -> Result<(), String> {
+    let spec_arg = if args.is_empty() {
+        None
+    } else {
+        Some(args.join(" "))
+    };
+    let sample = find_sample("scores").ok_or("missing scores sample")?;
+    let mut eng = StarEngine::from_source(sample.initial_spoke, sample.source)
+        .map_err(|d| d.to_string())?;
+    let (rep, _) = eng.synthesize(spec_arg.as_deref(), false)?;
+
+    println!(
+        "=== Programming-by-Example (PBE) Observational-Equivalence Synthesizer: {} ===",
+        rep.signature
+    );
+    println!(
+        "Status: {} | I/O Examples: {} | Explored: {} ({} pruned by obs-equiv) | Unit Test: {} | Safety Proven: {} ({}ms)",
+        if rep.ok {
+            "VERIFIED AST SYNTHESIZED"
+        } else {
+            "UNRESOLVED"
+        },
+        rep.examples_count,
+        rep.candidates_explored,
+        rep.pruned_by_obs_equiv,
+        rep.tests_passed,
+        rep.safety_proven,
+        rep.elapsed_ms
+    );
+    println!("Synthesized Hub AST Form:\n{}\n", rep.program_summary);
+
+    for spoke_key in ["rust", "zig", "c", "python", "lua", "perl", "typescript", "star"] {
+        if let Some(code) = rep.views_by_spoke.get(spoke_key) {
+            println!("--- Projected {} ---\n{}", spoke_key, code);
+        }
+    }
+
+    if !rep.ok || !rep.tests_passed {
+        return Err("PBE synthesis failed to produce a verified program".to_string());
+    }
+    Ok(())
+}
+
+fn run_cfg_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    let mut emit_dot = false;
+    for a in args {
+        if a == "--dot" {
+            emit_dot = true;
+        } else if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.cfg();
+    println!(
+        "=== Polyglot Control-Flow Graph (CFG), Dominator Tree & Natural-Loop Analyzer: {} ===",
+        label
+    );
+    println!(
+        "Total Basic Blocks: {} | Total CFG Edges: {} | Natural Loops Detected: {}\n",
+        rep.total_blocks, rep.total_edges, rep.total_natural_loops
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} — {} basic block(s), {} natural loop(s), back-edges: {:?}",
+            f.signature,
+            f.blocks.len(),
+            f.natural_loops,
+            f.back_edges
+        );
+        for b in &f.blocks {
+            println!(
+                "  [BB{} · {:<10}] preds={:?} succs={:?} dom={:?} :: kind={}",
+                b.id, b.label, b.predecessors, b.successors, b.dominators, b.kind
+            );
+        }
+        if emit_dot {
+            println!("  --- Graphviz DOT ---\n{}", f.dot);
+        } else {
+            println!("  --- Mermaid CFG ---\n{}", f.mermaid);
+        }
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -1292,13 +1413,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v1.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O & QuickCheck Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
+        "starlang v1.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair & PBE Synthesizer Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- synth [spec|sum_above]               Synthesize a verified polyglot function from I/O examples across all 13 spokes
+  cargo run -- cfg [file|preset] [--dot]            Analyze Control-Flow Graphs, Dominator sets, Natural Loops & Mermaid/DOT
   cargo run -- debug [file|preset] [--slice var]    Record time-travel trace across all 13 languages & compute backward causal slice
   cargo run -- complexity [file|preset]             Profile static & empirical Big-O scaling, gas cost & 13-spoke code density
   cargo run -- quickcheck [file|preset] [--trials N] Run property-based QuickCheck, invariant discovery & counterexample shrinking
@@ -1317,7 +1440,7 @@ USAGE:
   cargo run -- refactor <file> <sym> <new> [--to X] Scope-aware cross-language symbol rename
   cargo run -- optimize <file> [--to X]             Constant-fold & prune dead branches via the Hub
   cargo run -- run <file>                           Verify across Hub VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + ruby + luajit + perl + node
-  cargo run -- demo                                 Run an end-to-end 13-spoke sync, Wasm JIT, time-travel, Big-O, QuickCheck, merge, verify & 14-engine demo"
+  cargo run -- demo                                 Run an end-to-end 13-spoke sync, Wasm JIT, time-travel, Big-O, QuickCheck, repair, synth & 14-engine demo"
     );
 }
 
@@ -1446,8 +1569,10 @@ fn run_cli_demo() -> Result<(), String> {
     let slice_len = drep.slice.as_ref().map(|s| s.slice_steps.len()).unwrap_or(0);
     let crep = rl_eng.complexity();
     let qrep = rl_eng.quickcheck(Some(32));
+    let cfg_rep = rl_eng.cfg();
     let mut repair_eng = rl_eng;
     let (_, rrep, _) = repair_eng.repair(true);
+    let (srep, _) = repair_eng.synthesize(None, false)?;
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -1456,7 +1581,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates)\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s)\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -1464,10 +1589,20 @@ fn run_cli_demo() -> Result<(), String> {
         qrep.total_trials,
         qrep.total_invariants,
         rrep.repaired,
-        rrep.candidates_evaluated
+        rrep.candidates_evaluated,
+        srep.fn_name,
+        srep.pruned_by_obs_equiv,
+        cfg_rep.total_blocks,
+        cfg_rep.total_natural_loops
     );
-    if !drep.ok || slice_len == 0 || !qrep.all_passed || !rrep.repaired {
-        return Err("Time-travel debugger, QuickCheck, or Auto-Repair failed on ratelimit".to_string());
+    if !drep.ok
+        || slice_len == 0
+        || !qrep.all_passed
+        || !rrep.repaired
+        || !srep.ok
+        || cfg_rep.total_blocks == 0
+    {
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, or CFG failed on ratelimit".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

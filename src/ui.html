@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,7 +436,7 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v1.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck & Auto-Repair Studio</h1>
+        <h1>★ StarLang v1.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair & PBE Synthesizer Studio</h1>
         <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm & 14-Engine Verification</p>
       </div>
     </div>
@@ -444,6 +444,8 @@
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="synth-btn" title="Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages">✨ PBE Synth</button>
+      <button class="trace-btn" id="cfg-btn" title="Inspect Control-Flow Graphs, Dominator Trees, Natural Loop Back-Edges, Mermaid & Graphviz DOT">🕸 CFG & Loops</button>
       <button class="mut-btn" id="repair-btn" title="Localize failing unit tests or refuted safety obligations & synthesize a 4-gate verified AST patch across all 13 languages">🩹 Auto-Repair</button>
       <button class="debug-btn" id="debug-btn" title="Scrub forward & backward through execution steps across all 13 languages simultaneously & compute dynamic backward slices">⏱ Time-Travel</button>
       <button class="trace-btn" id="complexity-btn" title="Profile static & empirical Big-O complexity, cyclomatic complexity, gas cost & 13-spoke code density">📈 Big-O & Gas</button>
@@ -656,6 +658,27 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="synth-drawer">
+    <div class="run-header">
+      <span id="synth-summary">✨ Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages...</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input type="text" id="synth-spec-input" value="clamp_bonus(score: Int, cap: Int) -> Int | (40, 100) => 80; (75, 100) => 100; (-15, 60) => 0; (0, 50) => 0" style="width:420px;" />
+        <button class="wasm-btn" id="synth-run-btn">✨ Synthesize & Inject Into 13 Spokes</button>
+        <button id="synth-list-btn">📋 List Fold Preset (sum_above)</button>
+        <button onclick="document.getElementById('synth-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="synth-cards"></div>
+  </section>
+
+  <section id="cfg-drawer">
+    <div class="run-header">
+      <span id="cfg-summary">🕸 Control-Flow Graph (CFG), Dominator Tree, Natural Loop Detector & Mermaid/Graphviz DOT Exporter...</span>
+      <button onclick="document.getElementById('cfg-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="cfg-cards"></div>
+  </section>
 
   <section id="repair-drawer">
     <div class="run-header">
@@ -1564,6 +1587,89 @@
 
     document.getElementById("repair-btn").addEventListener("click", () => triggerRepair(false));
     document.getElementById("repair-demo-btn").addEventListener("click", () => triggerRepair(true));
+
+    async function triggerSynth(specStr, injectFlag) {
+      const drawer = document.getElementById("synth-drawer");
+      const summary = document.getElementById("synth-summary");
+      const cards = document.getElementById("synth-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Enumerating observational-equivalence pruned Hub AST candidates against I/O examples...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/synth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec: specStr || "", inject: injectFlag ? "true" : "false" })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        summary.innerHTML = `<span style="color:#f87171;">✗ Synthesis Error: ${data.error || "failed"}</span>`;
+        return;
+      }
+      if (data.snapshot) {
+        applySnapshot(data.snapshot, null);
+      }
+      const color = data.synthesized ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">✨ PBE Synthesis (${data.signature}): ${data.synthesized ? "VERIFIED AST SYNTHESIZED" : "UNRESOLVED"} · ${data.examples_count} I/O examples · ${data.candidates_enumerated} candidates (${data.observationally_unique} unique, ${data.pruned_equivalents} pruned) in ${data.elapsed_ms}ms</span>`;
+
+      const sumCard = document.createElement("div");
+      sumCard.className = "run-card";
+      sumCard.innerHTML = `<strong>✨ Synthesized Hub AST & Verification</strong><pre></pre>`;
+      sumCard.querySelector("pre").textContent =
+        `Signature:  ${data.signature}\n` +
+        `AST Form:   ${data.synthesized_summary}\n` +
+        `Unit Test:  ${data.test_passed ? "✓ Passed" : "✗ Failed"}\n` +
+        `Safety:     ${data.safety_proven ? "✓ Proven Safe" : "⚠ Unverified"}`;
+      cards.appendChild(sumCard);
+
+      const projCard = document.createElement("div");
+      projCard.className = "run-card";
+      projCard.style.gridColumn = "span 2";
+      const viewsText = Object.entries(data.views || {})
+        .map(([sp, code]) => `[${sp}]\n${(code || "").trim()}`)
+        .join("\n\n");
+      projCard.innerHTML = `<strong>🌐 13-Spoke Projections of Synthesized Function + Unit Test</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+      projCard.querySelector("pre").textContent = viewsText;
+      cards.appendChild(projCard);
+    }
+
+    document.getElementById("synth-btn").addEventListener("click", () => {
+      triggerSynth(document.getElementById("synth-spec-input").value.trim(), false);
+    });
+    document.getElementById("synth-run-btn").addEventListener("click", () => {
+      triggerSynth(document.getElementById("synth-spec-input").value.trim(), true);
+    });
+    document.getElementById("synth-list-btn").addEventListener("click", () => {
+      const spec = "sum_above";
+      document.getElementById("synth-spec-input").value = spec;
+      triggerSynth(spec, true);
+    });
+
+    document.getElementById("cfg-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("cfg-drawer");
+      const summary = document.getElementById("cfg-summary");
+      const cards = document.getElementById("cfg-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Building Basic-Block Control-Flow Graphs, Dominator Sets & Natural Loop Back-Edges...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/cfg", { method: "POST", body: "{}" });
+      const data = await res.json();
+      summary.innerHTML = `<span style="color:#38bdf8;">🕸 Control-Flow Graph: ${data.total_blocks} basic blocks · ${data.total_edges} edges · ${data.total_natural_loops} natural loop(s) across ${(data.functions || []).length} functions</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const bbLines = (fn.blocks || [])
+          .map(b => `BB${b.id} (${b.label}): preds=[${(b.predecessors || []).join(",")}] succs=[${(b.successors || []).join(",")}] dom={${(b.dominators || []).join(",")}}\n  term: ${b.terminator}`)
+          .join("\n");
+        const backEdges = (fn.back_edges || []).map(e => `BB${e[0]} → BB${e[1]}`).join(", ") || "none";
+        card.innerHTML = `<strong>🕸 ${fn.signature} (${fn.natural_loop_count} loop(s))</strong><pre style="max-height:260px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Back-Edges: ${backEdges}\n\n${bbLines}\n\n[Mermaid flowchart TD]\n${fn.mermaid}`;
+        cards.appendChild(card);
+      });
+    });
 
     document.getElementById("undo-btn").addEventListener("click", async () => {
       const res = await fetch("/api/undo", { method: "POST", body: "{}" });
