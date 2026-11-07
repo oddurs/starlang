@@ -165,6 +165,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "polyhedral" => {
+            if let Err(e) = run_polyhedral_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "wcet" => {
+            if let Err(e) = run_wcet_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -1697,6 +1709,170 @@ fn run_peval_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_polyhedral_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("pipeline").ok_or("missing pipeline sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.polyhedral();
+    println!(
+        "=== Polyhedral Loop Dependence, Monoid Reduction & 13-Spoke SIMD Vectorizer: {} ===",
+        label
+    );
+    println!(
+        "Loops Analyzed: {} | SIMD Vectorizable: {} | Map-Reduce Parallelizable: {} | Sequential State Loops: {} | Reductions: {} | Max 4-Lane SIMD Speedup: {:.2}x ({}ms)\n",
+        rep.total_loops,
+        rep.vectorizable_loops,
+        rep.map_reduce_loops,
+        rep.sequential_state_loops,
+        rep.total_reductions,
+        rep.max_simd4_speedup,
+        rep.elapsed_ms
+    );
+
+    for lp in &rep.loops {
+        println!(
+            "Loop #{} in {}() [{} · {}] :: SIMD={} ({:.2}x) | Brent T1/Tinf(64)={:.2}x",
+            lp.loop_id,
+            lp.fn_name,
+            lp.loop_kind,
+            lp.classification,
+            lp.simd_vectorizable,
+            lp.estimated_simd4_speedup,
+            lp.brent_parallelism_n64
+        );
+        println!("  Domain:     {}", lp.iteration_domain);
+        println!(
+            "  Work/Span:  T1 = {} | Tinf = {}",
+            lp.work_t1_symbolic, lp.span_tinf_symbolic
+        );
+        if !lp.reductions.is_empty() {
+            println!("  Reductions: {}", lp.reductions.join(", "));
+        }
+        for d in &lp.dependences {
+            println!(
+                "  Dep [{} · dist {}]: {} — {}",
+                d.kind, d.distance, d.variable, d.note
+            );
+        }
+        for spk in ["rust", "zig", "c", "python", "perl"] {
+            if let Some(code) = lp.vectorized_by_spoke.get(spk) {
+                println!("  [{}]\n    {}", spk, code.replace('\n', "\n    "));
+            }
+        }
+        println!();
+    }
+
+    if rep.total_loops == 0 {
+        return Err("no loops found in module for polyhedral analysis".to_string());
+    }
+    Ok(())
+}
+
+fn run_wcet_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.termination_wcet();
+    println!(
+        "=== Floyd-Turing Well-Founded Ranking Termination Prover & IPET WCET Analyzer: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Loops Audited: {} | Proven Terminating: {} | Diverging/Unproven: {} | Module BCET(N=64): {}c | Module WCET(N=64): {}c | All Terminating: {} ({}ms)\n",
+        rep.total_functions,
+        rep.total_loops_audited,
+        rep.proven_terminating_loops,
+        rep.diverging_or_unproven_loops,
+        rep.module_bcet_cycles_n64,
+        rep.module_wcet_cycles_n64,
+        rep.all_terminating,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Terminating: {} | BCET: {} ({}c) | WCET: {} ({}c) | Jitter: {:.2}x]",
+            f.signature,
+            f.proven_terminating,
+            f.bcet_symbolic,
+            f.bcet_cycles_n64,
+            f.wcet_symbolic,
+            f.wcet_cycles_n64,
+            f.jitter_ratio
+        );
+        for lp in &f.loop_proofs {
+            println!(
+                "  {} [{}] {}\n      Ranking V(σ):       {}\n      Bounded-Below VC:   {}\n      Strict-Decrease VC: {}\n      Note:               {}",
+                if lp.proven_terminating { "✓" } else { "✗" },
+                lp.loop_header,
+                lp.status,
+                lp.ranking_function,
+                lp.bounded_below_vc,
+                lp.strict_decrease_vc,
+                lp.witness_or_note
+            );
+        }
+        println!();
+    }
+
+    if !rep.all_terminating {
+        return Err("one or more loops could not be proven terminating".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -1901,13 +2077,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v1.6 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph & Partial Eval Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
+        "starlang v1.7 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD & WCET Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- polyhedral [file|preset]             Run Polyhedral Loop Dependence, Monoid Reduction & 13-Spoke SIMD Vectorizer
+  cargo run -- wcet [file|preset]                   Run Floyd-Turing Ranking Termination Prover & IPET Symbolic BCET/WCET Analyzer
   cargo run -- egraph [file|preset] [--apply]       Run Equality Saturation & Congruence-Closure E-Graph Superoptimizer
   cargo run -- peval [file|preset] [--apply]        Run Futamura Partial Evaluator, Constant/Enum Specializer & Loop Unroller
   cargo run -- concolic [file|preset] [--inject]    Explore execution paths via boundary-negation solver & synthesize path-covering tests
@@ -2076,6 +2254,8 @@ fn run_cli_demo() -> Result<(), String> {
     let mut pipe_eng = StarEngine::from_source(pipe_sample.initial_spoke, pipe_sample.source)
         .map_err(|d| d.to_string())?;
     let (eg_rep, _) = pipe_eng.egraph(false);
+    let poly_rep = pipe_eng.polyhedral();
+    let wcet_rep = repair_eng.termination_wcet();
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -2084,7 +2264,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{}\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -2109,7 +2289,13 @@ fn run_cli_demo() -> Result<(), String> {
         eg_rep.gas_saved,
         peval_rep.specialized_calls,
         peval_rep.vm_steps_before,
-        peval_rep.vm_steps_after
+        peval_rep.vm_steps_after,
+        poly_rep.vectorizable_loops,
+        poly_rep.total_loops,
+        poly_rep.max_simd4_speedup,
+        wcet_rep.proven_terminating_loops,
+        wcet_rep.total_loops_audited,
+        wcet_rep.module_wcet_cycles_n64
     );
     if !drep.ok
         || slice_len == 0
@@ -2123,8 +2309,10 @@ fn run_cli_demo() -> Result<(), String> {
         || !sec_rep.all_sinks_safe
         || !eg_rep.translation_validated
         || !peval_rep.translation_validated
+        || poly_rep.vectorizable_loops == 0
+        || !wcet_rep.all_terminating
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, or Partial Eval failed".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, or Termination/WCET failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

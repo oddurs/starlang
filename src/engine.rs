@@ -13,6 +13,9 @@ use crate::hub::{Diagnostic, HubModule};
 use crate::lens::SpokeId;
 use crate::merge::{diff_modules, merge_concurrent_edits, MergeReport, SemanticDiffReport};
 use crate::mutate::{harden_tests, mutate_module, HardenReport, MutationReport};
+use crate::polyhedral::{
+    analyze_polyhedral, prove_termination_and_wcet, PolyhedralReport, TerminationWcetReport,
+};
 use crate::quickcheck::{run_quickcheck, run_quickcheck_default, QuickCheckReport};
 use crate::refactor::{list_symbols, optimize_module, rename_symbol, SymbolEntry};
 use crate::repair::{
@@ -257,6 +260,18 @@ impl StarEngine {
             None
         };
         (rep, snap)
+    }
+
+    /// Run Polyhedral Loop Dependence Analysis, Associative Monoid Reduction Recognition,
+    /// Brent's Theorem Work-Span Parallelism & 13-Spoke SIMD / Map-Reduce Vectorization.
+    pub fn polyhedral(&self) -> PolyhedralReport {
+        analyze_polyhedral(self.hub())
+    }
+
+    /// Run Floyd-Turing Well-Founded Ranking Function Termination Verification &
+    /// Implicit Path Enumeration (IPET) Symbolic BCET / WCET Timing Bound Analysis.
+    pub fn termination_wcet(&self) -> TerminationWcetReport {
+        prove_termination_and_wcet(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.

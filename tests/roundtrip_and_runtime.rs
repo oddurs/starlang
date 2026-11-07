@@ -1644,6 +1644,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(pe_resp.contains("\"translation_validated\":true"), "peval failed: {}", pe_resp);
     assert!(pe_resp.contains("\"vm_steps_before\":"));
 
+    // Verify /api/polyhedral and /api/wcet endpoints
+    let poly_resp = send_http("POST", "/api/polyhedral", "{}");
+    assert!(poly_resp.contains("\"ok\":true"), "polyhedral failed: {}", poly_resp);
+    assert!(poly_resp.contains("\"vectorizable_loops\":"));
+    assert!(poly_resp.contains("\"vectorized_by_spoke\":{"));
+
+    let wcet_resp = send_http("POST", "/api/wcet", "{}");
+    assert!(wcet_resp.contains("\"ok\":true"), "wcet failed: {}", wcet_resp);
+    assert!(wcet_resp.contains("\"all_terminating\":true"), "wcet failed: {}", wcet_resp);
+    assert!(wcet_resp.contains("\"module_wcet_cycles_n64\":"));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -1658,4 +1669,82 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(run_resp.contains("LuaJIT (luajit)"));
     assert!(run_resp.contains("Perl 5 (perl)"));
     assert!(run_resp.contains("calibrated_sum: 261"));
+}
+
+#[test]
+fn polyhedral_loop_vectorizer_and_floyd_turing_termination_wcet_prover_analyze_and_verify_across_thirteen_languages() {
+    // 1. Polyhedral Loop Vectorizer on `pipeline` (AssociativeMapReduce)
+    let pipe_sample = find_sample("pipeline").unwrap();
+    let pipe_eng = StarEngine::from_source(pipe_sample.initial_spoke, pipe_sample.source).unwrap();
+    let poly_pipe = pipe_eng.polyhedral();
+    assert_eq!(poly_pipe.total_loops, 1);
+    assert_eq!(poly_pipe.vectorizable_loops, 1);
+    assert_eq!(poly_pipe.map_reduce_loops, 1);
+    assert_eq!(poly_pipe.total_reductions, 1);
+    assert!(poly_pipe.max_simd4_speedup >= 3.2);
+
+    let lp0 = &poly_pipe.loops[0];
+    assert_eq!(lp0.classification, "AssociativeMapReduce");
+    assert!(lp0.simd_vectorizable);
+    assert!(lp0.map_reduce_parallelizable);
+    assert_eq!(lp0.vectorized_by_spoke.len(), 13);
+    assert!(lp0.vectorized_by_spoke["rust"].contains(".iter().copied()"));
+    assert!(lp0.vectorized_by_spoke["zig"].contains("@Vector(4, i64)"));
+    assert!(lp0.vectorized_by_spoke["c"].contains("#pragma clang loop vectorize(enable)"));
+    assert!(lp0.vectorized_by_spoke["python"].contains("sum("));
+    assert!(lp0.vectorized_by_spoke["perl"].contains("sum0("));
+
+    // 2. Polyhedral Loop Vectorizer on `packets` (FilterMapReduce) & `scores` (ParallelMap)
+    let pkt_sample = find_sample("packets").unwrap();
+    let pkt_eng =
+        StarEngine::from_source(pkt_sample.initial_spoke, pkt_sample.source).unwrap();
+    let poly_pkt = pkt_eng.polyhedral();
+    assert_eq!(poly_pkt.total_loops, 1);
+    assert_eq!(poly_pkt.loops[0].classification, "FilterMapReduce");
+    assert!(poly_pkt.loops[0].simd_vectorizable);
+    assert!(poly_pkt.loops[0].map_reduce_parallelizable);
+    assert!(poly_pkt.loops[0].brent_parallelism_n64 > 5.0);
+
+    let scores_sample = find_sample("scores").unwrap();
+    let scores_eng =
+        StarEngine::from_source(scores_sample.initial_spoke, scores_sample.source).unwrap();
+    let poly_scores = scores_eng.polyhedral();
+    assert_eq!(poly_scores.total_loops, 2);
+    assert_eq!(poly_scores.loops[0].classification, "ParallelMap");
+    assert_eq!(poly_scores.loops[1].classification, "AssociativeMapReduce");
+
+    // 3. Polyhedral Loop Vectorizer on `ratelimit` (SequentialStateMachine due to guard-read `cost <= tokens`)
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+    let poly_rl = rl_eng.polyhedral();
+    assert_eq!(poly_rl.total_loops, 1);
+    assert_eq!(poly_rl.loops[0].classification, "SequentialStateMachine");
+    assert!(!poly_rl.loops[0].simd_vectorizable);
+    assert_eq!(poly_rl.sequential_state_loops, 1);
+
+    // 4. Floyd-Turing Well-Founded Ranking Termination Prover & IPET WCET Analyzer on all presets
+    for sample in SAMPLES {
+        let eng = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+        let wcet = eng.termination_wcet();
+        assert!(
+            wcet.all_terminating,
+            "Sample '{}' should be proven terminating: {:?}",
+            sample.id, wcet
+        );
+        assert_eq!(wcet.diverging_or_unproven_loops, 0);
+        assert!(
+            wcet.module_wcet_cycles_n64 >= wcet.module_bcet_cycles_n64,
+            "WCET ({}) must be >= BCET ({}) on sample '{}'",
+            wcet.module_wcet_cycles_n64,
+            wcet.module_bcet_cycles_n64,
+            sample.id
+        );
+    }
+
+    // 5. Floyd-Turing Prover catches non-terminating / unbounded while loop!
+    let inf_py = "def spin_forever(n: int) -> int:\n    x = 0\n    while x >= 0:\n        x += 1\n    return x\n\ndef main() -> None:\n    print(0)\n";
+    let inf_eng = StarEngine::from_source(SpokeId::Python, inf_py).unwrap();
+    let inf_wcet = inf_eng.termination_wcet();
+    assert!(!inf_wcet.all_terminating);
+    assert_eq!(inf_wcet.diverging_or_unproven_loops, 1);
 }

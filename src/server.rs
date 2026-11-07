@@ -13,6 +13,7 @@ use crate::json::{json_str, parse_flat_json_object};
 use crate::lens::SpokeId;
 use crate::merge::{MergeReport, SemanticDiffReport};
 use crate::mutate::MutationReport;
+use crate::polyhedral::{PolyhedralReport, TerminationWcetReport};
 use crate::quickcheck::QuickCheckReport;
 use crate::repair::RepairReport;
 use crate::runner::run_all_spokes;
@@ -30,7 +31,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v1.5 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic & Taint Security Studio running at:");
+    println!("StarLang v1.7 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD & Termination/WCET Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -492,6 +493,22 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.partial_eval(apply)
             };
             let payload = peval_to_json(&rep, snap.as_ref());
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/polyhedral") | ("GET", "/api/polyhedral") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.polyhedral()
+            };
+            let payload = polyhedral_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/wcet") | ("GET", "/api/wcet") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.termination_wcet()
+            };
+            let payload = wcet_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -1529,6 +1546,141 @@ fn peval_to_json(rep: &PartialEvalReport, snap: Option<&SyncSnapshot>) -> String
         views_json.join(","),
         rep.elapsed_ms,
         snap_json
+    )
+}
+
+fn polyhedral_to_json(rep: &PolyhedralReport) -> String {
+    let loops_json: Vec<String> = rep
+        .loops
+        .iter()
+        .map(|l| {
+            let acc_json: Vec<String> = l
+                .accesses
+                .iter()
+                .map(|a| {
+                    format!(
+                        "{{\"array_or_var\":{},\"access_kind\":{},\"index_expr\":{},\"stride\":{},\"offset\":{}}}",
+                        json_str(&a.array_or_var),
+                        json_str(&a.access_kind),
+                        json_str(&a.index_expr),
+                        a.stride,
+                        a.offset
+                    )
+                })
+                .collect();
+            let dep_json: Vec<String> = l
+                .dependences
+                .iter()
+                .map(|d| {
+                    let monoid = d
+                        .reduction_monoid
+                        .as_deref()
+                        .map(json_str)
+                        .unwrap_or_else(|| "null".to_string());
+                    format!(
+                        "{{\"variable\":{},\"kind\":{},\"distance\":{},\"is_reduction\":{},\"reduction_monoid\":{},\"blocks_simd\":{},\"note\":{}}}",
+                        json_str(&d.variable),
+                        json_str(&d.kind),
+                        json_str(&d.distance),
+                        d.is_reduction,
+                        monoid,
+                        d.blocks_simd,
+                        json_str(&d.note)
+                    )
+                })
+                .collect();
+            let red_json: Vec<String> = l.reductions.iter().map(|r| json_str(r)).collect();
+            let vec_json: Vec<String> = l
+                .vectorized_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"loop_id\":{},\"fn_name\":{},\"loop_kind\":{},\"induction_var\":{},\"iteration_domain\":{},\"classification\":{},\"simd_vectorizable\":{},\"map_reduce_parallelizable\":{},\"estimated_simd4_speedup\":{:.2},\"work_t1_symbolic\":{},\"span_tinf_symbolic\":{},\"brent_parallelism_n64\":{:.2},\"accesses\":[{}],\"dependences\":[{}],\"reductions\":[{}],\"vectorized_by_spoke\":{{{}}}}}",
+                l.loop_id,
+                json_str(&l.fn_name),
+                json_str(&l.loop_kind),
+                json_str(&l.induction_var),
+                json_str(&l.iteration_domain),
+                json_str(&l.classification),
+                l.simd_vectorizable,
+                l.map_reduce_parallelizable,
+                l.estimated_simd4_speedup,
+                json_str(&l.work_t1_symbolic),
+                json_str(&l.span_tinf_symbolic),
+                l.brent_parallelism_n64,
+                acc_json.join(","),
+                dep_json.join(","),
+                red_json.join(","),
+                vec_json.join(",")
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_loops\":{},\"vectorizable_loops\":{},\"map_reduce_loops\":{},\"sequential_state_loops\":{},\"total_reductions\":{},\"max_simd4_speedup\":{:.2},\"elapsed_ms\":{},\"loops\":[{}]}}",
+        rep.total_loops,
+        rep.vectorizable_loops,
+        rep.map_reduce_loops,
+        rep.sequential_state_loops,
+        rep.total_reductions,
+        rep.max_simd4_speedup,
+        rep.elapsed_ms,
+        loops_json.join(",")
+    )
+}
+
+fn wcet_to_json(rep: &TerminationWcetReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let wcep: Vec<String> = f.worst_case_path.iter().map(|s| json_str(s)).collect();
+            let proofs: Vec<String> = f
+                .loop_proofs
+                .iter()
+                .map(|lp| {
+                    format!(
+                        "{{\"stmt_id\":{},\"fn_name\":{},\"loop_header\":{},\"ranking_function\":{},\"bounded_below_vc\":{},\"strict_decrease_vc\":{},\"proven_terminating\":{},\"status\":{},\"witness_or_note\":{}}}",
+                        lp.stmt_id,
+                        json_str(&lp.fn_name),
+                        json_str(&lp.loop_header),
+                        json_str(&lp.ranking_function),
+                        json_str(&lp.bounded_below_vc),
+                        json_str(&lp.strict_decrease_vc),
+                        lp.proven_terminating,
+                        json_str(&lp.status),
+                        json_str(&lp.witness_or_note)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"proven_terminating\":{},\"bcet_symbolic\":{},\"wcet_symbolic\":{},\"bcet_cycles_n64\":{},\"wcet_cycles_n64\":{},\"jitter_ratio\":{:.2},\"worst_case_path\":[{}],\"loop_proofs\":[{}]}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.proven_terminating,
+                json_str(&f.bcet_symbolic),
+                json_str(&f.wcet_symbolic),
+                f.bcet_cycles_n64,
+                f.wcet_cycles_n64,
+                f.jitter_ratio,
+                wcep.join(","),
+                proofs.join(",")
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"all_terminating\":{},\"total_functions\":{},\"total_loops_audited\":{},\"proven_terminating_loops\":{},\"diverging_or_unproven_loops\":{},\"module_wcet_cycles_n64\":{},\"module_bcet_cycles_n64\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.all_terminating,
+        rep.total_functions,
+        rep.total_loops_audited,
+        rep.proven_terminating_loops,
+        rep.diverging_or_unproven_loops,
+        rep.module_wcet_cycles_n64,
+        rep.module_bcet_cycles_n64,
+        rep.elapsed_ms,
+        fns_json.join(",")
     )
 }
 

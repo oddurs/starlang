@@ -10,6 +10,7 @@ pub mod json;
 pub mod lens;
 pub mod merge;
 pub mod mutate;
+pub mod polyhedral;
 pub mod quickcheck;
 pub mod reconcile;
 pub mod refactor;
