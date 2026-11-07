@@ -37,7 +37,7 @@ fn get_put_law_holds_across_all_spokes_and_samples() {
         }
     }
 
-    // Verify right-associated binary trees + string pattern matching round-trip across all 7 spokes
+    // Verify right-associated binary trees + string pattern matching round-trip across all 9 spokes
     let star_edge_cases = r#"(fn join3 ((param a Str) (param b Str) (param c Str)) -> Str
   (match a
     (case "hi"
@@ -65,7 +65,7 @@ fn get_put_law_holds_across_all_spokes_and_samples() {
 }
 
 #[test]
-fn python_and_typescript_edits_preserve_rust_borrow_metadata_and_sync_all_views() {
+fn python_ruby_and_typescript_edits_preserve_rust_borrow_metadata_and_sync_all_views() {
     let sample = find_sample("scores").unwrap();
     let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
 
@@ -84,6 +84,7 @@ fn python_and_typescript_edits_preserve_rust_borrow_metadata_and_sync_all_views(
     let cpp_after_py = &snap.views["cpp"];
     let swift_after_py = &snap.views["swift"];
     let go_after_py = &snap.views["go"];
+    let rb_after_py = &snap.views["ruby"];
     let ts_after_py = &snap.views["typescript"];
 
     assert!(rs_after_py.contains("scores: &[i64]"));
@@ -93,18 +94,20 @@ fn python_and_typescript_edits_preserve_rust_borrow_metadata_and_sync_all_views(
     assert!(cpp_after_py.contains("std::max(std::min(s + 10, limit), int64_t(0))"));
     assert!(swift_after_py.contains("max(min(s + 10, limit), 0)"));
     assert!(go_after_py.contains("clamped := max(min(s + 10, limit), int64(0))"));
+    assert!(rb_after_py.contains("[[s + 10, limit].min, 0].max"));
     assert!(ts_after_py.contains("Math.max(Math.min(s + 10, limit), 0)"));
 
-    // 2. Edit in TypeScript: change clamp ceiling in main() from 100 to 90
-    let ts_edited = ts_after_py.replace("clamp_scores(raw, 100)", "clamp_scores(raw, 90)");
+    // 2. Edit in Ruby: change clamp ceiling in main() from 100 to 90
+    let rb_edited = rb_after_py.replace("clamp_scores(raw, 100)", "clamp_scores(raw, 90)");
     let snap2 = engine
-        .apply_edit(SpokeId::TypeScript, &ts_edited)
-        .expect("TypeScript edit should lift cleanly");
+        .apply_edit(SpokeId::Ruby, &rb_edited)
+        .expect("Ruby edit should lift cleanly");
 
     assert!(snap2.views["python"].contains("clamp_scores(raw, 90)"));
     assert!(snap2.views["swift"].contains("clamp_scores(raw, 90)"));
     assert!(snap2.views["cpp"].contains("clamp_scores(raw, int64_t(90))"));
     assert!(snap2.views["go"].contains("clamp_scores(raw, int64(90))"));
+    assert!(snap2.views["typescript"].contains("clamp_scores(raw, 90)"));
     assert!(snap2.views["rust"].contains("clamp_scores(&raw, 90)"));
 
     // 3. Edit Star S-Expr metadata directly: switch `scores` from borrowed slice to owned Vec
@@ -116,7 +119,7 @@ fn python_and_typescript_edits_preserve_rust_borrow_metadata_and_sync_all_views(
 }
 
 #[test]
-fn cpp_swift_java_and_go_edits_on_enums_and_metadata_sync_across_all_eight_spokes() {
+fn cpp_swift_java_go_and_ruby_edits_on_enums_and_metadata_sync_across_all_nine_spokes() {
     let sample = find_sample("alerts").unwrap();
     let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
 
@@ -157,6 +160,7 @@ fn cpp_swift_java_and_go_edits_on_enums_and_metadata_sync_across_all_eight_spoke
     assert!(snap.views["swift"].contains("    case Fatal\n"));
     assert!(snap.views["go"].contains("\tSeverity_Fatal\n"));
     assert!(snap.views["python"].contains("    Fatal = 3\n"));
+    assert!(snap.views["ruby"].contains("  Fatal = 3\n"));
     assert!(snap.views["typescript"].contains("  Fatal: 3,\n"));
 
     // Subsequent edit in Swift 6 preserves BOTH C++ pass-by-value AND Rust slice borrow
@@ -170,6 +174,7 @@ fn cpp_swift_java_and_go_edits_on_enums_and_metadata_sync_across_all_eight_spoke
     assert!(snap2.views["cpp"].contains("std::string evaluate_window(std::vector<int64_t> latencies"));
     assert!(snap2.views["rust"].contains("latencies: &[i64]"));
     assert!(snap2.views["java"].contains("case Severity.Fatal -> {"));
+    assert!(snap2.views["ruby"].contains("when Severity::Fatal\n    return 12"));
     assert!(snap2.views["go"].contains("return int64(12)"));
     assert_eq!(snap2.live_eval.stdout.trim(), "checked=4 score=13");
 
@@ -184,13 +189,14 @@ fn cpp_swift_java_and_go_edits_on_enums_and_metadata_sync_across_all_eight_spoke
     assert!(snap3.views["cpp"].contains("std::string evaluate_window(std::vector<int64_t> latencies"));
     assert!(snap3.views["rust"].contains("latencies: &[i64]"));
     assert!(snap3.views["swift"].contains("return 14"));
+    assert!(snap3.views["ruby"].contains("return 14"));
     assert_eq!(snap3.live_eval.stdout.trim(), "checked=3 score=15");
 
     let report = run_all_spokes(&engine);
-    assert_eq!(report.results.len(), 8);
+    assert_eq!(report.results.len(), 9);
     assert!(
         report.outputs_match,
-        "8-engine outputs diverged: {:?}",
+        "9-engine outputs diverged: {:?}",
         report.results
     );
     assert_eq!(report.results[0].stdout.trim(), "checked=3 score=15");
@@ -205,20 +211,23 @@ fn range_loops_translate_idiomatically_across_all_spokes() {
     let cpp = engine.project(SpokeId::Cpp);
     let swift = engine.project(SpokeId::Swift);
     let go = engine.project(SpokeId::Go);
+    let rb = engine.project(SpokeId::Ruby);
     let ts = engine.project(SpokeId::TypeScript);
     assert!(rs.contains("for k in 1..upper_bound"));
     assert!(cpp.contains("for (int64_t k = 1; k < upper_bound; k++)"));
     assert!(swift.contains("for k in stride(from: 1, to: upper_bound, by: 1)"));
     assert!(go.contains("for k := int64(1); k < upper_bound; k++"));
+    assert!(rb.contains("for k in (1)...(upper_bound)"));
     assert!(ts.contains("for (let k = 1; k < upper_bound; k++)"));
 
-    // Edit range loop in Swift using native half-open `..<` operator and verify all 7 views update
+    // Edit range loop in Swift using native half-open `..<` operator and verify all 9 views update
     let swift_edited = swift.replace(
         "for k in stride(from: 1, to: upper_bound, by: 1)",
         "for k in 2..<upper_bound + 1",
     );
     let snap = engine.apply_edit(SpokeId::Swift, &swift_edited).unwrap();
     assert!(snap.views["python"].contains("for k in range(2, upper_bound + 1):"));
+    assert!(snap.views["ruby"].contains("for k in (2)...(upper_bound + 1)"));
     assert!(snap.views["cpp"].contains("for (int64_t k = 2; k < upper_bound + 1; k++) {"));
     assert!(snap.views["go"].contains("for k := int64(2); k < upper_bound + 1; k++ {"));
     assert!(snap.views["typescript"].contains("for (let k = 2; k < upper_bound + 1; k++) {"));
@@ -245,7 +254,7 @@ fn polyglot_unit_tests_and_assertions_sync_and_catch_regressions_live() {
         }
     }
 
-    // 2. Verify idiomatic unit test projection across all 7 spokes on Swift-seeded `ledger`
+    // 2. Verify idiomatic unit test projection across all 9 spokes on Swift-seeded `ledger`
     let ledger = find_sample("ledger").unwrap();
     let mut engine = StarEngine::from_source(ledger.initial_spoke, ledger.source).unwrap();
     let snap = engine.snapshot();
@@ -258,6 +267,7 @@ fn polyglot_unit_tests_and_assertions_sync_and_catch_regressions_live() {
     assert!(snap.views["go"].contains("func test_token_bucket_burst()"));
     assert!(snap.views["go"].contains("reflect.DeepEqual("));
     assert!(snap.views["python"].contains("def test_token_bucket_burst() -> None:"));
+    assert!(snap.views["ruby"].contains("def test_token_bucket_burst"));
     assert!(snap.views["typescript"].contains("export function test_token_bucket_burst(): void"));
     assert!(snap.views["star"].contains("(test token_bucket_burst"));
 
@@ -275,7 +285,77 @@ fn polyglot_unit_tests_and_assertions_sync_and_catch_regressions_live() {
 }
 
 #[test]
-fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_eight_spokes() {
+fn hub_mutation_testing_detects_weak_tests_and_auto_hardens_across_nine_spokes() {
+    let sample = find_sample("alerts").unwrap();
+    let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+
+    // 1. Initial `alerts` preset only tests a handful of inputs, leaving exact boundary mutants alive (`200`, `500`, etc.)
+    let before = engine.mutate();
+    assert!(
+        before.total_mutants >= 8,
+        "Expected >= 8 valid Hub mutants on alerts, got {}",
+        before.total_mutants
+    );
+    assert!(
+        before.survived > 0,
+        "Expected surviving boundary mutants before auto-hardening, got {:?}",
+        before
+    );
+
+    // 2. Auto-harden tests directly on the Hub AST!
+    let (snap, hrep) = engine.harden_tests();
+    assert!(
+        hrep.added_assertions > 0,
+        "Expected synthesized boundary assertions, got 0"
+    );
+    assert_eq!(
+        hrep.after.score_pct, 100,
+        "Expected mutation score to reach 100% on alerts, got {}% ({:?})",
+        hrep.after.score_pct, hrep.after
+    );
+    assert_eq!(hrep.after.survived, 0);
+
+    // 3. All polyglot unit tests (including synthesized `test_mutation_hardened`) pass in Hub VM and typecheck cleanly!
+    assert!(snap.semantic_diagnostics.is_empty(), "{:?}", snap.semantic_diagnostics);
+    assert!(snap.test_results.iter().any(|t| t.name == "mutation_hardened" && t.passed));
+    for tr in &snap.test_results {
+        assert!(tr.passed, "Unit test '{}' failed: {:?}", tr.name, tr.error);
+    }
+
+    // 4. Every spoke receives idiomatic `test_mutation_hardened` and satisfies GetPut!
+    for key in [
+        "rust",
+        "cpp",
+        "swift",
+        "java",
+        "go",
+        "python",
+        "ruby",
+        "typescript",
+    ] {
+        assert!(
+            snap.views[key].contains("test_mutation_hardened"),
+            "Missing test_mutation_hardened in {}:\n{}",
+            key,
+            snap.views[key]
+        );
+    }
+
+    let hardened_hub = engine.hub().clone();
+    for spoke in SpokeId::ALL {
+        let lens = lens_for(spoke);
+        let rendered = lens.get(&hardened_hub);
+        assert_eq!(
+            lens.put(&rendered, &hardened_hub).unwrap(),
+            hardened_hub,
+            "Hardened Hub failed GetPut on {:?}",
+            spoke
+        );
+    }
+}
+
+#[test]
+fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_nine_spokes() {
     let report = run_fuzz_suite(0x57A4_2026_0500, 50);
     assert!(
         report.ok(),
@@ -284,7 +364,7 @@ fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_eight_spokes
         report.failures.join("\n\n")
     );
     assert_eq!(report.programs_tested, 50);
-    assert_eq!(report.spoke_roundtrips, 50 * 8);
+    assert_eq!(report.spoke_roundtrips, 50 * 9);
     assert_eq!(report.assertions_passed, 50);
     assert_eq!(report.optimizer_checks, 50);
 }
@@ -374,25 +454,27 @@ if __name__ == "__main__":
     assert!(snap1.views["rust"].contains("pub struct Metric {\n    pub score: i64,\n}"));
     assert!(snap1.views["rust"].contains("pub struct Other {\n    pub value: i64,\n}"));
     assert!(snap1.views["swift"].contains("Metric(score: 5)"));
+    assert!(snap1.views["ruby"].contains("Metric.new(score: 5)"));
     assert!(snap1.views["python"].contains("return m.score + o.value + value"));
 
     // 2. Scope-directed local variable rename: `read_both::value` -> `bonus` (leaves `Other.value` untouched)
     let (snap2, count2) = engine.rename_symbol("var:read_both::value", "bonus").unwrap();
     assert_eq!(count2, 2);
     assert!(snap2.views["cpp"].contains("return m.score + o.value + bonus;"));
-    assert!(snap2.views["swift"].contains("return m.score + o.value + bonus"));
+    assert!(snap2.views["ruby"].contains("return m.score + o.value + bonus"));
 
-    // 3. Function rename across all 7 languages: `read_both` -> `combine_pair`
+    // 3. Function rename across all 9 languages: `read_both` -> `combine_pair`
     let (snap3, count3) = engine.rename_symbol("fn:read_both", "combine_pair").unwrap();
     assert_eq!(count3, 2);
     assert!(snap3.views["swift"].contains("func combine_pair("));
     assert!(snap3.views["go"].contains("func combine_pair("));
+    assert!(snap3.views["ruby"].contains("def combine_pair("));
     assert!(snap3.views["typescript"].contains("combine_pair(m, o)"));
     assert_eq!(snap3.live_eval.stdout.trim(), "22");
 }
 
 #[test]
-fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_eight_spokes() {
+fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_nine_spokes() {
     let sample = find_sample("pipeline").unwrap();
     let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
     let before_out = engine.snapshot().live_eval.stdout;
@@ -409,6 +491,7 @@ fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_eight_spoke
         "java",
         "go",
         "python",
+        "ruby",
         "typescript",
         "star",
     ] {
@@ -418,7 +501,7 @@ fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_eight_spoke
         assert!(code.contains("100"), "Folded 100 missing in {}:\n{}", spoke_key, code);
     }
 
-    // Optimized Hub still satisfies GetPut across all 7 spokes
+    // Optimized Hub still satisfies GetPut across all 9 spokes
     let opt_hub = engine.hub().clone();
     for spoke in SpokeId::ALL {
         let lens = lens_for(spoke);
@@ -510,11 +593,11 @@ fn undo_and_redo_walk_cross_language_history_stack() {
 }
 
 #[test]
-fn all_samples_compile_and_produce_identical_output_across_eight_engines() {
+fn all_samples_compile_and_produce_identical_output_across_nine_engines() {
     for sample in SAMPLES {
         let engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
         let report = run_all_spokes(&engine);
-        assert_eq!(report.results.len(), 8);
+        assert_eq!(report.results.len(), 9);
 
         for r in &report.results {
             assert!(
@@ -531,6 +614,7 @@ fn all_samples_compile_and_produce_identical_output_across_eight_engines() {
                     "Java (javac)" => engine.project(SpokeId::Java),
                     "Go (go run)" => engine.project(SpokeId::Go),
                     "Python (python3)" => engine.project(SpokeId::Python),
+                    "Ruby (ruby)" => engine.project(SpokeId::Ruby),
                     "TypeScript (node)" => engine.project(SpokeId::TypeScript),
                     _ => engine.project(SpokeId::Star),
                 }
@@ -545,7 +629,7 @@ fn all_samples_compile_and_produce_identical_output_across_eight_engines() {
 }
 
 #[test]
-fn web_studio_http_api_syncs_traces_refactors_optimizes_and_runs_eight_engines() {
+fn web_studio_http_api_syncs_traces_mutates_hardens_and_runs_nine_engines() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
@@ -571,9 +655,21 @@ fn web_studio_http_api_syncs_traces_refactors_optimizes_and_runs_eight_engines()
     assert!(state_resp.contains("HTTP/1.1 200 OK"));
     assert!(state_resp.contains("\"swift\":"));
     assert!(state_resp.contains("\"java\":"));
+    assert!(state_resp.contains("\"ruby\":"));
     assert!(state_resp.contains("\"coverage_pct\":"));
     assert!(state_resp.contains("\"test_results\":"));
     assert!(state_resp.contains("\"live_eval\":"));
+
+    // Run Hub Mutation Testing via /api/mutate on initial `alerts` preset
+    let mut_resp = send_http("POST", "/api/mutate", "{}");
+    assert!(mut_resp.contains("\"ok\":true"), "mutate failed: {}", mut_resp);
+    assert!(mut_resp.contains("\"score_pct\":"));
+    assert!(mut_resp.contains("\"outcomes\":["));
+
+    // Auto-Harden boundary unit tests via /api/harden
+    let hard_resp = send_http("POST", "/api/harden", "{}");
+    assert!(hard_resp.contains("\"ok\":true"), "harden failed: {}", hard_resp);
+    assert!(hard_resp.contains("test_mutation_hardened"));
 
     // Load Pipeline optimizer preset via /api/sample
     let sample_resp = send_http("POST", "/api/sample", "{\"id\":\"pipeline\"}");
@@ -603,13 +699,15 @@ fn web_studio_http_api_syncs_traces_refactors_optimizes_and_runs_eight_engines()
     assert!(ref_resp.contains("int64_t clamp_sensor("));
     assert!(ref_resp.contains("func clamp_sensor("));
     assert!(ref_resp.contains("static long clamp_sensor("));
+    assert!(ref_resp.contains("def clamp_sensor("));
 
-    // Execute across all 8 engines via /api/run
+    // Execute across all 9 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
     assert!(run_resp.contains("Hub VM (native)"));
     assert!(run_resp.contains("C++ (clang++)"));
     assert!(run_resp.contains("Swift (swiftc)"));
     assert!(run_resp.contains("Java (javac)"));
+    assert!(run_resp.contains("Ruby (ruby)"));
     assert!(run_resp.contains("calibrated_sum: 261"));
 }

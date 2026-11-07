@@ -70,9 +70,9 @@ pub struct MultiRunReport {
 }
 
 /// Execute the Hub Native VM plus Rust (`rustc`), C++ (`clang++` with cached STL PCH),
-/// Swift (`swiftc`), Java (`javac` + `java`), Go (`go run`), Python (`python3`), and
-/// TypeScript (`node`) concurrently using `std::thread::scope`, verifying byte-for-byte
-/// identical stdout across all 8 execution engines.
+/// Swift (`swiftc`), Java (`javac` + `java`), Go (`go run`), Python (`python3`),
+/// Ruby (`ruby`), and TypeScript (`node`) concurrently using `std::thread::scope`,
+/// verifying byte-for-byte identical stdout across all 9 execution engines.
 pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let wall_start = Instant::now();
     let run_id = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -90,9 +90,10 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let java_src = engine.project(SpokeId::Java);
     let go_src = engine.project(SpokeId::Go);
     let py_src = engine.project(SpokeId::Python);
+    let ruby_src = engine.project(SpokeId::Ruby);
     let ts_src = engine.project(SpokeId::TypeScript);
 
-    let (hub_res, rs_res, cpp_res, swift_res, java_res, go_res, py_res, ts_res) =
+    let (hub_res, rs_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res, ts_res) =
         thread::scope(|s| {
             let h_hub = s.spawn(|| run_hub_vm(&hub_clone));
             let h_rs = s.spawn(|| run_rust(&dir, &rust_src));
@@ -101,6 +102,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
             let h_java = s.spawn(|| run_java(&dir, &java_src));
             let h_go = s.spawn(|| run_go(&dir, &go_src));
             let h_py = s.spawn(|| run_python(&dir, &py_src));
+            let h_rb = s.spawn(|| run_ruby(&dir, &ruby_src));
             let h_ts = s.spawn(|| run_typescript(&dir, &ts_src));
             (
                 h_hub.join().unwrap(),
@@ -110,6 +112,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
                 h_java.join().unwrap(),
                 h_go.join().unwrap(),
                 h_py.join().unwrap(),
+                h_rb.join().unwrap(),
                 h_ts.join().unwrap(),
             )
         });
@@ -117,7 +120,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let _ = fs::remove_dir_all(&dir);
 
     let results = vec![
-        hub_res, rs_res, cpp_res, swift_res, java_res, go_res, py_res, ts_res,
+        hub_res, rs_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res, ts_res,
     ];
     let all_succeeded = results.iter().all(|r| r.ok);
     let outputs_match = all_succeeded
@@ -426,6 +429,36 @@ fn run_python(dir: &PathBuf, src: &str) -> RuntimeOutput {
             ok: false,
             stdout: String::new(),
             stderr: format!("failed to invoke python3: {}", e),
+            duration_ms: start.elapsed().as_millis(),
+        },
+    }
+}
+
+fn run_ruby(dir: &PathBuf, src: &str) -> RuntimeOutput {
+    let rb_path = dir.join("prog.rb");
+    let start = Instant::now();
+    if let Err(e) = fs::write(&rb_path, src) {
+        return RuntimeOutput {
+            language: "Ruby (ruby)",
+            ok: false,
+            stdout: String::new(),
+            stderr: e.to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        };
+    }
+    match Command::new("ruby").arg(&rb_path).output() {
+        Ok(out) => RuntimeOutput {
+            language: "Ruby (ruby)",
+            ok: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        },
+        Err(e) => RuntimeOutput {
+            language: "Ruby (ruby)",
+            ok: false,
+            stdout: String::new(),
+            stderr: format!("failed to invoke ruby: {}", e),
             duration_ms: start.elapsed().as_millis(),
         },
     }

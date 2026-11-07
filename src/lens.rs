@@ -8,18 +8,20 @@ pub enum SpokeId {
     Java,
     Go,
     Python,
+    Ruby,
     TypeScript,
     Star,
 }
 
 impl SpokeId {
-    pub const ALL: [SpokeId; 8] = [
+    pub const ALL: [SpokeId; 9] = [
         SpokeId::Rust,
         SpokeId::Cpp,
         SpokeId::Swift,
         SpokeId::Java,
         SpokeId::Go,
         SpokeId::Python,
+        SpokeId::Ruby,
         SpokeId::TypeScript,
         SpokeId::Star,
     ];
@@ -32,6 +34,7 @@ impl SpokeId {
             SpokeId::Java => "java",
             SpokeId::Go => "go",
             SpokeId::Python => "python",
+            SpokeId::Ruby => "ruby",
             SpokeId::TypeScript => "typescript",
             SpokeId::Star => "star",
         }
@@ -45,6 +48,7 @@ impl SpokeId {
             SpokeId::Java => "Java",
             SpokeId::Go => "Go",
             SpokeId::Python => "Python",
+            SpokeId::Ruby => "Ruby",
             SpokeId::TypeScript => "TypeScript",
             SpokeId::Star => "Star S-Expr",
         }
@@ -58,6 +62,7 @@ impl SpokeId {
             SpokeId::Java => "java",
             SpokeId::Go => "go",
             SpokeId::Python => "py",
+            SpokeId::Ruby => "rb",
             SpokeId::TypeScript => "ts",
             SpokeId::Star => "star",
         }
@@ -73,6 +78,7 @@ impl SpokeId {
             SpokeId::Java => Some("java."),
             SpokeId::Go => Some("go."),
             SpokeId::Python => Some("py."),
+            SpokeId::Ruby => Some("ruby."),
             SpokeId::TypeScript => Some("ts."),
             SpokeId::Star => None,
         }
@@ -86,6 +92,7 @@ impl SpokeId {
             "java" | ".java" => Some(SpokeId::Java),
             "go" | "golang" | ".go" => Some(SpokeId::Go),
             "python" | "py" | ".py" => Some(SpokeId::Python),
+            "ruby" | "rb" | ".rb" => Some(SpokeId::Ruby),
             "typescript" | "ts" | ".ts" => Some(SpokeId::TypeScript),
             "star" | "sexpr" | "lisp" | ".star" => Some(SpokeId::Star),
             _ => None,

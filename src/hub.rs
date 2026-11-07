@@ -1029,7 +1029,7 @@ fn normalize_expr(
                     normalize_expr(needle, env, fn_ret_types, struct_fields, enum_names);
                 }
             }
-            // Disambiguate Swift `.count` on a struct with a `count` field vs `Array.count` / `String.count`
+            // Disambiguate Swift `.count` or TS/Ruby `.length` on a struct field vs `Array`/`String` len
             if let Intrinsic::Len(inner) = intr.as_ref() {
                 if let Some(Type::Named(sname)) =
                     infer_expr_type(inner, env, fn_ret_types, struct_fields, enum_names)
@@ -1042,6 +1042,15 @@ fn normalize_expr(
                         *expr = Expr::FieldAccess {
                             base: Box::new(inner.clone()),
                             field: "count".to_string(),
+                        };
+                    } else if struct_fields
+                        .get(&sname)
+                        .map(|m| m.contains_key("length"))
+                        .unwrap_or(false)
+                    {
+                        *expr = Expr::FieldAccess {
+                            base: Box::new(inner.clone()),
+                            field: "length".to_string(),
                         };
                     }
                 }

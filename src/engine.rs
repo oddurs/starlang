@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::eval::{eval_module, eval_tests_default, EvalResult, TestResult};
 use crate::hub::{Diagnostic, HubModule};
 use crate::lens::SpokeId;
+use crate::mutate::{harden_tests, mutate_module, HardenReport, MutationReport};
 use crate::refactor::{list_symbols, optimize_module, rename_symbol, SymbolEntry};
 use crate::spokes::lens_for;
 use crate::trace::{trace_module_default, TraceReport};
@@ -92,6 +93,20 @@ impl StarEngine {
 
     pub fn trace(&self) -> TraceReport {
         trace_module_default(self.hub())
+    }
+
+    pub fn mutate(&self) -> MutationReport {
+        mutate_module(self.hub())
+    }
+
+    /// Auto-synthesize boundary unit test assertions to kill surviving Hub AST mutants across all 9 spokes.
+    pub fn harden_tests(&mut self) -> (SyncSnapshot, HardenReport) {
+        let (new_hub, report) = harden_tests(self.hub());
+        let active = self.current().spoke;
+        if report.added_assertions > 0 {
+            self.push_hub(new_hub, active);
+        }
+        (self.snapshot(), report)
     }
 
     fn push_hub(&mut self, new_hub: HubModule, spoke: SpokeId) {

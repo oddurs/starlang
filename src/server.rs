@@ -7,6 +7,7 @@ use crate::engine::{StarEngine, SyncSnapshot};
 use crate::hub::Diagnostic;
 use crate::json::{json_str, parse_flat_json_object};
 use crate::lens::SpokeId;
+use crate::mutate::MutationReport;
 use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
 use crate::trace::TraceReport;
@@ -18,9 +19,9 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v0.5 — 8-Spoke Bidirectional Compiler Studio running at:");
+    println!("StarLang v0.6 — 9-Spoke Bidirectional Compiler Studio running at:");
     println!("  -> http://{}", addr);
-    println!("Edit Rust, C++, Swift, Java, Go, Python, TypeScript, or Star S-Expr to sync all spokes, live VM, tests & AST coverage.\n");
+    println!("Edit Rust, C++, Swift, Java, Go, Python, Ruby, TypeScript, or Star S-Expr to sync all spokes, live VM, tests, coverage & mutation testing.\n");
 
     serve_listener(listener)
 }
@@ -205,6 +206,29 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
             let payload = trace_to_json(&report);
             send_response(&mut stream, 200, "application/json", &payload)
         }
+        ("POST", "/api/mutate") => {
+            let report = {
+                let eng = shared.lock().unwrap();
+                eng.mutate()
+            };
+            let payload = mutation_to_json(&report);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/harden") => {
+            let (snap, hrep) = {
+                let mut eng = shared.lock().unwrap();
+                eng.harden_tests()
+            };
+            let payload = format!(
+                "{{\"ok\":true,\"added_assertions\":{},\"before_score_pct\":{},\"after_score_pct\":{},\"mutation\":{},\"snapshot\":{}}}",
+                hrep.added_assertions,
+                hrep.before.score_pct,
+                hrep.after.score_pct,
+                mutation_to_json(&hrep.after),
+                snapshot_to_json(&snap)
+            );
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
         ("POST", "/api/run") => {
             let report = {
                 let eng = shared.lock().unwrap();
@@ -374,6 +398,37 @@ fn trace_to_json(report: &TraceReport) -> String {
         uncov_entries.join(","),
         hotspot_entries.join(","),
         call_entries.join(",")
+    )
+}
+
+fn mutation_to_json(report: &MutationReport) -> String {
+    let items: Vec<String> = report
+        .outcomes
+        .iter()
+        .map(|m| {
+            let kb = m
+                .killed_by
+                .as_deref()
+                .map(json_str)
+                .unwrap_or_else(|| "null".to_string());
+            format!(
+                "{{\"id\":{},\"func\":{},\"description\":{},\"killed\":{},\"killed_by\":{}}}",
+                m.id,
+                json_str(&m.func),
+                json_str(&m.description),
+                m.killed,
+                kb
+            )
+        })
+        .collect();
+    format!(
+        "{{\"ok\":true,\"total_mutants\":{},\"killed\":{},\"survived\":{},\"score_pct\":{},\"elapsed_ms\":{},\"outcomes\":[{}]}}",
+        report.total_mutants,
+        report.killed,
+        report.survived,
+        report.score_pct,
+        report.elapsed_ms,
+        items.join(",")
     )
 }
 

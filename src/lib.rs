@@ -4,6 +4,7 @@ pub mod fuzzer;
 pub mod hub;
 pub mod json;
 pub mod lens;
+pub mod mutate;
 pub mod reconcile;
 pub mod refactor;
 pub mod runner;
