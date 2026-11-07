@@ -1744,6 +1744,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(gpu_resp.contains("@compute @workgroup_size"));
     assert!(gpu_resp.contains("\"host_dispatch_by_spoke\":{"));
 
+    // Verify /api/fhe and /api/seplogic endpoints
+    let fhe_resp = send_http("POST", "/api/fhe", "{}");
+    assert!(fhe_resp.contains("\"ok\":true"), "fhe failed: {}", fhe_resp);
+    assert!(fhe_resp.contains("\"all_decryptions_verified\":true"));
+    assert!(fhe_resp.contains("EvalMultAndRelinearize"));
+
+    let sep_resp = send_http("POST", "/api/seplogic", "{}");
+    assert!(sep_resp.contains("\"ok\":true"), "seplogic failed: {}", sep_resp);
+    assert!(sep_resp.contains("\"all_memory_safe\":true"));
+    assert!(sep_resp.contains("\"region_by_spoke\":{"));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -2352,5 +2363,70 @@ fn hls_systemverilog_rtl_compiler_and_simt_gpu_kernel_synthesizer_verify_across_
         assert!(f.host_dispatch_by_spoke["python"].contains(&f.kernel_name));
         assert!(f.host_dispatch_by_spoke["typescript"].contains("dispatchWorkgroups"));
         assert!(f.mermaid_simt.contains("flowchart LR"));
+    }
+}
+
+#[test]
+fn fhe_ring_lwe_blinded_circuit_compiler_and_reynolds_separation_logic_verifier_verify_across_thirteen_languages() {
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+
+    // 1. Fully Homomorphic Encryption (FHE) Ring-LWE Blinded Circuit Compiler & Noise-Budget Tracker
+    let fhe = rl_eng.fhe_circuit();
+    assert_eq!(fhe.total_functions, 2);
+    assert!(fhe.total_fhe_gates >= 10);
+    assert!(fhe.total_relinearizations >= 1);
+    assert!(fhe.total_oblivious_muxes >= 2);
+    assert!(fhe.max_multiplicative_depth >= 1);
+    assert!(fhe.min_remaining_noise_bits >= 12.0);
+    assert!(fhe.all_decryptions_verified);
+
+    for f in &fhe.functions {
+        assert_eq!(f.poly_modulus_degree_n, 8192);
+        assert_eq!(f.coeff_modulus_bits_q, 218);
+        assert_eq!(f.plaintext_modulus_t, 65537);
+        assert_eq!(f.security_bits_lambda, 128);
+        assert!(f.decryption_verified);
+        assert_eq!(f.sample_decrypted_out, f.sample_plaintext_out);
+        assert!(f.final_noise_budget_bits > 0.0);
+        assert!(f.openfhe_cpp_source.contains("#include \"openfhe.h\""));
+        assert!(f.openfhe_cpp_source.contains("EvalMultAndRelinearize"));
+        assert_eq!(f.fhe_by_spoke.len(), 13);
+        assert!(f.fhe_by_spoke["rust"].contains("FheInt64"));
+        assert!(f.fhe_by_spoke["cpp"].contains("EvalMultAndRelinearize"));
+        assert!(f.fhe_by_spoke["go"].contains("MulRelinNew"));
+        assert!(f.fhe_by_spoke["python"].contains("@fhe.compiler"));
+        assert!(f.fhe_by_spoke["typescript"].contains("relinearizeInPlace"));
+        assert!(f.mermaid_fhe.contains("flowchart LR"));
+    }
+
+    // 2. Reynolds Separation Logic (emp, x ↦ v, P * Q, P -* Q) Symbolic Heap & Fractional Borrow Prover
+    let sep = rl_eng.separation_logic();
+    assert_eq!(sep.total_functions, 2);
+    assert!(sep.total_heap_cells >= 6);
+    assert!(sep.total_proof_steps >= 8);
+    assert_eq!(sep.use_after_free_bugs, 0);
+    assert_eq!(sep.double_free_bugs, 0);
+    assert_eq!(sep.memory_leak_bugs, 0);
+    assert_eq!(sep.aliasing_bugs, 0);
+    assert!(sep.all_memory_safe);
+
+    for f in &sep.functions {
+        assert!(f.no_use_after_free);
+        assert!(f.no_double_free);
+        assert!(f.no_memory_leak);
+        assert!(f.no_mutable_aliasing);
+        assert!(f.all_spatial_proofs_valid);
+        assert!(f.spatial_precondition.contains(" * R_caller"));
+        assert!(f.spatial_postcondition.contains(" * R_caller"));
+        assert!(f.magic_wand_continuation.contains("-*"));
+        assert_eq!(f.region_by_spoke.len(), 13);
+        assert!(f.region_by_spoke["rust"].contains("&'a mut i64"));
+        assert!(f.region_by_spoke["zig"].contains("ArenaAllocator"));
+        assert!(f.region_by_spoke["c"].contains("restrict"));
+        assert!(f.region_by_spoke["swift"].contains("~Copyable"));
+        assert!(f.region_by_spoke["java"].contains("Arena.ofConfined()"));
+        assert!(f.region_by_spoke["typescript"].contains("using region"));
+        assert!(f.mermaid_seplogic.contains("flowchart LR"));
     }
 }

@@ -6,6 +6,7 @@ pub mod dist_actor;
 pub mod egraph;
 pub mod engine;
 pub mod eval;
+pub mod fhe_seplogic;
 pub mod fuzzer;
 pub mod hls_verilog;
 pub mod hub;

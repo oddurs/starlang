@@ -16,6 +16,9 @@ use crate::egraph::{
     partial_eval_module, superoptimize_egraph, EGraphReport, PartialEvalReport,
 };
 use crate::eval::{eval_module, eval_tests_default, EvalResult, TestResult};
+use crate::fhe_seplogic::{
+    compile_fhe_circuit, verify_separation_logic, FheCircuitReport, SeparationLogicReport,
+};
 use crate::hls_verilog::{
     compile_gpu_simt, compile_hls_rtl, GpuSimtReport, HlsRtlReport,
 };
@@ -409,6 +412,24 @@ impl StarEngine {
     /// Streaming Multiprocessor (`SM`) occupancy, and Roofline arithmetic intensity.
     pub fn gpu_simt(&self) -> GpuSimtReport {
         compile_gpu_simt(self.hub())
+    }
+
+    /// Compile Hub functions into Fully Homomorphic Encryption (`FHE`) Ring-LWE (`BFV`/`BGV`/`CKKS`/`TFHE`)
+    /// Blinded Arithmetic & Boolean Circuits over `R_q = Z_q[X]/(X^N + 1)` (`N = 8192`, `log2(Q) = 218`, `λ = 128`),
+    /// schedule Key-Switching Relinearization (`Relinearize_evk`), RNS Modulus Switching (`ModSwitchRescale`),
+    /// Oblivious Multiplexing (`EvalSelect`), and Programmable Bootstrapping (`PBS`), and verify homomorphic
+    /// decryption equivalence (`Decrypt(Eval(Encrypt(x))) == f(x)`).
+    pub fn fhe_circuit(&self) -> FheCircuitReport {
+        compile_fhe_circuit(self.hub())
+    }
+
+    /// Run Symbolic Execution over Reynolds Separation Logic Heaps (`emp`, `x ↦ v`, `P * Q`, `P -* Q`)
+    /// with Boyland Fractional Borrow Permissions (`1/1` Exclusive Write vs. `1/k` Shared Read),
+    /// prove the Reynolds Frame Rule (`{P} C {Q} => {P * R} C {Q * R}`), verify 100% absence of
+    /// Use-After-Free, Double-Free, Memory Leaks, and Mutable Aliasing, and synthesize 13-Spoke
+    /// Zero-Copy Region / Linear Borrow wrappers.
+    pub fn separation_logic(&self) -> SeparationLogicReport {
+        verify_separation_logic(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.
