@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::hub::{
-    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, MatchPat, Stmt,
-    UnaryOp,
+    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, MatchPat, NodeId,
+    Stmt, UnaryOp,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +74,12 @@ enum Flow {
 const DEFAULT_MAX_STEPS: usize = 100_000;
 const MAX_CALL_DEPTH: usize = 128;
 
+pub trait VmObserver {
+    fn on_stmt(&mut self, node_id: NodeId);
+    fn on_call_enter(&mut self, depth: usize, name: &str, args: &[Value]) -> Option<usize>;
+    fn on_call_exit(&mut self, slot: Option<usize>, name: &str, ret: &Value, steps_delta: usize);
+}
+
 pub fn eval_module_default(hub: &HubModule) -> EvalResult {
     eval_module(hub, DEFAULT_MAX_STEPS)
 }
@@ -101,6 +107,7 @@ pub fn eval_module(hub: &HubModule, max_steps: usize) -> EvalResult {
         steps: 0,
         max_steps,
         depth: 0,
+        observer: None,
     };
 
     match vm.call_fn("main", Vec::new()) {
@@ -140,6 +147,7 @@ pub fn eval_tests(hub: &HubModule, max_steps_per_test: usize) -> Vec<TestResult>
                 steps: 0,
                 max_steps: max_steps_per_test,
                 depth: 0,
+                observer: None,
             };
             let mut scopes = Scopes::new();
             match vm.exec_block(&t.body, &mut scopes) {
@@ -177,12 +185,55 @@ pub fn eval_tests(hub: &HubModule, max_steps_per_test: usize) -> Vec<TestResult>
     out
 }
 
-struct HubVm<'a> {
+pub fn eval_with_observer(
+    hub: &HubModule,
+    max_steps: usize,
+    observer: &mut dyn VmObserver,
+) -> Result<(), String> {
+    let mut fns: HashMap<&str, &FnDecl> = HashMap::new();
+    for item in &hub.items {
+        if let Item::Function(f) = item {
+            fns.insert(f.name.as_str(), f);
+        }
+    }
+
+    if hub.has_main() {
+        let mut vm = HubVm {
+            fns: fns.clone(),
+            stdout: String::new(),
+            steps: 0,
+            max_steps,
+            depth: 0,
+            observer: Some(observer),
+        };
+        let _ = vm.call_fn("main", Vec::new())?;
+    }
+
+    for item in &hub.items {
+        if let Item::Test(t) = item {
+            let mut vm = HubVm {
+                fns: fns.clone(),
+                stdout: String::new(),
+                steps: 0,
+                max_steps,
+                depth: 0,
+                observer: Some(observer),
+            };
+            let mut scopes = Scopes::new();
+            let _ = vm.exec_block(&t.body, &mut scopes)?;
+        }
+    }
+
+    Ok(())
+}
+
+struct HubVm<'a, 'b> {
     fns: HashMap<&'a str, &'a FnDecl>,
     stdout: String,
     steps: usize,
     max_steps: usize,
     depth: usize,
+    observer: Option<&'b mut dyn VmObserver>,
 }
 
 struct Scopes {
@@ -229,7 +280,7 @@ impl Scopes {
     }
 }
 
-impl<'a> HubVm<'a> {
+impl<'a, 'b> HubVm<'a, 'b> {
     fn tick(&mut self) -> Result<(), String> {
         self.steps += 1;
         if self.steps > self.max_steps {
@@ -262,6 +313,12 @@ impl<'a> HubVm<'a> {
             ));
         }
 
+        let start_steps = self.steps;
+        let trace_slot = self
+            .observer
+            .as_deref_mut()
+            .and_then(|obs| obs.on_call_enter(self.depth, name, &args));
+
         self.depth += 1;
         let mut scopes = Scopes::new();
         for (param, val) in decl.params.iter().zip(args) {
@@ -270,12 +327,19 @@ impl<'a> HubVm<'a> {
         let res = self.exec_block(&decl.body, &mut scopes);
         self.depth -= 1;
 
-        match res? {
-            Flow::Return(v) => Ok(v),
-            Flow::Next => Ok(Value::Void),
-            Flow::Break => Err("'break' escaped function body".to_string()),
-            Flow::Continue => Err("'continue' escaped function body".to_string()),
+        let ret_val = match res? {
+            Flow::Return(v) => v,
+            Flow::Next => Value::Void,
+            Flow::Break => return Err("'break' escaped function body".to_string()),
+            Flow::Continue => return Err("'continue' escaped function body".to_string()),
+        };
+
+        let steps_delta = self.steps.saturating_sub(start_steps);
+        if let Some(obs) = self.observer.as_deref_mut() {
+            obs.on_call_exit(trace_slot, name, &ret_val, steps_delta);
         }
+
+        Ok(ret_val)
     }
 
     fn exec_block(&mut self, stmts: &[Stmt], scopes: &mut Scopes) -> Result<Flow, String> {
@@ -293,6 +357,11 @@ impl<'a> HubVm<'a> {
 
     fn exec_stmt(&mut self, stmt: &Stmt, scopes: &mut Scopes) -> Result<Flow, String> {
         self.tick()?;
+        if let Some(id) = exec_stmt_id(stmt) {
+            if let Some(obs) = self.observer.as_deref_mut() {
+                obs.on_stmt(id);
+            }
+        }
         match stmt {
             Stmt::Comment { .. } => Ok(Flow::Next),
             Stmt::Let { name, value, .. } => {
@@ -664,6 +733,25 @@ impl<'a> HubVm<'a> {
                 Ok(Value::Str(v.display_str()))
             }
         }
+    }
+}
+
+pub fn exec_stmt_id(stmt: &Stmt) -> Option<NodeId> {
+    match stmt {
+        Stmt::Comment { .. } => None,
+        Stmt::Let { id, .. }
+        | Stmt::Assign { id, .. }
+        | Stmt::If { id, .. }
+        | Stmt::Match { id, .. }
+        | Stmt::While { id, .. }
+        | Stmt::ForEach { id, .. }
+        | Stmt::ForRange { id, .. }
+        | Stmt::Break { id }
+        | Stmt::Continue { id }
+        | Stmt::Return { id, .. }
+        | Stmt::Assert { id, .. }
+        | Stmt::AssertEq { id, .. }
+        | Stmt::Expr { id, .. } => Some(*id),
     }
 }
 

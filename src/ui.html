@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StarLang v0.4 — 7-Spoke Bidirectional Compiler</title>
+  <title>StarLang v0.5 — 8-Spoke Bidirectional Compiler</title>
   <style>
     :root {
       --bg: #090d16;
@@ -86,6 +86,13 @@
       font-weight: 600;
     }
     button.opt-btn:hover { background: #3730a3; }
+    button.trace-btn {
+      background: #1e3a5f;
+      border-color: #38bdf8;
+      color: #e0f2fe;
+      font-weight: 600;
+    }
+    button.trace-btn:hover { background: #1d4ed8; }
     .hub-banner {
       padding: 7px 18px;
       background: #0d1322;
@@ -120,7 +127,7 @@
       gap: 8px;
       flex-wrap: wrap;
     }
-    .vm-preview, .test-pill {
+    .vm-preview, .test-pill, .cov-pill {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 11.5px;
       padding: 3px 10px;
@@ -137,6 +144,17 @@
       background: rgba(59, 130, 246, 0.14);
       border-color: rgba(96, 165, 250, 0.4);
       color: #bfdbfe;
+    }
+    .cov-pill {
+      cursor: pointer;
+      background: rgba(16, 185, 129, 0.14);
+      border-color: rgba(52, 211, 153, 0.4);
+      color: #a7f3d0;
+    }
+    .cov-pill.warn {
+      background: rgba(245, 158, 11, 0.16);
+      border-color: rgba(251, 191, 36, 0.45);
+      color: #fde68a;
     }
     .vm-preview.err, .test-pill.err {
       background: rgba(239, 68, 68, 0.16);
@@ -270,7 +288,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer {
+    #run-drawer, #trace-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -321,31 +339,34 @@
         <line id="edge-rust" class="edge" x1="88" y1="32" x2="24" y2="8" />
         <line id="edge-cpp" class="edge" x1="88" y1="32" x2="24" y2="24" />
         <line id="edge-swift" class="edge" x1="88" y1="32" x2="24" y2="40" />
-        <line id="edge-go" class="edge" x1="88" y1="32" x2="24" y2="56" />
-        <line id="edge-python" class="edge" x1="88" y1="32" x2="150" y2="12" />
-        <line id="edge-typescript" class="edge" x1="88" y1="32" x2="150" y2="32" />
-        <line id="edge-star" class="edge" x1="88" y1="32" x2="150" y2="52" />
+        <line id="edge-java" class="edge" x1="88" y1="32" x2="24" y2="56" />
+        <line id="edge-go" class="edge" x1="88" y1="32" x2="150" y2="8" />
+        <line id="edge-python" class="edge" x1="88" y1="32" x2="150" y2="24" />
+        <line id="edge-typescript" class="edge" x1="88" y1="32" x2="150" y2="40" />
+        <line id="edge-star" class="edge" x1="88" y1="32" x2="150" y2="56" />
         <circle class="node-hub" cx="88" cy="32" r="11" />
         <text x="88" y="35" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
         <text class="node-lbl" x="4" y="11">RS</text>
         <text class="node-lbl" x="1" y="27">CPP</text>
         <text class="node-lbl" x="4" y="43">SW</text>
-        <text class="node-lbl" x="4" y="59">GO</text>
-        <text class="node-lbl" x="153" y="15">PY</text>
-        <text class="node-lbl" x="153" y="35">TS</text>
-        <text class="node-lbl" x="153" y="55">IR</text>
+        <text class="node-lbl" x="4" y="59">JV</text>
+        <text class="node-lbl" x="153" y="11">GO</text>
+        <text class="node-lbl" x="153" y="27">PY</text>
+        <text class="node-lbl" x="153" y="43">TS</text>
+        <text class="node-lbl" x="153" y="59">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v0.4 — 7-Spoke Bidirectional Compiler</h1>
-        <p>Rust ⇄ C++ ⇄ Swift 6 ⇄ Go ⇄ Python ⇄ TypeScript ⇄ Star IR · Live Unit Tests, Hub VM & 7-Engine Verification</p>
+        <h1>★ StarLang v0.5 — 8-Spoke Bidirectional Compiler</h1>
+        <p>Rust ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ TypeScript ⇄ Star IR · Live Tests, AST Coverage & 8-Engine Verification</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
-      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 7 languages">⚡ Optimize Hub</button>
-      <button class="run-btn" id="run-btn">▶ Run All 7 Engines (VM + rustc + clang++ + swiftc + go + py + node)</button>
+      <button class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph & hotspots">🔍 Trace & Coverage</button>
+      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 8 languages">⚡ Optimize Hub</button>
+      <button class="run-btn" id="run-btn">▶ Run All 8 Engines (VM + rustc + clang++ + swiftc + javac + go + py + node)</button>
     </div>
   </header>
 
@@ -354,6 +375,7 @@
       <span style="color:var(--accent);font-weight:600;" id="hub-rev">Hub rev #1</span>
       <span id="typecheck-pill" style="color:#34d399;font-weight:500;">✓ Hub Typecheck: OK</span>
       <span class="test-pill" id="test-pill">✓ Tests: —</span>
+      <span class="cov-pill" id="cov-pill" title="Click to inspect call trace & uncovered AST branches">🎯 Coverage: —</span>
       <span class="vm-preview" id="vm-preview">⚡ Hub VM: ...</span>
       <div id="meta-badges" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
     </div>
@@ -362,6 +384,7 @@
       <span class="toggle-pill on" data-spoke="rust">Rust</span>
       <span class="toggle-pill on" data-spoke="cpp">C++</span>
       <span class="toggle-pill on" data-spoke="swift">Swift</span>
+      <span class="toggle-pill on" data-spoke="java">Java</span>
       <span class="toggle-pill on" data-spoke="go">Go</span>
       <span class="toggle-pill on" data-spoke="python">Python</span>
       <span class="toggle-pill on" data-spoke="typescript">TypeScript</span>
@@ -372,12 +395,12 @@
   <div class="refactor-bar">
     <div class="refactor-controls">
       <span style="color:var(--muted);font-weight:600;">Semantic Hub Refactor:</span>
-      <select id="symbol-select" title="Select a Hub symbol to rename across all 7 languages"></select>
+      <select id="symbol-select" title="Select a Hub symbol to rename across all 8 languages"></select>
       <input type="text" id="rename-input" placeholder="new_identifier" style="width:165px;" />
-      <button id="rename-btn">✎ Rename Across 7 Languages</button>
+      <button id="rename-btn">✎ Rename Across 8 Languages</button>
       <span class="action-msg" id="action-msg"></span>
     </div>
-    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 7 engines</span>
+    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 8 engines</span>
   </div>
 
   <div class="sem-bar" id="sem-bar"></div>
@@ -417,6 +440,18 @@
       </div>
       <textarea id="ed-swift" spellcheck="false"></textarea>
       <div class="diag-bar" id="diag-swift"></div>
+    </section>
+
+    <section class="pane" id="pane-java">
+      <div class="pane-header">
+        <span>Java 21 (<code>.java</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-java"></span>
+          <span class="status" id="status-java">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-java" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-java"></div>
     </section>
 
     <section class="pane" id="pane-go">
@@ -468,16 +503,24 @@
     </section>
   </main>
 
+  <section id="trace-drawer">
+    <div class="run-header">
+      <span id="trace-summary">Tracing Hub AST execution & coverage...</span>
+      <button onclick="document.getElementById('trace-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="trace-cards"></div>
+  </section>
+
   <section id="run-drawer">
     <div class="run-header">
-      <span id="run-summary">Executing across Hub VM, rustc, clang++, swiftc, go, python3, and node...</span>
+      <span id="run-summary">Executing across Hub VM, rustc, clang++, swiftc, javac, go, python3, and node...</span>
       <button onclick="document.getElementById('run-drawer').style.display='none'">Close</button>
     </div>
     <div class="run-cards" id="run-cards"></div>
   </section>
 
   <script>
-    const SPOKES = ["rust", "cpp", "swift", "go", "python", "typescript", "star"];
+    const SPOKES = ["rust", "cpp", "swift", "java", "go", "python", "typescript", "star"];
     let debounceTimer = null;
     const prevTexts = {};
 
@@ -536,6 +579,12 @@
             .map(t => t.passed ? `✓ test_${t.name}` : `✗ test_${t.name}: ${t.error}`)
             .join("\n");
         }
+      }
+
+      const covPill = document.getElementById("cov-pill");
+      if (typeof snap.coverage_pct === "number") {
+        covPill.textContent = `🎯 Coverage: ${snap.coverage_pct}% (${snap.covered_stmts}/${snap.total_stmts} stmts)`;
+        covPill.classList.toggle("warn", snap.coverage_pct < 100);
       }
 
       const vmEl = document.getElementById("vm-preview");
@@ -629,7 +678,7 @@
         pane.classList.add("has-error");
         status.className = "status error";
         status.textContent = `Syntax Hold (L${data.diagnostic.line})`;
-        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 6 spokes held at last valid Hub AST`;
+        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 7 spokes held at last valid Hub AST`;
       }
     }
 
@@ -683,7 +732,7 @@
       if (data.ok) {
         document.getElementById("rename-input").value = "";
         applySnapshot(data.snapshot, null);
-        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 7 languages`, false);
+        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 8 languages`, false);
       } else {
         flashMessage(`✗ ${data.error}`, true);
       }
@@ -695,12 +744,52 @@
       if (data.ok) {
         applySnapshot(data.snapshot, null);
         if (data.rewrites > 0) {
-          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 7 languages`, false);
+          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 8 languages`, false);
         } else {
           flashMessage("AST is already in normal form (0 rewrites)", false);
         }
       }
     });
+
+    async function triggerTrace() {
+      const drawer = document.getElementById("trace-drawer");
+      const summary = document.getElementById("trace-summary");
+      const cards = document.getElementById("trace-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Collecting Hub VM AST statement coverage, hotspots & call graph...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/trace", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.coverage_pct === 100 ? "#34d399" : "#fbbf24";
+      summary.innerHTML = `<span style="color:${color};">🎯 AST Statement Coverage: ${data.coverage_pct}% (${data.covered_stmts}/${data.total_stmts} statements across main + unit tests)</span>`;
+
+      const hotCard = document.createElement("div");
+      hotCard.className = "run-card";
+      hotCard.innerHTML = `<strong>🔥 Function Hotspots</strong><pre></pre>`;
+      hotCard.querySelector("pre").textContent =
+        (data.hotspots || []).map(h => `${h.name}(): ${h.calls} call(s), ${h.total_steps} AST steps`).join("\n") || "(no calls)";
+      cards.appendChild(hotCard);
+
+      const callCard = document.createElement("div");
+      callCard.className = "run-card";
+      callCard.innerHTML = `<strong>🌲 Call-Graph Trace</strong><pre></pre>`;
+      callCard.querySelector("pre").textContent =
+        (data.call_trace || []).map(c => `${"  ".repeat(Math.max(0, c.depth - 1))}${c.callee}(${c.args}) => ${c.result} [${c.steps} steps]`).join("\n") || "(empty)";
+      cards.appendChild(callCard);
+
+      const uncovCard = document.createElement("div");
+      uncovCard.className = "run-card";
+      uncovCard.innerHTML = `<strong>🧭 Uncovered AST Statements</strong><pre></pre>`;
+      uncovCard.querySelector("pre").textContent =
+        (data.uncovered || []).length === 0
+          ? "✓ 100% of Hub AST statements executed!"
+          : data.uncovered.map(u => `[#${u.node_id} in ${u.func}] ${u.summary}`).join("\n");
+      cards.appendChild(uncovCard);
+    }
+
+    document.getElementById("trace-btn").addEventListener("click", triggerTrace);
+    document.getElementById("cov-pill").addEventListener("click", triggerTrace);
 
     document.getElementById("undo-btn").addEventListener("click", async () => {
       const res = await fetch("/api/undo", { method: "POST", body: "{}" });
@@ -730,13 +819,13 @@
       const summary = document.getElementById("run-summary");
       const cards = document.getElementById("run-cards");
       drawer.style.display = "block";
-      summary.textContent = "Executing Hub VM + rustc + clang++ (PCH) + swiftc + go + python3 + node in parallel...";
+      summary.textContent = "Executing Hub VM + rustc + clang++ (PCH) + swiftc + javac + go + python3 + node in parallel...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/run", { method: "POST", body: "{}" });
       const data = await res.json();
       if (data.outputs_match) {
-        summary.innerHTML = `<span style="color:#34d399;">✓ 7/7 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
+        summary.innerHTML = `<span style="color:#34d399;">✓ 8/8 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
       } else {
         summary.innerHTML = `<span style="color:#f87171;">Runtime Check Completed (${data.wall_time_ms}ms — inspect outputs below)</span>`;
       }

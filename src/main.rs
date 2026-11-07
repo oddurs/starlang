@@ -55,6 +55,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "trace" => {
+            if let Err(e) = run_trace_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "fuzz" => {
             if let Err(e) = run_fuzz_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -141,7 +147,7 @@ fn parse_target_spoke(args: &[String]) -> Result<Option<SpokeId>, String> {
 
 fn run_convert(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang convert <file> [--to rust|cpp|swift|go|python|ts|star]".to_string()
+        "usage: starlang convert <file> [--to rust|cpp|swift|java|go|python|ts|star]".to_string()
     })?;
     let (eng, src_spoke) = load_engine_from_path(input)?;
 
@@ -250,9 +256,61 @@ fn run_tests_cli(args: &[String]) -> Result<(), String> {
     }
 }
 
+fn run_trace_cli(args: &[String]) -> Result<(), String> {
+    let (eng, label) = if let Some(path) = args.first() {
+        let (e, spoke) = load_engine_from_path(path)?;
+        (e, format!("{} ({})", path, spoke.display_name()))
+    } else {
+        let sample = find_sample("pipeline").ok_or("missing pipeline sample")?;
+        let e =
+            StarEngine::from_source(sample.initial_spoke, sample.source).map_err(|d| d.to_string())?;
+        (e, format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()))
+    };
+
+    let rep = eng.trace();
+    println!("=== Hub AST Coverage & Call-Graph Trace: {} ===", label);
+    println!(
+        "Coverage: {}% ({}/{} Hub AST statements executed across main + unit tests)",
+        rep.coverage_pct, rep.covered_stmts, rep.total_stmts
+    );
+
+    println!("\nHotspots:");
+    for h in &rep.hotspots {
+        println!(
+            "  • {:<22} {:>3} call(s) | {:>5} AST steps",
+            format!("{}()", h.name),
+            h.calls,
+            h.total_steps
+        );
+    }
+
+    println!("\nCall-Graph Trace:");
+    for c in &rep.call_trace {
+        let indent = "  ".repeat(c.depth.saturating_sub(1));
+        println!(
+            "  {}{}({}) => {} [{} steps]",
+            indent, c.callee, c.args, c.result, c.steps
+        );
+    }
+
+    if rep.uncovered.is_empty() {
+        println!("\n✓ 0 uncovered AST statements.");
+    } else {
+        println!("\nUncovered AST Statements ({}):", rep.uncovered.len());
+        for u in &rep.uncovered {
+            println!("  ⚠ [node #{} in {}] {}", u.node_id, u.func, u.summary);
+        }
+    }
+
+    if let Some(err) = rep.error {
+        return Err(err);
+    }
+    Ok(())
+}
+
 fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
     let mut count = 50usize;
-    let mut seed: u64 = 0x57A4_2026_0400;
+    let mut seed: u64 = 0x57A4_2026_0500;
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--seed" {
@@ -273,11 +331,11 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 
     let report = run_fuzz_suite(seed, count);
     println!(
-        "★ Property-Based 7-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
+        "★ Property-Based 8-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
         report.seed, report.programs_tested
     );
     println!(
-        "  • 7-spoke GetPut + cold Put round-trips: {}",
+        "  • 8-spoke GetPut + cold Put round-trips: {}",
         report.spoke_roundtrips
     );
     println!(
@@ -304,7 +362,7 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 fn run_refactor(args: &[String]) -> Result<(), String> {
     if args.len() < 3 {
         return Err(
-            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|cpp|swift|go|python|ts|star]"
+            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|cpp|swift|java|go|python|ts|star]"
                 .to_string(),
         );
     }
@@ -322,7 +380,7 @@ fn run_refactor(args: &[String]) -> Result<(), String> {
 
 fn run_optimize(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang optimize <file> [--to rust|cpp|swift|go|python|ts|star]".to_string()
+        "usage: starlang optimize <file> [--to rust|cpp|swift|java|go|python|ts|star]".to_string()
     })?;
     let (mut eng, src_spoke) = load_engine_from_path(input)?;
     let (_, rewrites) = eng.optimize();
@@ -355,7 +413,7 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Outputs match across all 7 engines: {}",
+        "\nParallel wall time: {}ms | Outputs match across all 8 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
@@ -366,21 +424,22 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v0.4 — 7-Spoke Bidirectional Compiler (Rust <-> C++ <-> Swift 6 <-> Go <-> Python <-> TypeScript <-> Star IR)
+        "starlang v0.5 — 8-Spoke Bidirectional Compiler (Rust <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> TypeScript <-> Star IR)
 
 USAGE:
-  cargo run                                         Start the 7-pane live web studio on http://127.0.0.1:7878
+  cargo run                                         Start the 8-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
-  cargo run -- watch [dir] [stem]                   Live-sync .rs, .cpp, .swift, .go, .py, .ts, .star files on disk
-  cargo run -- convert <file> [--to swift]          Transpile a file into one or all other spokes
+  cargo run -- watch [dir] [stem]                   Live-sync .rs, .cpp, .swift, .java, .go, .py, .ts, .star files
+  cargo run -- convert <file> [--to java]           Transpile a file into one or all other spokes
   cargo run -- check <file>                         Run the central Hub static type & scope checker
   cargo run -- eval <file>                          Execute main() instantly in the native in-memory Hub VM
   cargo run -- test <file>                          Execute polyglot unit tests instantly in the Hub VM
-  cargo run -- fuzz [count] [--seed N]              Run property-based 7-spoke GetPut & VM equivalence fuzzer
+  cargo run -- trace [file]                         Report Hub AST statement coverage %, hotspots & call trace
+  cargo run -- fuzz [count] [--seed N]              Run property-based 8-spoke GetPut & VM equivalence fuzzer
   cargo run -- refactor <file> <sym> <new> [--to X] Scope-aware cross-language symbol rename
   cargo run -- optimize <file> [--to X]             Constant-fold & prune dead branches via the Hub
-  cargo run -- run <file>                           Verify across Hub VM + rustc + clang++ + swiftc + go + py + node
-  cargo run -- demo                                 Run an end-to-end 7-spoke sync, test, fuzz & 7-engine demo"
+  cargo run -- run <file>                           Verify across Hub VM + rustc + clang++ + swiftc + javac + go + py + node
+  cargo run -- demo                                 Run an end-to-end 8-spoke sync, trace, fuzz & 8-engine demo"
     );
 }
 
@@ -392,42 +451,45 @@ fn run_cli_demo() -> Result<(), String> {
     let init_snap = engine.snapshot();
     let passed_tests = init_snap.test_results.iter().filter(|t| t.passed).count();
     println!(
-        "Hub initialized: {} AST nodes | Typecheck: {} issues | Unit Tests: {}/{} passed | Hub VM: {}\n",
+        "Hub initialized: {} AST nodes | Coverage: {}% ({}/{}) | Tests: {}/{} passed | Hub VM: {}\n",
         init_snap.node_count,
-        init_snap.semantic_diagnostics.len(),
+        init_snap.coverage_pct,
+        init_snap.covered_stmts,
+        init_snap.total_stmts,
         passed_tests,
         init_snap.test_results.len(),
         init_snap.live_eval.stdout.trim()
     );
 
-    let swift_before = engine.project(SpokeId::Swift);
-    println!("--- Projected Pure-Stdlib Swift 6 View ---\n{}", swift_before);
+    let java_before = engine.project(SpokeId::Java);
+    println!("--- Projected Modern Java 21 View ---\n{}", java_before);
 
-    println!("=== 2. Editing in Swift 6 (escalating Critical weight 5 -> 10) ===");
-    let swift_edited = swift_before.replace(
-        "    case Severity.Critical:\n        return 5",
-        "    case Severity.Critical:\n        // Escalated critical weight in Swift 6\n        return 10",
+    println!("=== 2. Editing in Java 21 (escalating Critical weight 5L -> 10L) ===");
+    let java_edited = java_before.replace(
+        "            case Severity.Critical -> {\n                return 5L;\n            }",
+        "            case Severity.Critical -> {\n                // Escalated critical weight in Java 21\n                return 10L;\n            }",
     );
     engine
-        .apply_edit(SpokeId::Swift, &swift_edited)
+        .apply_edit(SpokeId::Java, &java_edited)
         .map_err(|d| d.to_string())?;
 
     println!("=== 3. Cross-Language Hub Refactor: `Severity::Critical` -> `Severity::Emergency` ===");
     let (snap, renamed_sites) = engine.rename_symbol("Severity::Critical", "Emergency")?;
     let passed_after = snap.test_results.iter().filter(|t| t.passed).count();
     println!(
-        "Renamed {} AST sites across all 7 languages | Unit Tests: {}/{} passed | Live Hub VM: {}\n",
+        "Renamed {} AST sites across all 8 languages | Coverage: {}% | Tests: {}/{} passed | Live Hub VM: {}\n",
         renamed_sites,
+        snap.coverage_pct,
         passed_after,
         snap.test_results.len(),
         snap.live_eval.stdout.trim()
     );
     println!(
-        "--- Updated Rust View (`latencies: &[i64]` slice + `#[test]` survived Swift edit & Hub rename!) ---\n{}",
+        "--- Updated Rust View (`latencies: &[i64]` slice + `#[test]` survived Java 21 edit & Hub rename!) ---\n{}",
         snap.views["rust"]
     );
 
-    println!("=== 4. Differential Execution Across All 7 Engines (Hub VM + rustc + clang++ PCH + swiftc + go + python3 + node) ===");
+    println!("=== 4. Differential Execution Across All 8 Engines (Hub VM + rustc + clang++ PCH + swiftc + javac + go + python3 + node) ===");
     let report = run_all_spokes(&engine);
     for r in &report.results {
         println!(
@@ -442,15 +504,15 @@ fn run_cli_demo() -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Byte-for-byte match across all 7 engines: {}",
+        "\nParallel wall time: {}ms | Byte-for-byte match across all 8 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
         return Err("runtime outputs diverged".to_string());
     }
 
-    println!("\n=== 5. Property-Based 7-Spoke Lens Fuzzer (25 Synthesized Programs × 7 Spokes) ===");
-    let fuzz = run_fuzz_suite(0x57A4_2026_0400, 25);
+    println!("\n=== 5. Property-Based 8-Spoke Lens Fuzzer (25 Synthesized Programs × 8 Spokes) ===");
+    let fuzz = run_fuzz_suite(0x57A4_2026_0500, 25);
     println!(
         "Verified {} GetPut round-trips & {} test suites in {}ms — Failures: {}",
         fuzz.spoke_roundtrips,
