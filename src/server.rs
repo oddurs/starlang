@@ -10,6 +10,7 @@ use crate::debugger::TimeTravelReport;
 use crate::dist_actor::{ActorConcurrencyReport, ModelCheckReport};
 use crate::egraph::{EGraphReport, PartialEvalReport};
 use crate::engine::{StarEngine, SyncSnapshot};
+use crate::hls_verilog::{GpuSimtReport, HlsRtlReport};
 use crate::hub::Diagnostic;
 use crate::json::{json_str, parse_flat_json_object};
 use crate::lens::SpokeId;
@@ -637,6 +638,22 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.minimal_dfa()
             };
             let payload = automata_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/hls") | ("GET", "/api/hls") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.hls_rtl()
+            };
+            let payload = hls_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/gpu") | ("GET", "/api/gpu") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.gpu_simt()
+            };
+            let payload = gpu_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -2782,6 +2799,171 @@ fn automata_to_json(rep: &MinimalDfaReport) -> String {
         rep.total_lstar_queries,
         rep.all_myhill_nerode_minimal,
         rep.overall_branchless_speedup,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn hls_to_json(rep: &HlsRtlReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let ops: Vec<String> = f
+                .operations
+                .iter()
+                .map(|o| {
+                    format!(
+                        "{{\"op_id\":{},\"op_label\":{},\"functional_unit\":{},\"asap_cycle\":{},\"alap_cycle\":{},\"mobility\":{},\"scheduled_state\":{},\"fu_instance\":{},\"delay_ns\":{:.2},\"source_expr\":{}}}",
+                        o.op_id,
+                        json_str(&o.op_label),
+                        json_str(&o.functional_unit),
+                        o.asap_cycle,
+                        o.alap_cycle,
+                        o.mobility,
+                        json_str(&o.scheduled_state),
+                        json_str(&o.fu_instance),
+                        o.delay_ns,
+                        json_str(&o.source_expr)
+                    )
+                })
+                .collect();
+            let sts: Vec<String> = f
+                .fsmd_states
+                .iter()
+                .map(|s| {
+                    let aops: Vec<String> = s.active_ops.iter().map(|a| json_str(a)).collect();
+                    let drtl: Vec<String> = s.datapath_rtl.iter().map(|d| json_str(d)).collect();
+                    format!(
+                        "{{\"state_id\":{},\"state_name\":{},\"active_ops\":[{}],\"datapath_rtl\":[{}],\"next_state_rule\":{},\"stage_delay_ns\":{:.2}}}",
+                        s.state_id,
+                        json_str(&s.state_name),
+                        aops.join(","),
+                        drtl.join(","),
+                        json_str(&s.next_state_rule),
+                        s.stage_delay_ns
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"module_name\":{},\"total_cdfg_ops\":{},\"fsmd_states_count\":{},\"latency_cycles\":{},\"initiation_interval\":{},\"critical_path_ns\":{:.2},\"estimated_fmax_mhz\":{:.1},\"lut6_count\":{},\"flip_flops_count\":{},\"dsp48_blocks\":{},\"bram36_tiles\":{},\"operations\":[{}],\"fsmd_states\":[{}],\"systemverilog_rtl\":{},\"mermaid_fsmd\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                json_str(&f.module_name),
+                f.total_cdfg_ops,
+                f.fsmd_states_count,
+                f.latency_cycles,
+                f.initiation_interval,
+                f.critical_path_ns,
+                f.estimated_fmax_mhz,
+                f.lut6_count,
+                f.flip_flops_count,
+                f.dsp48_blocks,
+                f.bram36_tiles,
+                ops.join(","),
+                sts.join(","),
+                json_str(&f.systemverilog_rtl),
+                json_str(&f.mermaid_fsmd)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_cdfg_ops\":{},\"total_fsmd_states\":{},\"total_lut6\":{},\"total_flip_flops\":{},\"total_dsp48\":{},\"total_bram36\":{},\"min_fmax_mhz\":{:.1},\"all_pipelined_ii_1\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_cdfg_ops,
+        rep.total_fsmd_states,
+        rep.total_lut6,
+        rep.total_flip_flops,
+        rep.total_dsp48,
+        rep.total_bram36,
+        rep.min_fmax_mhz,
+        rep.all_pipelined_ii_1,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn gpu_to_json(rep: &GpuSimtReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let divs: Vec<String> = f
+                .divergence_sites
+                .iter()
+                .map(|d| {
+                    format!(
+                        "{{\"branch_id\":{},\"condition_expr\":{},\"active_lanes_taken\":{},\"active_lanes_not_taken\":{},\"active_mask_hex\":{},\"serialization_factor\":{},\"simd_efficiency_pct\":{:.2},\"mitigation_note\":{}}}",
+                        d.branch_id,
+                        json_str(&d.condition_expr),
+                        d.active_lanes_taken,
+                        d.active_lanes_not_taken,
+                        json_str(&d.active_mask_hex),
+                        d.serialization_factor,
+                        d.simd_efficiency_pct,
+                        json_str(&d.mitigation_note)
+                    )
+                })
+                .collect();
+            let banks: Vec<String> = f
+                .bank_accesses
+                .iter()
+                .map(|b| {
+                    format!(
+                        "{{\"access_id\":{},\"buffer_expr\":{},\"stride_elements\":{},\"bank_conflict_ways\":{},\"conflict_free\":{},\"padding_recommendation\":{}}}",
+                        b.access_id,
+                        json_str(&b.buffer_expr),
+                        b.stride_elements,
+                        b.bank_conflict_ways,
+                        b.conflict_free,
+                        json_str(&b.padding_recommendation)
+                    )
+                })
+                .collect();
+            let spk: Vec<String> = f
+                .host_dispatch_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"kernel_name\":{},\"warp_size\":{},\"workgroup_threads\":{},\"registers_per_thread\":{},\"shared_mem_bytes\":{},\"sm_occupancy_pct\":{:.1},\"warp_divergence_sites\":{},\"worst_serialization_factor\":{},\"warp_efficiency_pct\":{:.1},\"shared_mem_bank_conflicts\":{},\"arithmetic_intensity_flops_per_byte\":{:.2},\"roofline_bound\":{},\"estimated_gpu_speedup\":{:.1},\"divergence_sites\":[{}],\"bank_accesses\":[{}],\"cuda_ptx_source\":{},\"webgpu_wgsl_source\":{},\"metal_msl_source\":{},\"opencl_c_source\":{},\"host_dispatch_by_spoke\":{{{}}},\"mermaid_simt\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                json_str(&f.kernel_name),
+                f.warp_size,
+                f.workgroup_threads,
+                f.registers_per_thread,
+                f.shared_mem_bytes,
+                f.sm_occupancy_pct,
+                f.warp_divergence_sites,
+                f.worst_serialization_factor,
+                f.warp_efficiency_pct,
+                f.shared_mem_bank_conflicts,
+                f.arithmetic_intensity_flops_per_byte,
+                json_str(&f.roofline_bound),
+                f.estimated_gpu_speedup,
+                divs.join(","),
+                banks.join(","),
+                json_str(&f.cuda_ptx_source),
+                json_str(&f.webgpu_wgsl_source),
+                json_str(&f.metal_msl_source),
+                json_str(&f.opencl_c_source),
+                spk.join(","),
+                json_str(&f.mermaid_simt)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_gpu_kernels\":{},\"total_divergence_sites\":{},\"total_bank_conflicts\":{},\"avg_sm_occupancy_pct\":{:.1},\"avg_warp_efficiency_pct\":{:.1},\"max_gpu_speedup\":{:.1},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_gpu_kernels,
+        rep.total_divergence_sites,
+        rep.total_bank_conflicts,
+        rep.avg_sm_occupancy_pct,
+        rep.avg_warp_efficiency_pct,
+        rep.max_gpu_speedup,
         rep.elapsed_ms,
         fns_json.join(",")
     )

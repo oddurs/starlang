@@ -261,6 +261,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "hls" => {
+            if let Err(e) = run_hls_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "gpu" => {
+            if let Err(e) = run_gpu_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -3023,6 +3035,172 @@ fn run_automata_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_hls_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.hls_rtl();
+    println!(
+        "=== High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility FSMD Scheduler & IEEE-1800 SystemVerilog RTL Generator: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | CDFG Ops: {} | FSMD States: {} | LUT6: {} | Flip-Flops: {} | DSP48E2: {} | BRAM36: {} | Min F_max: {:.1} MHz ({}ms)\n",
+        rep.total_functions,
+        rep.total_cdfg_ops,
+        rep.total_fsmd_states,
+        rep.total_lut6,
+        rep.total_flip_flops,
+        rep.total_dsp48,
+        rep.total_bram36,
+        rep.min_fmax_mhz,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Module `{}` — {} [Latency: {} cyc | II: {} | CritPath: {:.2}ns | F_max: {:.1} MHz | Area: {} LUT6, {} FF, {} DSP48E2]",
+            f.module_name,
+            f.signature,
+            f.latency_cycles,
+            f.initiation_interval,
+            f.critical_path_ns,
+            f.estimated_fmax_mhz,
+            f.lut6_count,
+            f.flip_flops_count,
+            f.dsp48_blocks
+        );
+        for op in f.operations.iter().take(8) {
+            println!(
+                "  • Op #{:<2} [{:<10} · {:<16}] ASAP={} ALAP={} Mobility={} ({:.2}ns) — {}",
+                op.op_id,
+                op.scheduled_state,
+                op.functional_unit,
+                op.asap_cycle,
+                op.alap_cycle,
+                op.mobility,
+                op.delay_ns,
+                op.source_expr
+            );
+        }
+        println!("  --- Synthesizable IEEE-1800-2017 SystemVerilog RTL ---\n{}", f.systemverilog_rtl);
+    }
+
+    if rep.total_functions == 0 || rep.total_cdfg_ops == 0 {
+        return Err("HLS SystemVerilog RTL compiler generated 0 operations".to_string());
+    }
+    Ok(())
+}
+
+fn run_gpu_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.gpu_simt();
+    println!(
+        "=== 32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA PTX / WebGPU WGSL / Metal MSL / OpenCL C): {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | GPU Kernels: {} | Avg SM Occupancy: {:.1}% | Avg Warp Efficiency: {:.1}% | Divergence Sites: {} | Bank Conflicts: {} | Max GPU Speedup: {:.1}x ({}ms)\n",
+        rep.total_functions,
+        rep.total_gpu_kernels,
+        rep.avg_sm_occupancy_pct,
+        rep.avg_warp_efficiency_pct,
+        rep.total_divergence_sites,
+        rep.total_bank_conflicts,
+        rep.max_gpu_speedup,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Kernel `{}` — {} [Threads/WG: {} | Regs/Thread: {} | SMEM: {}B | Occupancy: {:.1}% | Warp Eff: {:.1}% | Roofline: {:.2} FLOPs/B ({}) | Speedup: {:.1}x]",
+            f.kernel_name,
+            f.signature,
+            f.workgroup_threads,
+            f.registers_per_thread,
+            f.shared_mem_bytes,
+            f.sm_occupancy_pct,
+            f.warp_efficiency_pct,
+            f.arithmetic_intensity_flops_per_byte,
+            f.roofline_bound,
+            f.estimated_gpu_speedup
+        );
+        for d in &f.divergence_sites {
+            println!(
+                "  • Warp Branch #{} [{}] taken={}/32 not_taken={}/32 mask={} serial={}x ({:.1}%) — {}",
+                d.branch_id,
+                d.condition_expr,
+                d.active_lanes_taken,
+                d.active_lanes_not_taken,
+                d.active_mask_hex,
+                d.serialization_factor,
+                d.simd_efficiency_pct,
+                d.mitigation_note
+            );
+        }
+        println!("  --- Synthesized CUDA C++/PTX & WebGPU WGSL Kernels ---\n{}\n\n{}\n", f.cuda_ptx_source, f.webgpu_wgsl_source);
+    }
+
+    if rep.total_gpu_kernels == 0 || rep.total_bank_conflicts > 0 {
+        return Err("GPU SIMT compiler failed or had unresolved shared-memory bank conflicts".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -3227,13 +3405,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v2.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Circuit Prover, Relational SQL Optimizer, Liquid Refinement Types, Probabilistic MCMC/Entropy, Reversible Quantum Circuit Compiler & Minimal DFA Synthesizer Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64 / Circom / SQL / OpenQASM 3)
+        "starlang v2.5 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Circuit Prover, Relational SQL Optimizer, Liquid Refinement Types, Probabilistic MCMC/Entropy, Reversible Quantum Circuit Compiler, Minimal DFA Synthesizer, High-Level Synthesis (HLS) SystemVerilog RTL Compiler & SIMT GPU Kernel Synthesizer Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64 / Circom / SQL / OpenQASM 3 / SystemVerilog RTL / CUDA / WGSL / Metal / OpenCL)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- hls [file|preset]                    Compile Hub AST to High-Level Synthesis (HLS) ASAP/ALAP FSMD & IEEE-1800 SystemVerilog RTL
+  cargo run -- gpu [file|preset]                    Synthesize 32-Lane Warp SIMT GPU Kernels (CUDA PTX, WebGPU WGSL, Metal MSL, OpenCL C)
   cargo run -- quantum [file|preset]                Compile Reversible Bennett-Toffoli Quantum Circuits (F->Copy->F†) & OpenQASM 3.0
   cargo run -- automata [file|preset]               Run Angluin L* Active Learner, Myhill-Nerode Minimal DFA & 13-Spoke Lookup Tables
   cargo run -- refinement [file|preset]             Infer Liquid Refinement Types ({{ ν: T | φ(ν) }}), solve CHCs & emit 13-Spoke Refined Types
@@ -3434,6 +3614,8 @@ fn run_cli_demo() -> Result<(), String> {
     let prob_rep = repair_eng.probabilistic_entropy();
     let q_rep = repair_eng.quantum_circuit();
     let dfa_rep = repair_eng.minimal_dfa();
+    let hls_rep = repair_eng.hls_rtl();
+    let gpu_rep = repair_eng.gpu_simt();
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -3442,7 +3624,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2} | Actors: {} stages, {} VC events, DRF={} | TLA+ BMC: {} states, {}/{} temporal properties | ZK R1CS: {} wires, {}/{} constraints SAT | Relational SQL: {} pushdown(s), {:.2}x columnar speedup | Liquid Types: {} bindings, {}/{} CHCs | Probabilistic QIF: {} MCMC samples, max I(X;Y)={:.2}b | Quantum: {}q, {} gates, Grover {:.2}x | Minimal DFA: {}->{} states ({:.2}x branchless)\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2} | Actors: {} stages, {} VC events, DRF={} | TLA+ BMC: {} states, {}/{} temporal properties | ZK R1CS: {} wires, {}/{} constraints SAT | Relational SQL: {} pushdown(s), {:.2}x columnar speedup | Liquid Types: {} bindings, {}/{} CHCs | Probabilistic QIF: {} MCMC samples, max I(X;Y)={:.2}b | Quantum: {}q, {} gates, Grover {:.2}x | Minimal DFA: {}->{} states ({:.2}x branchless) | HLS RTL: {} ops, {} states, {} LUT6, {:.1} MHz | GPU SIMT: {} kernels, {:.1}% warp eff, {:.1}x speedup\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -3513,7 +3695,14 @@ fn run_cli_demo() -> Result<(), String> {
         q_rep.max_grover_speedup,
         dfa_rep.total_unminimized_states,
         dfa_rep.total_minimal_states,
-        dfa_rep.overall_branchless_speedup
+        dfa_rep.overall_branchless_speedup,
+        hls_rep.total_cdfg_ops,
+        hls_rep.total_fsmd_states,
+        hls_rep.total_lut6,
+        hls_rep.min_fmax_mhz,
+        gpu_rep.total_gpu_kernels,
+        gpu_rep.avg_warp_efficiency_pct,
+        gpu_rep.max_gpu_speedup
     );
     if !drep.ok
         || slice_len == 0
@@ -3543,8 +3732,11 @@ fn run_cli_demo() -> Result<(), String> {
         || prob_rep.total_mcmc_samples == 0
         || !q_rep.all_ancillas_uncomputed
         || !dfa_rep.all_myhill_nerode_minimal
+        || hls_rep.total_cdfg_ops == 0
+        || gpu_rep.total_gpu_kernels == 0
+        || gpu_rep.total_bank_conflicts > 0
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, Numerical Stability, Actor Concurrency, TLA+ Model Checker, ZK R1CS Prover, Relational SQL Optimizer, Liquid Refinement Prover, Probabilistic Entropy Analyzer, Quantum Circuit Compiler, or Minimal DFA Synthesizer failed".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, Numerical Stability, Actor Concurrency, TLA+ Model Checker, ZK R1CS Prover, Relational SQL Optimizer, Liquid Refinement Prover, Probabilistic Entropy Analyzer, Quantum Circuit Compiler, Minimal DFA Synthesizer, HLS SystemVerilog Compiler, or SIMT GPU Kernel Synthesizer failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");
