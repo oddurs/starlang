@@ -27,6 +27,7 @@ use crate::synth::{ModuleCfgReport, SynthReport};
 use crate::trace::TraceReport;
 use crate::verify::{VerifyReport, VerifyStatus};
 use crate::wasm::encode_base64;
+use crate::zk_sql::{RelationalSqlReport, ZkCircuitReport};
 
 const UI_HTML: &str = include_str!("ui.html");
 
@@ -35,7 +36,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v2.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc, Escape Analysis, Superscalar OoO CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier & TLA+ Bounded Model Checker Studio running at:");
+    println!("StarLang v2.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc, Escape Analysis, Superscalar OoO CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Prover & Relational SQL Optimizer Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -586,6 +587,22 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.model_check()
             };
             let payload = modelcheck_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/zk") | ("GET", "/api/zk") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.zk_r1cs()
+            };
+            let payload = zk_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/sql") | ("GET", "/api/sql") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.relational_sql()
+            };
+            let payload = sql_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -2300,6 +2317,132 @@ fn modelcheck_to_json(rep: &ModelCheckReport) -> String {
         rep.total_properties,
         rep.verified_properties,
         rep.all_verified,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn zk_to_json(rep: &ZkCircuitReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let ws: Vec<String> = f
+                .wires
+                .iter()
+                .map(|w| {
+                    format!(
+                        "{{\"wire_idx\":{},\"symbol\":{},\"visibility\":{},\"value_fp\":{}}}",
+                        w.wire_idx,
+                        json_str(&w.symbol),
+                        json_str(&w.visibility),
+                        w.value_fp
+                    )
+                })
+                .collect();
+            let cs: Vec<String> = f
+                .constraints
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{{\"constraint_id\":{},\"gate_kind\":{},\"a_linear_comb\":{},\"b_linear_comb\":{},\"c_linear_comb\":{},\"lhs_eval\":{},\"rhs_eval\":{},\"satisfied\":{},\"source_note\":{}}}",
+                        c.constraint_id,
+                        json_str(&c.gate_kind),
+                        json_str(&c.a_linear_comb),
+                        json_str(&c.b_linear_comb),
+                        json_str(&c.c_linear_comb),
+                        c.lhs_eval,
+                        c.rhs_eval,
+                        c.satisfied,
+                        json_str(&c.source_note)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"total_wires\":{},\"public_inputs\":{},\"private_witnesses\":{},\"r1cs_constraints\":{},\"satisfied_constraints\":{},\"all_constraints_satisfied\":{},\"multiplicative_depth\":{},\"wires\":[{}],\"constraints\":[{}],\"circom_template\":{},\"mermaid_circuit\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.total_wires,
+                f.public_inputs,
+                f.private_witnesses,
+                f.r1cs_constraints,
+                f.satisfied_constraints,
+                f.all_constraints_satisfied,
+                f.multiplicative_depth,
+                ws.join(","),
+                cs.join(","),
+                json_str(&f.circom_template),
+                json_str(&f.mermaid_circuit)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"field_modulus_str\":{},\"total_functions\":{},\"total_wires\":{},\"total_constraints\":{},\"satisfied_constraints\":{},\"all_circuits_satisfied\":{},\"max_multiplicative_depth\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        json_str(&rep.field_modulus_str),
+        rep.total_functions,
+        rep.total_wires,
+        rep.total_constraints,
+        rep.satisfied_constraints,
+        rep.all_circuits_satisfied,
+        rep.max_multiplicative_depth,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn sql_to_json(rep: &RelationalSqlReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let pns: Vec<String> = f
+                .plan_nodes
+                .iter()
+                .map(|n| {
+                    format!(
+                        "{{\"step_id\":{},\"op_symbol\":{},\"expression\":{},\"est_rows_in\":{},\"est_rows_out\":{},\"vectorized_batch_cycles\":{}}}",
+                        n.step_id,
+                        json_str(&n.op_symbol),
+                        json_str(&n.expression),
+                        n.est_rows_in,
+                        n.est_rows_out,
+                        n.vectorized_batch_cycles
+                    )
+                })
+                .collect();
+            let spk: Vec<String> = f
+                .query_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"relational_algebra_expr\":{},\"predicates_pushed_down\":{},\"columns_projected\":{},\"aggregations_count\":{},\"volcano_tuple_cycles\":{},\"vectorized_columnar_cycles\":{},\"columnar_speedup\":{:.2},\"plan_nodes\":[{}],\"ansi_sql_query\":{},\"query_by_spoke\":{{{}}}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                json_str(&f.relational_algebra_expr),
+                f.predicates_pushed_down,
+                f.columns_projected,
+                f.aggregations_count,
+                f.volcano_tuple_cycles,
+                f.vectorized_columnar_cycles,
+                f.columnar_speedup,
+                pns.join(","),
+                json_str(&f.ansi_sql_query),
+                spk.join(",")
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"query_lifted_functions\":{},\"total_pushed_predicates\":{},\"total_aggregations\":{},\"total_volcano_cycles\":{},\"total_columnar_cycles\":{},\"overall_columnar_speedup\":{:.2},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.query_lifted_functions,
+        rep.total_pushed_predicates,
+        rep.total_aggregations,
+        rep.total_volcano_cycles,
+        rep.total_columnar_cycles,
+        rep.overall_columnar_speedup,
         rep.elapsed_ms,
         fns_json.join(",")
     )

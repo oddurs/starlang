@@ -30,3 +30,4 @@ pub mod typecheck;
 pub mod verify;
 pub mod wasm;
 pub mod watcher;
+pub mod zk_sql;

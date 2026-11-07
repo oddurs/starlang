@@ -225,6 +225,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "zk" => {
+            if let Err(e) = run_zk_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "sql" => {
+            if let Err(e) = run_sql_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -2548,6 +2560,145 @@ fn run_modelcheck_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_zk_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.zk_r1cs();
+    println!(
+        "=== Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler & ZK Witness Verifier: {} ===",
+        label
+    );
+    println!(
+        "Field: {} | Functions: {} | Wires: {} | Constraints: {}/{} satisfied | All Verified: {} ({}ms)\n",
+        rep.field_modulus_str,
+        rep.total_functions,
+        rep.total_wires,
+        rep.satisfied_constraints,
+        rep.total_constraints,
+        rep.all_circuits_satisfied,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Wires: {} | Constraints: {}/{} | Public Inputs: {} | Private Witnesses: {} | Depth: {}]",
+            f.signature,
+            f.total_wires,
+            f.satisfied_constraints,
+            f.r1cs_constraints,
+            f.public_inputs,
+            f.private_witnesses,
+            f.multiplicative_depth
+        );
+        for c in f.constraints.iter().take(8) {
+            println!(
+                "  {} #{:<2} [{:<13}] ({}) * ({}) == ({}) [{}]",
+                if c.satisfied { "✓" } else { "✗" },
+                c.constraint_id,
+                c.gate_kind,
+                c.a_linear_comb,
+                c.b_linear_comb,
+                c.c_linear_comb,
+                c.source_note
+            );
+        }
+        println!("  --- Synthesized Circom 2.1.6 ZK Template ---\n{}\n", f.circom_template);
+    }
+
+    if !rep.all_circuits_satisfied {
+        return Err("one or more R1CS constraints failed witness verification".to_string());
+    }
+    Ok(())
+}
+
+fn run_sql_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.relational_sql();
+    println!(
+        "=== Relational Algebra (σ, π, Γ), Selection Pushdown & Vectorized SQL Optimizer: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Relational Queries Lifted: {} | Pushed Predicates: {} | Volcano: {}c -> Columnar: {}c ({:.2}x speedup, {}ms)\n",
+        rep.total_functions,
+        rep.query_lifted_functions,
+        rep.total_pushed_predicates,
+        rep.total_volcano_cycles,
+        rep.total_columnar_cycles,
+        rep.overall_columnar_speedup,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Volcano: {}c -> Columnar: {}c ({:.2}x)]",
+            f.signature, f.volcano_tuple_cycles, f.vectorized_columnar_cycles, f.columnar_speedup
+        );
+        println!("  Relational Algebra: {}", f.relational_algebra_expr);
+        println!("  --- Synthesized ANSI SQL Query ---\n{}\n", f.ansi_sql_query);
+    }
+
+    if rep.total_functions == 0 {
+        return Err("relational SQL optimizer found 0 functions".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -2752,13 +2903,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v2.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier & TLA+ Model Checker Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64)
+        "starlang v2.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Circuit Prover & Relational SQL Optimizer Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64 / Circom / SQL)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- zk [file|preset]                     Run Rank-1 Constraint System (R1CS) ZK Circuit Compiler, Witness Verifier & Circom Synth
+  cargo run -- sql [file|preset]                    Run Relational Algebra (σ, π, Γ), Selection Pushdown & Vectorized SQL / DataFrame Optimizer
   cargo run -- actors [file|preset]                 Run Lamport Vector-Clock Happens-Before Race Detector, Deadlock Prover & 13-Spoke Actors
   cargo run -- modelcheck [file|preset]             Run Explicit-State Bounded Model Checker, Temporal Safety/Liveness & TLA+ Spec Synth
   cargo run -- autodiff [file|preset] [--inject]    Run Forward-Mode Dual & Reverse-Mode Wengert-Tape AutoDiff + 13-Spoke Gradient Synth
@@ -2947,6 +3100,8 @@ fn run_cli_demo() -> Result<(), String> {
     let stab_rep = repair_eng.numerical_stability();
     let act_rep = repair_eng.actors();
     let mc_rep = repair_eng.model_check();
+    let zk_rep = repair_eng.zk_r1cs();
+    let sql_rep = repair_eng.relational_sql();
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -2955,7 +3110,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2} | Actors: {} stages, {} VC events, DRF={} | TLA+ BMC: {} states, {}/{} temporal properties\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2} | Actors: {} stages, {} VC events, DRF={} | TLA+ BMC: {} states, {}/{} temporal properties | ZK R1CS: {} wires, {}/{} constraints SAT | Relational SQL: {} pushdown(s), {:.2}x columnar speedup\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -3010,7 +3165,12 @@ fn run_cli_demo() -> Result<(), String> {
         act_rep.all_data_race_free,
         mc_rep.total_reachable_states,
         mc_rep.verified_properties,
-        mc_rep.total_properties
+        mc_rep.total_properties,
+        zk_rep.total_wires,
+        zk_rep.satisfied_constraints,
+        zk_rep.total_constraints,
+        sql_rep.total_pushed_predicates,
+        sql_rep.overall_columnar_speedup
     );
     if !drep.ok
         || slice_len == 0
@@ -3034,8 +3194,10 @@ fn run_cli_demo() -> Result<(), String> {
         || stab_rep.total_functions == 0
         || !act_rep.all_data_race_free
         || !mc_rep.all_verified
+        || !zk_rep.all_circuits_satisfied
+        || sql_rep.query_lifted_functions == 0
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, Numerical Stability, Actor Concurrency, or TLA+ Model Checker failed".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, Numerical Stability, Actor Concurrency, TLA+ Model Checker, ZK R1CS Prover, or Relational SQL Optimizer failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

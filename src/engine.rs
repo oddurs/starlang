@@ -45,6 +45,9 @@ use crate::trace::{trace_module_default, TraceReport};
 use crate::typecheck::{check_module, SemanticDiagnostic};
 use crate::verify::{verify_module, VerifyReport};
 use crate::wasm::{compile_wasm, run_wasm_jit, WasmArtifact, WasmRunReport};
+use crate::zk_sql::{
+    compile_relational_sql, compile_zk_r1cs, RelationalSqlReport, ZkCircuitReport,
+};
 
 const LIVE_PREVIEW_STEP_BUDGET: usize = 50_000;
 
@@ -342,6 +345,18 @@ impl StarEngine {
     /// Temporal Safety (`□I`), Liveness (`□◇Terminated`), Herlihy-Wing Linearizability & TLA+ Spec Synthesis.
     pub fn model_check(&self) -> ModelCheckReport {
         model_check_state_space(self.hub())
+    }
+
+    /// Compile Hub functions into Rank-1 Constraint Systems (`R1CS`) over F_p (p = 2^61 - 1),
+    /// generate deterministic witnesses `w`, and prove `<A_i, w> * <B_i, w> == <C_i, w> (mod p)`.
+    pub fn zk_r1cs(&self) -> ZkCircuitReport {
+        compile_zk_r1cs(self.hub())
+    }
+
+    /// Lift imperative Hub loops and predicates into Relational Algebra (`σ`, `π`, `Γ`),
+    /// apply Selection Pushdown & Columnar Projection Pruning, and synthesize 13-Spoke SQL / DataFrame plans.
+    pub fn relational_sql(&self) -> RelationalSqlReport {
+        compile_relational_sql(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.

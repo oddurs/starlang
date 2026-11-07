@@ -90,6 +90,10 @@ jobs:
         run: cargo run --quiet -- actors > /dev/null
       - name: Run explicit-state bounded model checker & TLA+ spec synthesizer
         run: cargo run --quiet -- modelcheck > /dev/null
+      - name: Run Rank-1 Constraint System (R1CS) ZK circuit compiler & witness verifier
+        run: cargo run --quiet -- zk > /dev/null
+      - name: Run Relational Algebra selection-pushdown & vectorized SQL optimizer
+        run: cargo run --quiet -- sql > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier

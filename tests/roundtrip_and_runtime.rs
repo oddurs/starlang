@@ -1699,6 +1699,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(mc_resp.contains("\"all_verified\":true"));
     assert!(mc_resp.contains("\"tla_plus_spec\":"));
 
+    // Verify /api/zk and /api/sql endpoints
+    let zk_resp = send_http("POST", "/api/zk", "{}");
+    assert!(zk_resp.contains("\"ok\":true"), "zk failed: {}", zk_resp);
+    assert!(zk_resp.contains("\"all_circuits_satisfied\":true"));
+    assert!(zk_resp.contains("\"circom_template\":"));
+
+    let sql_resp = send_http("POST", "/api/sql", "{}");
+    assert!(sql_resp.contains("\"ok\":true"), "sql failed: {}", sql_resp);
+    assert!(sql_resp.contains("\"ansi_sql_query\":"));
+    assert!(sql_resp.contains("\"query_by_spoke\":{"));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -2068,4 +2079,65 @@ fn lamport_vector_clock_actor_verifier_and_tlaplus_bounded_model_checker_verify_
     assert!(eval_mc.tla_plus_spec.contains("SafetyInvariant =="));
     assert!(eval_mc.tla_plus_spec.contains("Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)"));
     assert!(eval_mc.mermaid_kripke.contains("stateDiagram-v2"));
+}
+
+#[test]
+fn zk_r1cs_circuit_prover_and_relational_sql_optimizer_verify_across_thirteen_languages() {
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+
+    // 1. Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler & Witness Verifier over F_p (p = 2^61 - 1)
+    let zk = rl_eng.zk_r1cs();
+    assert_eq!(zk.total_functions, 2);
+    assert!(zk.total_wires >= 15);
+    assert!(zk.total_constraints >= 10);
+    assert_eq!(zk.satisfied_constraints, zk.total_constraints);
+    assert!(zk.all_circuits_satisfied);
+
+    for f in &zk.functions {
+        assert!(f.all_constraints_satisfied);
+        assert_eq!(f.satisfied_constraints, f.r1cs_constraints);
+        assert!(f.circom_template.contains("pragma circom 2.1.6;"));
+        assert!(f.circom_template.contains(&format!("template {}_Circuit()", f.fn_name)));
+        assert!(f.mermaid_circuit.contains("flowchart LR"));
+        // Verify every R1CS constraint has lhs_eval == rhs_eval in F_p
+        for c in &f.constraints {
+            assert!(
+                c.satisfied,
+                "Unsatisfied R1CS constraint #{} in {}: {} != {}",
+                c.constraint_id, f.fn_name, c.lhs_eval, c.rhs_eval
+            );
+            assert_eq!(c.lhs_eval, c.rhs_eval);
+        }
+    }
+
+    // 2. Relational Algebra (σ, π, Γ), Selection Pushdown & Vectorized Columnar SQL Optimizer
+    let sql = rl_eng.relational_sql();
+    assert_eq!(sql.total_functions, 2);
+    assert!(sql.query_lifted_functions >= 1);
+    assert!(sql.total_pushed_predicates >= 1);
+    assert!(
+        sql.total_columnar_cycles < sql.total_volcano_cycles,
+        "Vectorized columnar cycles ({}) must be < Volcano tuple cycles ({})",
+        sql.total_columnar_cycles,
+        sql.total_volcano_cycles
+    );
+    assert!(sql.overall_columnar_speedup > 1.5);
+
+    let eval_sql = sql
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "evaluate_quota")
+        .unwrap();
+    assert!(eval_sql.predicates_pushed_down >= 1);
+    assert!(eval_sql.relational_algebra_expr.contains("σ_{"));
+    assert!(eval_sql.relational_algebra_expr.contains("π_{"));
+    assert!(eval_sql.relational_algebra_expr.contains("Γ_{"));
+    assert!(eval_sql.ansi_sql_query.contains("WITH filtered_"));
+    assert!(eval_sql.ansi_sql_query.contains("SELECT"));
+    assert_eq!(eval_sql.query_by_spoke.len(), 13);
+    assert!(eval_sql.query_by_spoke["rust"].contains("Polars LazyFrame Pushdown"));
+    assert!(eval_sql.query_by_spoke["python"].contains("df.filter(pl.sql_expr"));
+    assert!(eval_sql.query_by_spoke["java"].contains(".stream().filter("));
+    assert!(eval_sql.query_by_spoke["typescript"].contains(".filter(x =>"));
 }
