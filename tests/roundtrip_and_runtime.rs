@@ -1710,6 +1710,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(sql_resp.contains("\"ansi_sql_query\":"));
     assert!(sql_resp.contains("\"query_by_spoke\":{"));
 
+    // Verify /api/refinement and /api/prob endpoints
+    let refn_resp = send_http("POST", "/api/refinement", "{}");
+    assert!(refn_resp.contains("\"ok\":true"), "refinement failed: {}", refn_resp);
+    assert!(refn_resp.contains("\"all_subtypes_verified\":true"));
+    assert!(refn_resp.contains("\"smtlib2_horn_script\":"));
+
+    let prob_resp = send_http("POST", "/api/prob", "{}");
+    assert!(prob_resp.contains("\"ok\":true"), "prob failed: {}", prob_resp);
+    assert!(prob_resp.contains("\"mutual_information_bits\":"));
+    assert!(prob_resp.contains("\"posterior_histogram\":["));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -2140,4 +2151,55 @@ fn zk_r1cs_circuit_prover_and_relational_sql_optimizer_verify_across_thirteen_la
     assert!(eval_sql.query_by_spoke["python"].contains("df.filter(pl.sql_expr"));
     assert!(eval_sql.query_by_spoke["java"].contains(".stream().filter("));
     assert!(eval_sql.query_by_spoke["typescript"].contains(".filter(x =>"));
+}
+
+#[test]
+fn liquid_refinement_types_and_probabilistic_mcmc_shannon_entropy_verify_across_thirteen_languages() {
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+
+    // 1. Liquid Refinement Types ({ ν: T | φ(ν) }), CHC Fixpoint Prover & 13-Spoke Dependent / Branded Types
+    let ref_rep = rl_eng.liquid_refinements();
+    assert_eq!(ref_rep.total_functions, 2);
+    assert!(ref_rep.total_refined_bindings >= 8);
+    assert!(ref_rep.total_qualifiers_inferred >= 12);
+    assert!(ref_rep.total_horn_clauses >= 6);
+    assert_eq!(ref_rep.discharged_horn_clauses, ref_rep.total_horn_clauses);
+    assert!(ref_rep.all_subtypes_verified);
+
+    for f in &ref_rep.functions {
+        assert!(f.all_subtypes_valid);
+        assert_eq!(f.horn_clauses_discharged, f.horn_clauses_total);
+        assert!(f.smtlib2_horn_script.contains("(set-logic HORN)"));
+        assert!(f.smtlib2_horn_script.contains("(check-sat)"));
+        assert_eq!(f.refined_by_spoke.len(), 13);
+        assert!(f.refined_by_spoke["rust"].contains("#[repr(transparent)]"));
+        assert!(f.refined_by_spoke["zig"].contains("comptime min_val: i64"));
+        assert!(f.refined_by_spoke["java"].contains("public record Refined_"));
+        assert!(f.refined_by_spoke["python"].contains("Annotated[int"));
+        assert!(f.refined_by_spoke["typescript"].contains("__liquid_brand"));
+    }
+
+    // 2. Probabilistic MCMC Sampler & Quantitative Information Flow (QIF) Shannon Entropy Quantifier
+    let prob = rl_eng.probabilistic_entropy();
+    assert_eq!(prob.total_functions, 2);
+    assert_eq!(prob.total_mcmc_samples, 256);
+    assert!(prob.max_output_entropy_bits > 0.5);
+    assert!(prob.max_mutual_info_bits > 0.5);
+    assert!(prob.total_branch_probes >= 2);
+
+    for f in &prob.functions {
+        assert_eq!(f.mcmc_particles, 128);
+        assert!(f.acceptance_rate_pct > 0.0 && f.acceptance_rate_pct <= 100.0);
+        assert!(f.input_shannon_entropy_bits > 0.0);
+        assert!(f.output_shannon_entropy_bits >= 0.0);
+        assert!(
+            f.mutual_information_bits <= f.input_shannon_entropy_bits + 0.01,
+            "Mutual information I(X;Y) ({}) must be <= H(X) ({})",
+            f.mutual_information_bits,
+            f.input_shannon_entropy_bits
+        );
+        assert!(!f.posterior_histogram.is_empty());
+        assert!(f.mermaid_factor_graph.contains("flowchart LR"));
+    }
 }

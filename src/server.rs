@@ -18,6 +18,7 @@ use crate::microarch::{InstructionScheduleReport, MicroArchReport};
 use crate::mutate::MutationReport;
 use crate::polyhedral::{PolyhedralReport, TerminationWcetReport};
 use crate::quickcheck::QuickCheckReport;
+use crate::refinement_prob::{LiquidRefinementReport, ProbabilisticEntropyReport};
 use crate::regalloc::{EscapeAnalysisReport, RegAllocReport};
 use crate::repair::RepairReport;
 use crate::runner::run_all_spokes;
@@ -603,6 +604,22 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.relational_sql()
             };
             let payload = sql_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/refinement") | ("GET", "/api/refinement") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.liquid_refinements()
+            };
+            let payload = refinement_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/prob") | ("GET", "/api/prob") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.probabilistic_entropy()
+            };
+            let payload = prob_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -2443,6 +2460,159 @@ fn sql_to_json(rep: &RelationalSqlReport) -> String {
         rep.total_volcano_cycles,
         rep.total_columnar_cycles,
         rep.overall_columnar_speedup,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn refinement_to_json(rep: &LiquidRefinementReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let bs: Vec<String> = f
+                .bindings
+                .iter()
+                .map(|b| {
+                    let qs: Vec<String> = b.qualifiers.iter().map(|q| json_str(q)).collect();
+                    let lo_json = b
+                        .lower_bound
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "null".to_string());
+                    let hi_json = b
+                        .upper_bound
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "null".to_string());
+                    format!(
+                        "{{\"symbol\":{},\"role\":{},\"base_type\":{},\"liquid_type\":{},\"lower_bound\":{},\"upper_bound\":{},\"qualifiers\":[{}]}}",
+                        json_str(&b.symbol),
+                        json_str(&b.role),
+                        json_str(&b.base_type),
+                        json_str(&b.liquid_type),
+                        lo_json,
+                        hi_json,
+                        qs.join(",")
+                    )
+                })
+                .collect();
+            let hcs: Vec<String> = f
+                .horn_clauses
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{{\"clause_id\":{},\"kind\":{},\"premise_context\":{},\"lhs_refinement\":{},\"rhs_target\":{},\"horn_implication\":{},\"discharged\":{},\"solver_note\":{}}}",
+                        c.clause_id,
+                        json_str(&c.kind),
+                        json_str(&c.premise_context),
+                        json_str(&c.lhs_refinement),
+                        json_str(&c.rhs_target),
+                        json_str(&c.horn_implication),
+                        c.discharged,
+                        json_str(&c.solver_note)
+                    )
+                })
+                .collect();
+            let spk: Vec<String> = f
+                .refined_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"refined_signature\":{},\"total_bindings\":{},\"total_qualifiers\":{},\"horn_clauses_total\":{},\"horn_clauses_discharged\":{},\"all_subtypes_valid\":{},\"fixpoint_iterations\":{},\"bindings\":[{}],\"horn_clauses\":[{}],\"smtlib2_horn_script\":{},\"refined_by_spoke\":{{{}}}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                json_str(&f.refined_signature),
+                f.total_bindings,
+                f.total_qualifiers,
+                f.horn_clauses_total,
+                f.horn_clauses_discharged,
+                f.all_subtypes_valid,
+                f.fixpoint_iterations,
+                bs.join(","),
+                hcs.join(","),
+                json_str(&f.smtlib2_horn_script),
+                spk.join(",")
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_refined_bindings\":{},\"total_qualifiers_inferred\":{},\"total_horn_clauses\":{},\"discharged_horn_clauses\":{},\"all_subtypes_verified\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_refined_bindings,
+        rep.total_qualifiers_inferred,
+        rep.total_horn_clauses,
+        rep.discharged_horn_clauses,
+        rep.all_subtypes_verified,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn prob_to_json(rep: &ProbabilisticEntropyReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let bps: Vec<String> = f
+                .branch_posteriors
+                .iter()
+                .map(|b| {
+                    format!(
+                        "{{\"branch_id\":{},\"condition_expr\":{},\"taken_hits\":{},\"total_trials\":{},\"posterior_prob\":{:.2},\"surprise_bits\":{:.2}}}",
+                        b.branch_id,
+                        json_str(&b.condition_expr),
+                        b.taken_hits,
+                        b.total_trials,
+                        b.posterior_prob,
+                        b.surprise_bits
+                    )
+                })
+                .collect();
+            let hist: Vec<String> = f
+                .posterior_histogram
+                .iter()
+                .map(|h| {
+                    format!(
+                        "{{\"bucket_label\":{},\"count\":{},\"probability\":{:.2},\"ascii_bar\":{}}}",
+                        json_str(&h.bucket_label),
+                        h.count,
+                        h.probability,
+                        json_str(&h.ascii_bar)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"prior_distribution\":{},\"mcmc_particles\":{},\"acceptance_rate_pct\":{:.2},\"posterior_mean\":{:.2},\"posterior_variance\":{:.2},\"posterior_std_dev\":{:.2},\"credible_interval_90\":{},\"input_shannon_entropy_bits\":{:.2},\"output_shannon_entropy_bits\":{:.2},\"conditional_entropy_bits\":{:.2},\"mutual_information_bits\":{:.2},\"min_entropy_leakage_bits\":{:.2},\"qif_security_grade\":{},\"branch_posteriors\":[{}],\"posterior_histogram\":[{}],\"mermaid_factor_graph\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                json_str(&f.prior_distribution),
+                f.mcmc_particles,
+                f.acceptance_rate_pct,
+                f.posterior_mean,
+                f.posterior_variance,
+                f.posterior_std_dev,
+                json_str(&f.credible_interval_90),
+                f.input_shannon_entropy_bits,
+                f.output_shannon_entropy_bits,
+                f.conditional_entropy_bits,
+                f.mutual_information_bits,
+                f.min_entropy_leakage_bits,
+                json_str(&f.qif_security_grade),
+                bps.join(","),
+                hist.join(","),
+                json_str(&f.mermaid_factor_graph)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_mcmc_samples\":{},\"max_mutual_info_bits\":{:.2},\"max_output_entropy_bits\":{:.2},\"total_branch_probes\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_mcmc_samples,
+        rep.max_mutual_info_bits,
+        rep.max_output_entropy_bits,
+        rep.total_branch_probes,
         rep.elapsed_ms,
         fns_json.join(",")
     )

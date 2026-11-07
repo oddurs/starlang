@@ -28,6 +28,10 @@ use crate::polyhedral::{
 };
 use crate::quickcheck::{run_quickcheck, run_quickcheck_default, QuickCheckReport};
 use crate::refactor::{list_symbols, optimize_module, rename_symbol, SymbolEntry};
+use crate::refinement_prob::{
+    analyze_probabilistic_entropy, infer_liquid_refinements, LiquidRefinementReport,
+    ProbabilisticEntropyReport,
+};
 use crate::regalloc::{
     allocate_registers_and_codegen, analyze_escape_and_lifetimes, EscapeAnalysisReport,
     RegAllocReport,
@@ -357,6 +361,19 @@ impl StarEngine {
     /// apply Selection Pushdown & Columnar Projection Pruning, and synthesize 13-Spoke SQL / DataFrame plans.
     pub fn relational_sql(&self) -> RelationalSqlReport {
         compile_relational_sql(self.hub())
+    }
+
+    /// Infer Liquid Refinement Types (`{ ν: T | φ(ν) }`), solve Constrained Horn Clauses (`CHC`)
+    /// via fixpoint qualifier elimination, emit SMT-LIB2 `(set-logic HORN)` scripts, and synthesize
+    /// 13-Spoke dependent / refined / branded type wrappers.
+    pub fn liquid_refinements(&self) -> LiquidRefinementReport {
+        infer_liquid_refinements(self.hub())
+    }
+
+    /// Run Metropolis-Hastings MCMC + Importance Sampling and compute Quantitative Information Flow (`QIF`),
+    /// Shannon Entropy `H(X)`, `H(Y)`, `H(X|Y)`, Mutual Information `I(X; Y)`, and Min-Entropy Leakage.
+    pub fn probabilistic_entropy(&self) -> ProbabilisticEntropyReport {
+        analyze_probabilistic_entropy(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.

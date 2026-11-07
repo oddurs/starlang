@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer, #zk-drawer, #sql-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer, #zk-drawer, #sql-drawer, #refinement-drawer, #prob-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,14 +436,16 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v2.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU, AutoDiff, Actors, TLA+, ZK R1CS & Relational SQL Studio</h1>
-        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64, Circom ZK & SQL</p>
+        <h1>★ StarLang v2.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU, AutoDiff, Actors, TLA+, ZK R1CS, Relational SQL, Liquid Refinements & Probabilistic QIF Studio</h1>
+        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64, Circom ZK, SQL & Dependent Types</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="verify-btn" id="refinement-btn" title="Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 Export & 13-Spoke Dependent / Branded Type Synthesizer">💎 Liquid Types & CHC</button>
+      <button class="trace-btn" id="prob-btn" title="Probabilistic Programming, Metropolis-Hastings MCMC + Importance Sampling, Shannon Entropy H(X)/H(Y) & Mutual-Information QIF Leakage Quantifier">🎲 MCMC & Shannon Entropy</button>
       <button class="wasm-btn" id="zk-btn" title="Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Witness Verifier & Circom 2.0 Synthesizer">🔐 ZK R1CS & Circom</button>
       <button class="opt-btn" id="sql-btn" title="Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer & 13-Spoke SQL / DataFrame Synthesizer">🗄 Relational SQL & Pushdown</button>
       <button class="wasm-btn" id="actors-btn" title="Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer">📡 Actors & Vector Clocks</button>
@@ -676,6 +678,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="refinement-drawer">
+    <div class="run-header">
+      <span id="refinement-summary">💎 Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 HORN Export & 13-Spoke Dependent / Branded Types...</span>
+      <button onclick="document.getElementById('refinement-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="refinement-cards"></div>
+  </section>
+
+  <section id="prob-drawer">
+    <div class="run-header">
+      <span id="prob-summary">🎲 Probabilistic Programming, Metropolis-Hastings MCMC Sampling, Shannon Entropy H(X)/H(Y) & Mutual-Information QIF Leakage Quantifier...</span>
+      <button onclick="document.getElementById('prob-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="prob-cards"></div>
+  </section>
 
   <section id="zk-drawer">
     <div class="run-header">
@@ -2427,6 +2445,73 @@
         card.innerHTML = `<strong>🗄 ${fn.signature} (Volcano ${fn.volcano_tuple_cycles}c ➔ Columnar ${fn.vectorized_columnar_cycles}c · ${fn.columnar_speedup}x)</strong><pre style="max-height:340px;overflow:auto;"></pre>`;
         card.querySelector("pre").textContent =
           `Relational Algebra Plan: ${fn.relational_algebra_expr}\n\n[Relational Operator Tree]\n${opLines}\n\n[Synthesized ANSI SQL Query]\n${fn.ansi_sql_query}\n\n[13-Spoke Vectorized DataFrame / Stream Lowering]\n${spk}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("refinement-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("refinement-drawer");
+      const summary = document.getElementById("refinement-summary");
+      const cards = document.getElementById("refinement-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Inferring Liquid Refinement Types { ν: T | φ(ν) }, solving Constrained Horn Clauses (CHC) & synthesizing 13-Spoke Dependent / Branded Types...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/refinement", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.all_subtypes_verified ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">💎 Liquid Refinement Type & CHC Prover: ${data.total_refined_bindings} refined bindings · ${data.total_qualifiers_inferred} qualifiers · ${data.discharged_horn_clauses}/${data.total_horn_clauses} Constrained Horn Clauses discharged (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const bLines = (fn.bindings || [])
+          .map(b => `  • [${b.role.padEnd(13)}] ${b.symbol.padEnd(16)} :: ${b.liquid_type}`)
+          .join("\n");
+        const cLines = (fn.horn_clauses || [])
+          .map(c => `  ✓ CHC #${c.clause_id} [${c.kind.padEnd(22)}] ${c.horn_implication}\n    ↳ ${c.solver_note}`)
+          .join("\n");
+        const spk = Object.entries(fn.refined_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "c", "cpp", "swift", "java", "python", "typescript", "star"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>💎 ${fn.refined_signature} (${fn.horn_clauses_discharged}/${fn.horn_clauses_total} CHCs · ${fn.fixpoint_iterations} fixpoint iters)</strong><pre style="max-height:340px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `[Inferred Liquid Refinement Bindings]\n${bLines}\n\n[Constrained Horn Clause (CHC) Subtyping Obligations]\n${cLines}\n\n[SMT-LIB2 HORN Logic Proof Script]\n${fn.smtlib2_horn_script}\n\n[13-Spoke Dependent / Refined / Branded Types]\n${spk}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("prob-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("prob-drawer");
+      const summary = document.getElementById("prob-summary");
+      const cards = document.getElementById("prob-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Running Metropolis-Hastings MCMC particles & computing Shannon Entropy H(X), H(Y), Conditional H(X|Y) & Mutual Information I(X; Y)...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/prob", { method: "POST", body: "{}" });
+      const data = await res.json();
+      summary.innerHTML = `<span style="color:#34d399;">🎲 MCMC & Quantitative Information Flow (QIF): ${data.total_mcmc_samples} MCMC particles · Max Output Entropy H(Y)=${data.max_output_entropy_bits} bits · Max Mutual Information I(X;Y)=${data.max_mutual_info_bits} bits (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const bLines = (fn.branch_posteriors || [])
+          .map(b => `  • Branch #${b.branch_id} [${b.condition_expr.padEnd(28)}] P(taken|D) = ${b.posterior_prob} (${b.taken_hits}/${b.total_trials}) · Surprise = ${b.surprise_bits} bits`)
+          .join("\n");
+        const hLines = (fn.posterior_histogram || [])
+          .map(h => `  ${h.bucket_label} | p=${String(h.probability).padEnd(4)} (${String(h.count).padStart(3)}) | ${h.ascii_bar}`)
+          .join("\n");
+        card.innerHTML = `<strong>🎲 ${fn.signature} (E[Y]=${fn.posterior_mean} · σ=${fn.posterior_std_dev} · I(X;Y)=${fn.mutual_information_bits} bits)</strong><pre style="max-height:340px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Prior: ${fn.prior_distribution} | MCMC Acceptance: ${fn.acceptance_rate_pct}% | 90% CI: ${fn.credible_interval_90}\n` +
+          `Shannon Entropy: H(X)=${fn.input_shannon_entropy_bits} bits | H(Y)=${fn.output_shannon_entropy_bits} bits | H(X|Y)=${fn.conditional_entropy_bits} bits\n` +
+          `Mutual Info I(X;Y)=${fn.mutual_information_bits} bits | Min-Entropy Leakage L_∞=${fn.min_entropy_leakage_bits} bits\n` +
+          `QIF Grade: ${fn.qif_security_grade}\n\n` +
+          `[Posterior Output Distribution Histogram]\n${hLines}\n\n` +
+          `[Branch-Path Posterior Probabilities & Shannon Surprise]\n${bLines}\n\n` +
+          `[Mermaid Bayesian Factor Graph]\n${fn.mermaid_factor_graph}`;
         cards.appendChild(card);
       });
     });

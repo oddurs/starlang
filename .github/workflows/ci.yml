@@ -94,6 +94,10 @@ jobs:
         run: cargo run --quiet -- zk > /dev/null
       - name: Run Relational Algebra selection-pushdown & vectorized SQL optimizer
         run: cargo run --quiet -- sql > /dev/null
+      - name: Run Liquid Refinement Type inference & Constrained Horn Clause (CHC) prover
+        run: cargo run --quiet -- refinement > /dev/null
+      - name: Run Probabilistic MCMC sampler & Quantitative Information Flow (QIF) Shannon entropy quantifier
+        run: cargo run --quiet -- prob > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier

@@ -17,6 +17,7 @@ pub mod polyhedral;
 pub mod quickcheck;
 pub mod reconcile;
 pub mod refactor;
+pub mod refinement_prob;
 pub mod regalloc;
 pub mod repair;
 pub mod runner;
