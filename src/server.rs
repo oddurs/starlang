@@ -15,6 +15,7 @@ use crate::quickcheck::QuickCheckReport;
 use crate::repair::RepairReport;
 use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
+use crate::ssa::{HoareContractReport, ModuleSsaReport};
 use crate::synth::{ModuleCfgReport, SynthReport};
 use crate::trace::TraceReport;
 use crate::verify::{VerifyReport, VerifyStatus};
@@ -27,7 +28,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v1.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair & PBE Synthesizer Studio running at:");
+    println!("StarLang v1.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA & Hoare Contracts Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -426,6 +427,22 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.cfg()
             };
             let payload = cfg_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/ssa") | ("GET", "/api/ssa") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.ssa()
+            };
+            let payload = ssa_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/contracts") | ("GET", "/api/contracts") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.contracts()
+            };
+            let payload = contracts_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -1127,6 +1144,117 @@ fn cfg_to_json(rep: &ModuleCfgReport) -> String {
         rep.total_edges,
         rep.total_natural_loops,
         fns_json.join(",")
+    )
+}
+
+fn ssa_to_json(rep: &ModuleSsaReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let chains: Vec<String> = f
+                .def_use_chains
+                .iter()
+                .map(|c| {
+                    let uses: Vec<String> = c
+                        .uses
+                        .iter()
+                        .map(|(b, u)| format!("[{},{}]", b, json_str(u)))
+                        .collect();
+                    format!(
+                        "{{\"ssa_var\":{},\"base_var\":{},\"def_block\":{},\"def_kind\":{},\"uses\":[{}],\"is_dead_store\":{}}}",
+                        json_str(&c.ssa_var),
+                        json_str(&c.base_var),
+                        c.def_block,
+                        json_str(&c.def_kind),
+                        uses.join(","),
+                        c.is_dead_store
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"block_count\":{},\"phi_count\":{},\"total_ssa_defs\":{},\"dead_store_count\":{},\"def_use_chains\":[{}],\"ssa_listing\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.block_count,
+                f.phi_count,
+                f.total_ssa_defs,
+                f.dead_store_count,
+                chains.join(","),
+                json_str(&f.ssa_listing)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_blocks\":{},\"total_phi_nodes\":{},\"total_ssa_defs\":{},\"total_dead_stores\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_blocks,
+        rep.total_phi_nodes,
+        rep.total_ssa_defs,
+        rep.total_dead_stores,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn contracts_to_json(rep: &HoareContractReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let reqs: Vec<String> = f.requires.iter().map(|s| json_str(s)).collect();
+            let invs: Vec<String> = f.loop_invariants.iter().map(|s| json_str(s)).collect();
+            let enss: Vec<String> = f.ensures.iter().map(|s| json_str(s)).collect();
+            let anns: Vec<String> = f
+                .annotated_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"requires\":[{}],\"loop_invariants\":[{}],\"ensures\":[{}],\"vcs_total\":{},\"vcs_proven\":{},\"verified\":{},\"annotated_by_spoke\":{{{}}}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                reqs.join(","),
+                invs.join(","),
+                enss.join(","),
+                f.vcs_total,
+                f.vcs_proven,
+                f.verified,
+                anns.join(",")
+            )
+        })
+        .collect();
+
+    let vcs_json: Vec<String> = rep
+        .verification_conditions
+        .iter()
+        .map(|vc| {
+            format!(
+                "{{\"id\":{},\"fn_name\":{},\"kind\":{},\"obligation\":{},\"wp_formula\":{},\"proven\":{},\"proof_note\":{}}}",
+                vc.id,
+                json_str(&vc.fn_name),
+                json_str(&vc.kind),
+                json_str(&vc.obligation),
+                json_str(&vc.wp_formula),
+                vc.proven,
+                json_str(&vc.proof_note)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"all_verified\":{},\"total_functions\":{},\"total_requires\":{},\"total_invariants\":{},\"total_ensures\":{},\"total_vcs\":{},\"proven_vcs\":{},\"elapsed_ms\":{},\"functions\":[{}],\"verification_conditions\":[{}]}}",
+        rep.all_verified,
+        rep.total_functions,
+        rep.total_requires,
+        rep.total_invariants,
+        rep.total_ensures,
+        rep.total_vcs,
+        rep.proven_vcs,
+        rep.elapsed_ms,
+        fns_json.join(","),
+        vcs_json.join(",")
     )
 }
 

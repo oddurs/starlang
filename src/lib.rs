@@ -16,6 +16,7 @@ pub mod runner;
 pub mod samples;
 pub mod server;
 pub mod spokes;
+pub mod ssa;
 pub mod synth;
 pub mod trace;
 pub mod typecheck;

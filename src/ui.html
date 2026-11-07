@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,7 +436,7 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v1.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair & PBE Synthesizer Studio</h1>
+        <h1>★ StarLang v1.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA & Hoare Contracts Studio</h1>
         <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm & 14-Engine Verification</p>
       </div>
     </div>
@@ -444,6 +444,8 @@
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="verify-btn" id="contracts-btn" title="Infer Hoare Logic Design-by-Contract specifications (requires, loop_invariant, ensures) & verify Dijkstra Weakest-Precondition VCs across 13 languages">📜 Hoare Contracts</button>
+      <button class="trace-btn" id="ssa-btn" title="Compute Cytron Static Single Assignment (SSA) form, Dominance Frontiers, φ-nodes, Liveness & Def-Use chains">🧬 SSA & Liveness</button>
       <button class="wasm-btn" id="synth-btn" title="Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages">✨ PBE Synth</button>
       <button class="trace-btn" id="cfg-btn" title="Inspect Control-Flow Graphs, Dominator Trees, Natural Loop Back-Edges, Mermaid & Graphviz DOT">🕸 CFG & Loops</button>
       <button class="mut-btn" id="repair-btn" title="Localize failing unit tests or refuted safety obligations & synthesize a 4-gate verified AST patch across all 13 languages">🩹 Auto-Repair</button>
@@ -658,6 +660,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="contracts-drawer">
+    <div class="run-header">
+      <span id="contracts-summary">📜 Hoare-Logic Design-by-Contract (`requires` / `loop_invariant` / `ensures`) & Weakest-Precondition (`WP`) VC Verifier...</span>
+      <button onclick="document.getElementById('contracts-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="contracts-cards"></div>
+  </section>
+
+  <section id="ssa-drawer">
+    <div class="run-header">
+      <span id="ssa-summary">🧬 Cytron Static Single Assignment (SSA), Dominance Frontiers, `φ`-Nodes, Liveness & Def-Use Chains...</span>
+      <button onclick="document.getElementById('ssa-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="ssa-cards"></div>
+  </section>
 
   <section id="synth-drawer">
     <div class="run-header">
@@ -1667,6 +1685,60 @@
         card.innerHTML = `<strong>🕸 ${fn.signature} (${fn.natural_loop_count} loop(s))</strong><pre style="max-height:260px;overflow:auto;"></pre>`;
         card.querySelector("pre").textContent =
           `Back-Edges: ${backEdges}\n\n${bbLines}\n\n[Mermaid flowchart TD]\n${fn.mermaid}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("ssa-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("ssa-drawer");
+      const summary = document.getElementById("ssa-summary");
+      const cards = document.getElementById("ssa-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Computing Cytron SSA Dominance Frontiers, φ-nodes, backward liveness & Def-Use chains...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/ssa", { method: "POST", body: "{}" });
+      const data = await res.json();
+      summary.innerHTML = `<span style="color:#38bdf8;">🧬 Cytron SSA Form: ${data.total_phi_nodes} φ-node(s) · ${data.total_ssa_defs} SSA definitions · ${data.total_dead_stores} dead store(s) across ${data.total_blocks} basic blocks (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const chains = (fn.def_use_chains || [])
+          .map(c => `${c.ssa_var} (BB${c.def_block}, ${c.def_kind}) → ${(c.uses || []).length} use(s)${c.is_dead_store ? " [DEAD STORE]" : ""}`)
+          .join("\n");
+        card.innerHTML = `<strong>🧬 ${fn.signature} (${fn.phi_count} φ, ${fn.total_ssa_defs} defs)</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent = `${fn.ssa_listing}\n[Def-Use Chains]\n${chains}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("contracts-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("contracts-drawer");
+      const summary = document.getElementById("contracts-summary");
+      const cards = document.getElementById("contracts-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Inferring Hoare contracts (requires / loop_invariant / ensures) & proving Dijkstra Weakest-Precondition VCs...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/contracts", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.all_verified ? "#34d399" : "#fbbf24";
+      summary.innerHTML = `<span style="color:${color};">📜 Hoare Contracts & WP Verifier: ${data.proven_vcs}/${data.total_vcs} Verification Conditions proven · ${data.total_requires} requires · ${data.total_invariants} loop invariants · ${data.total_ensures} ensures (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const reqs = (fn.requires || []).map(r => `  requires: ${r}`).join("\n");
+        const invs = (fn.loop_invariants || []).map(i => `  invariant: ${i}`).join("\n");
+        const enss = (fn.ensures || []).map(e => `  ensures:  ${e}`).join("\n");
+        const spk = Object.entries(fn.annotated_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "c", "python", "perl"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>📜 ${fn.signature} (${fn.vcs_proven}/${fn.vcs_total} VCs proven)</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `${reqs}\n${invs ? invs + "\n" : ""}${enss}\n\n[Polyglot DbC Annotations]\n${spk}`;
         cards.appendChild(card);
       });
     });
