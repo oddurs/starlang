@@ -627,6 +627,75 @@ fn cegis_automated_program_repair_and_alpha_bisimulation_verifier_heal_faults_ac
 }
 
 #[test]
+fn pbe_inductive_synthesizer_and_dominator_cfg_analyzer_synthesize_and_export_across_thirteen_languages()
+{
+    let sample = find_sample("ratelimit").unwrap();
+    let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+
+    // 1. Synthesize `clamp_bonus(score: Int, cap: Int) -> Int` from 4 I/O examples with Observational Equivalence Pruning
+    let (srep, snap_opt) = engine
+        .synthesize(
+            Some("clamp_bonus(score: Int, cap: Int) -> Int | (40, 100) => 80; (75, 100) => 100; (-15, 60) => 0; (0, 50) => 0"),
+            true,
+        )
+        .unwrap();
+    assert!(srep.ok, "Expected PBE synthesis to succeed: {:?}", srep);
+    assert!(srep.tests_passed);
+    assert!(srep.safety_proven);
+    assert!(
+        srep.pruned_by_obs_equiv > 10,
+        "Expected observational equivalence pruning to eliminate redundant ASTs, got {:?}",
+        srep
+    );
+    assert_eq!(srep.views_by_spoke.len(), 13);
+    for spoke in SpokeId::ALL {
+        let code = srep
+            .views_by_spoke
+            .get(spoke.as_str())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            code.contains("clamp_bonus"),
+            "Synthesized function missing from {:?}: {}",
+            spoke,
+            code
+        );
+    }
+    let snap = snap_opt.expect("Expected injected Hub snapshot");
+    assert!(snap.views["rust"].contains("pub fn clamp_bonus("));
+    assert!(snap.views["perl"].contains("sub clamp_bonus("));
+    assert!(snap.test_results.iter().all(|t| t.passed));
+
+    // 2. Synthesize a list-folding loop function `sum_above(items: List<Int>, floor: Int) -> Int` from I/O examples
+    let (list_rep, _) = engine.synthesize(Some("sum_above"), false).unwrap();
+    assert!(list_rep.ok, "Expected list fold synthesis to succeed: {:?}", list_rep);
+    assert!(list_rep.tests_passed);
+    assert!(list_rep.safety_proven);
+    assert!(list_rep.program_summary.contains("for"));
+    assert!(list_rep.views_by_spoke["python"].contains("def sum_above("));
+    assert!(list_rep.views_by_spoke["zig"].contains("pub fn sum_above("));
+
+    // 3. Analyze Control-Flow Graphs, Dominator Sets, Natural Loops & Mermaid/DOT
+    let cfg = engine.cfg();
+    assert!(cfg.total_blocks >= 10, "{:?}", cfg);
+    assert!(cfg.total_edges >= 8, "{:?}", cfg);
+    assert!(
+        cfg.total_natural_loops >= 1,
+        "Expected natural loop in evaluate_quota, got {:?}",
+        cfg
+    );
+    let quota_cfg = cfg
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "evaluate_quota")
+        .unwrap();
+    assert_eq!(quota_cfg.natural_loops, 1);
+    assert!(!quota_cfg.back_edges.is_empty());
+    assert!(quota_cfg.mermaid.contains("flowchart TD"));
+    assert!(quota_cfg.dot.contains("digraph"));
+}
+
+#[test]
 fn lua_spoke_and_zero_dep_wasm_backend_compile_sync_and_execute_in_v8_jit() {
     // 1. Seed from `backoff` (LuaJIT + LuaCATS preset) and verify symbolic safety obligations
     let sample = find_sample("backoff").unwrap();
@@ -1268,6 +1337,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(rep_resp.contains("\"ok\":true"), "repair failed: {}", rep_resp);
     assert!(rep_resp.contains("\"repaired\":true"), "repair failed: {}", rep_resp);
     assert!(rep_resp.contains("\"diffs_by_spoke\":{"), "repair missing diffs: {}", rep_resp);
+
+    // Verify /api/synth and /api/cfg endpoints
+    let synth_resp = send_http("POST", "/api/synth", "{\"spec\":\"default\",\"inject\":\"false\"}");
+    assert!(synth_resp.contains("\"ok\":true"), "synth failed: {}", synth_resp);
+    assert!(synth_resp.contains("\"synthesized\":true"), "synth failed: {}", synth_resp);
+    assert!(synth_resp.contains("\"pruned_equivalents\":"));
+
+    let cfg_resp = send_http("POST", "/api/cfg", "{}");
+    assert!(cfg_resp.contains("\"ok\":true"), "cfg failed: {}", cfg_resp);
+    assert!(cfg_resp.contains("\"total_natural_loops\":"));
+    assert!(cfg_resp.contains("flowchart TD"));
 
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
