@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -444,6 +444,8 @@
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="microarch-btn" title="4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Hardware Simulator">🖥 CPU, Cache & Branch</button>
+      <button class="opt-btn" id="schedule-btn" title="Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Pipeline Stall Eliminator">📐 List Scheduler & ILP</button>
       <button class="wasm-btn" id="regalloc-btn" title="Chaitin-Briggs Kempe-stack graph-coloring & Poletto-Sarkar linear-scan register allocator + Dual-Target AArch64 / x86_64 Native Assembly">🎛 RegAlloc & ASM</button>
       <button class="opt-btn" id="escape-btn" title="Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO & 13-Spoke Stack/Arena Lifetime Optimizer">📦 Escape & SROA</button>
       <button class="wasm-btn" id="polyhedral-btn" title="Polyhedral loop dependence analysis, associative monoid reduction recognition, Brent Work-Span & 13-spoke SIMD / Map-Reduce vectorizer">🧮 Polyhedral & SIMD</button>
@@ -668,6 +670,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="microarch-drawer">
+    <div class="run-header">
+      <span id="microarch-summary">🖥 4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Simulator...</span>
+      <button onclick="document.getElementById('microarch-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="microarch-cards"></div>
+  </section>
+
+  <section id="schedule-drawer">
+    <div class="run-header">
+      <span id="schedule-summary">📐 Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Pipeline Stall Eliminator...</span>
+      <button onclick="document.getElementById('schedule-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="schedule-cards"></div>
+  </section>
 
   <section id="regalloc-drawer">
     <div class="run-header">
@@ -2101,6 +2119,71 @@
         card.innerHTML = `<strong>📦 ${fn.signature} (Saved: ${fn.bytes_saved_per_call}B/call · Stack/SROA: ${fn.stack_or_sroa_sites} · RVO: ${fn.rvo_sites})</strong><pre style="max-height:300px;overflow:auto;"></pre>`;
         card.querySelector("pre").textContent =
           `[Allocation Escape Lattice Audit]\n${siteLines}\n\n[13-Spoke Stack / Arena / SROA Lowering]\n${spk}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("microarch-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("microarch-drawer");
+      const summary = document.getElementById("microarch-summary");
+      const cards = document.getElementById("microarch-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Simulating 4-wide Out-of-Order Superscalar ROB, 64-entry 2-Bit Bimodal Branch Predictor & 32KB 8-Way Set-Associative L1D Cache...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/microarch", { method: "POST", body: "{}" });
+      const data = await res.json();
+      summary.innerHTML = `<span style="color:#34d399;">🖥 Superscalar Hardware Sim: ${data.total_uops_retired} μops retired · ${data.total_in_order_cycles}c In-Order ➔ ${data.total_ooo_cycles}c Out-of-Order (IPC: ${data.superscalar_ipc} · ${data.ooo_speedup}x OoO speedup) · Branch Acc: ${data.branch_accuracy_pct}% (${data.branch_mispredictions} mispredicts) · L1D Hit Rate: ${data.l1d_hit_rate_pct}% (${data.elapsed_ms}ms)</span>`;
+
+      const brCard = document.createElement("div");
+      brCard.className = "run-card";
+      const brLines = (data.branch_sites || [])
+        .map(b => `  stmt#${b.stmt_id} [${b.fn_name}] (${b.branch_expr})\n    Taken: ${b.taken_count} | NotTaken: ${b.not_taken_count} | Acc: ${b.accuracy_pct}% (${b.mispredictions} mispredicts, +${b.penalty_cycles}c flush)`)
+        .join("\n\n") || "  (no dynamic conditional branches)";
+      const ccLines = (data.cache_sites || [])
+        .map(c => `  ${c.site_label}\n    Accesses: ${c.accesses} | L1 Hits: ${c.l1_hits} | Prefetch: ${c.prefetch_hits} | Misses: ${c.misses} (${c.hit_rate_pct}% hit rate, ${c.memory_cycles}c)`)
+        .join("\n\n") || "  (no array cache accesses)";
+      brCard.innerHTML = `<strong>🧭 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache</strong><pre style="max-height:300px;overflow:auto;"></pre>`;
+      brCard.querySelector("pre").textContent =
+        `Dominant Bottleneck: ${data.dominant_bottleneck}\n\n[2-Bit Saturating Counter BHT Sites]\n${brLines}\n\n[32KB 8-Way Set-Associative L1D + Stream Prefetcher]\n${ccLines}`;
+      cards.appendChild(brCard);
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        card.innerHTML = `<strong>🖥 ${fn.signature} (IPC: ${fn.superscalar_ipc} · ${fn.in_order_cycles}c ➔ ${fn.ooo_cycles}c)</strong><pre style="max-height:260px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Retired μops:    ${fn.uops_retired} (ALU: ${fn.alu_uops}, MUL/DIV: ${fn.mul_div_uops}, LSU: ${fn.mem_uops}, BRU: ${fn.branch_uops})\n` +
+          `In-Order Cycles: ${fn.in_order_cycles}c\n` +
+          `4-Wide OoO ROB:  ${fn.ooo_cycles}c (IPC ${fn.superscalar_ipc})\n` +
+          `Branch Flushes:  ${fn.branch_mispredicts} mispredict(s)\n` +
+          `L1D Cache:       ${fn.l1d_hits} hits / ${fn.l1d_misses} misses\n` +
+          `Bottleneck:      ${fn.bottleneck}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("schedule-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("schedule-drawer");
+      const summary = document.getElementById("schedule-summary");
+      const cards = document.getElementById("schedule-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Building Instruction Data-Dependence DAG (RAW/WAR/WAW) & running Gibbons-Muchnick Critical-Path List Scheduling...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/schedule", { method: "POST", body: "{}" });
+      const data = await res.json();
+      summary.innerHTML = `<span style="color:#34d399;">📐 Critical-Path List Scheduler: ${data.total_instructions} instructions · ${data.total_dag_edges} DAG edges · ${data.total_cycles_before}c ➔ ${data.total_cycles_after}c (${data.total_bubbles_eliminated} stall bubble(s) eliminated · ${data.total_reordered_insts} reordered · ${data.overall_speedup}x speedup, ${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        card.innerHTML = `<strong>📐 ${fn.signature} (${fn.in_order_cycles_before}c ➔ ${fn.scheduled_cycles_after}c · -${fn.bubbles_eliminated} stall bubbles · ${fn.speedup_ratio}x)</strong><pre style="max-height:320px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Critical-Path Height: ${fn.critical_path_cycles}c | DAG Edges: ${fn.dag_edges_count} | Reordered: ${fn.reordered_instructions}\n\n` +
+          `[Unscheduled In-Order Pipeline (${fn.in_order_cycles_before}c, ${fn.stall_bubbles_before} bubble cycles)]\n${fn.unscheduled_listing}\n` +
+          `[Gibbons-Muchnick Critical-Path List Schedule (${fn.scheduled_cycles_after}c, ${fn.stall_bubbles_after} bubble cycles)]\n${fn.scheduled_listing}\n` +
+          `[Mermaid Instruction Data-Dependence DAG]\n${fn.mermaid_dag}`;
         cards.appendChild(card);
       });
     });

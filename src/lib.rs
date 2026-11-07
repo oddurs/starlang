@@ -9,6 +9,7 @@ pub mod hub;
 pub mod json;
 pub mod lens;
 pub mod merge;
+pub mod microarch;
 pub mod mutate;
 pub mod polyhedral;
 pub mod quickcheck;

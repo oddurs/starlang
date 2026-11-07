@@ -1666,6 +1666,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(esc_resp.contains("\"heap_reduction_pct\":"));
     assert!(esc_resp.contains("\"optimized_by_spoke\":{"));
 
+    // Verify /api/microarch and /api/schedule endpoints
+    let uarch_resp = send_http("POST", "/api/microarch", "{}");
+    assert!(uarch_resp.contains("\"ok\":true"), "microarch failed: {}", uarch_resp);
+    assert!(uarch_resp.contains("\"superscalar_ipc\":"));
+    assert!(uarch_resp.contains("\"l1d_hit_rate_pct\":"));
+
+    let sched_resp = send_http("POST", "/api/schedule", "{}");
+    assert!(sched_resp.contains("\"ok\":true"), "schedule failed: {}", sched_resp);
+    assert!(sched_resp.contains("\"total_bubbles_eliminated\":"));
+    assert!(sched_resp.contains("\"scheduled_listing\":"));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -1845,4 +1856,72 @@ fn chaitin_briggs_register_allocator_native_asm_and_escape_sroa_analyzer_verify_
     let esc_ledger = ledger_eng.escape_analysis();
     assert!(esc_ledger.sroa_scalarized_fields >= 3);
     assert!(esc_ledger.total_bytes_saved_per_run >= 60);
+}
+
+#[test]
+fn superscalar_cpu_cache_branch_simulator_and_critical_path_list_scheduler_verify_across_thirteen_languages() {
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+
+    // 1. 4-Wide Out-of-Order Superscalar CPU, 2-Bit Branch Predictor & 8-Way L1D Cache Simulator
+    let uarch = rl_eng.microarch();
+    assert!(uarch.total_uops_retired >= 40);
+    assert!(
+        uarch.total_ooo_cycles <= uarch.total_in_order_cycles,
+        "4-wide Out-of-Order cycles ({}) must be <= In-Order cycles ({})",
+        uarch.total_ooo_cycles,
+        uarch.total_in_order_cycles
+    );
+    assert!(uarch.superscalar_ipc > 0.3);
+    assert!(uarch.ooo_speedup >= 1.0);
+    assert!(uarch.total_branches >= 4);
+    assert!(uarch.branch_accuracy_pct > 0.0 && uarch.branch_accuracy_pct <= 100.0);
+    assert!(uarch.total_mem_accesses >= 5);
+    assert!(uarch.l1d_hit_rate_pct >= 50.0);
+    assert!(!uarch.branch_sites.is_empty());
+    assert!(!uarch.cache_sites.is_empty());
+
+    // 2. Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler
+    let sched = rl_eng.schedule_instructions();
+    assert!(sched.total_instructions >= 25);
+    assert!(sched.total_dag_edges >= 15);
+    assert!(
+        sched.total_cycles_after <= sched.total_cycles_before,
+        "Scheduled cycles ({}) must be <= Unscheduled cycles ({})",
+        sched.total_cycles_after,
+        sched.total_cycles_before
+    );
+    assert!(
+        sched.total_bubbles_eliminated > 0,
+        "Expected Critical-Path List Scheduler to eliminate stall bubbles on ratelimit, got 0"
+    );
+    assert!(sched.overall_speedup >= 1.0);
+
+    for f in &sched.functions {
+        assert!(f.scheduled_cycles_after <= f.in_order_cycles_before);
+        assert!(f.mermaid_dag.contains("flowchart TD"));
+        // Verify topological soundness of the list schedule: every RAW/WAR/WAW dependence edge
+        // `(from_idx -> to_idx, latency)` is respected in `issue_cycle`!
+        let issue_by_orig: std::collections::BTreeMap<usize, u64> = f
+            .instructions
+            .iter()
+            .map(|inst| (inst.orig_idx, inst.issue_cycle))
+            .collect();
+        for edge in &f.dag_edges {
+            let u_cy = issue_by_orig[&edge.from_idx];
+            let v_cy = issue_by_orig[&edge.to_idx];
+            assert!(
+                v_cy >= u_cy + edge.latency,
+                "Dependence edge #{} -> #{} ({}, {}c) violated in {}: v issued at {}c before u ({}c) + {}c",
+                edge.from_idx,
+                edge.to_idx,
+                edge.kind,
+                edge.latency,
+                f.fn_name,
+                v_cy,
+                u_cy,
+                edge.latency
+            );
+        }
+    }
 }

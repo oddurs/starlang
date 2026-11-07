@@ -189,6 +189,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "microarch" => {
+            if let Err(e) = run_microarch_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "schedule" => {
+            if let Err(e) = run_schedule_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -2051,6 +2063,174 @@ fn run_escape_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_microarch_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.microarch();
+    println!(
+        "=== 4-Wide Out-of-Order Superscalar CPU, 2-Bit Branch Predictor & 8-Way L1D Cache Simulator: {} ===",
+        label
+    );
+    println!(
+        "Retired μops: {} | In-Order Cycles: {}c -> 4-Wide OoO ROB: {}c (IPC: {:.2}, {:.2}x OoO speedup) | Branch Acc: {:.1}% ({}/{} mispredicts, +{}c penalty) | L1D Cache Hit Rate: {:.1}% ({} hits, {} prefetch, {} misses, {}ms)\n",
+        rep.total_uops_retired,
+        rep.total_in_order_cycles,
+        rep.total_ooo_cycles,
+        rep.superscalar_ipc,
+        rep.ooo_speedup,
+        rep.branch_accuracy_pct,
+        rep.branch_mispredictions,
+        rep.total_branches,
+        rep.branch_penalty_cycles,
+        rep.l1d_hit_rate_pct,
+        rep.l1d_hits,
+        rep.l1d_prefetch_hits,
+        rep.l1d_misses,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [μops: {} | In-Order: {}c -> OoO: {}c | IPC: {:.2} | Bottleneck: {}]",
+            f.signature,
+            f.uops_retired,
+            f.in_order_cycles,
+            f.ooo_cycles,
+            f.superscalar_ipc,
+            f.bottleneck
+        );
+    }
+    println!();
+
+    for b in &rep.branch_sites {
+        println!(
+            "  • Branch stmt#{} [{}]: ({}) -> Taken: {}, NotTaken: {}, Acc: {:.1}% ({} mispredicts, +{}c)",
+            b.stmt_id,
+            b.fn_name,
+            b.branch_expr,
+            b.taken_count,
+            b.not_taken_count,
+            b.accuracy_pct,
+            b.mispredictions,
+            b.penalty_cycles
+        );
+    }
+
+    for c in &rep.cache_sites {
+        println!(
+            "  • L1D Cache {}: {} accesses -> {} L1 hits, {} prefetch hits, {} misses ({:.1}% hit rate, {}c)",
+            c.site_label,
+            c.accesses,
+            c.l1_hits,
+            c.prefetch_hits,
+            c.misses,
+            c.hit_rate_pct,
+            c.memory_cycles
+        );
+    }
+
+    if rep.total_uops_retired == 0 {
+        return Err("microarchitectural simulator retired 0 uops".to_string());
+    }
+    Ok(())
+}
+
+fn run_schedule_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.schedule_instructions();
+    println!(
+        "=== Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Instructions: {} | DAG Edges: {} | Cycles: {}c -> {}c | Stall Bubbles Eliminated: {} | Reordered Insts: {} | Speedup: {:.2}x ({}ms)\n",
+        rep.total_functions,
+        rep.total_instructions,
+        rep.total_dag_edges,
+        rep.total_cycles_before,
+        rep.total_cycles_after,
+        rep.total_bubbles_eliminated,
+        rep.total_reordered_insts,
+        rep.overall_speedup,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Insts: {} | DAG Edges: {} | Critical Path: {}c | {}c -> {}c (-{} stall bubbles, {:.2}x)]",
+            f.signature,
+            f.inst_count,
+            f.dag_edges_count,
+            f.critical_path_cycles,
+            f.in_order_cycles_before,
+            f.scheduled_cycles_after,
+            f.bubbles_eliminated,
+            f.speedup_ratio
+        );
+        println!("  --- Scheduled Pipeline Listing ---\n{}", f.scheduled_listing);
+    }
+
+    if rep.total_instructions == 0 {
+        return Err("instruction scheduler found 0 instructions".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -2255,13 +2435,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v1.8 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc & Escape Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64)
+        "starlang v1.9 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim & List Scheduler Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- microarch [file|preset]              Run 4-Wide Out-of-Order Superscalar CPU, 2-Bit Branch Predictor & 8-Way L1D Cache Sim
+  cargo run -- schedule [file|preset]               Run Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Stall Eliminator
   cargo run -- regalloc [file|preset] [-k N]        Run Chaitin-Briggs Kempe Graph-Coloring & Linear-Scan RegAlloc + AArch64/x86_64 ASM
   cargo run -- escape [file|preset]                 Run Interprocedural Escape Analysis, Scalar Replacement (SROA) & RVO Optimizer
   cargo run -- polyhedral [file|preset]             Run Polyhedral Loop Dependence, Monoid Reduction & 13-Spoke SIMD Vectorizer
@@ -2438,6 +2620,8 @@ fn run_cli_demo() -> Result<(), String> {
     let wcet_rep = repair_eng.termination_wcet();
     let reg_rep = repair_eng.regalloc(Some(8));
     let esc_rep = repair_eng.escape_analysis();
+    let uarch_rep = repair_eng.microarch();
+    let sched_rep = repair_eng.schedule_instructions();
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -2446,7 +2630,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision)\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles)\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -2483,7 +2667,14 @@ fn run_cli_demo() -> Result<(), String> {
         reg_rep.total_aarch64_insts,
         reg_rep.total_x86_64_insts,
         esc_rep.total_bytes_saved_per_run,
-        esc_rep.heap_reduction_pct
+        esc_rep.heap_reduction_pct,
+        uarch_rep.total_uops_retired,
+        uarch_rep.superscalar_ipc,
+        uarch_rep.branch_accuracy_pct,
+        uarch_rep.l1d_hit_rate_pct,
+        sched_rep.total_cycles_before,
+        sched_rep.total_cycles_after,
+        sched_rep.total_bubbles_eliminated
     );
     if !drep.ok
         || slice_len == 0
@@ -2501,8 +2692,10 @@ fn run_cli_demo() -> Result<(), String> {
         || !wcet_rep.all_terminating
         || reg_rep.total_virtual_regs == 0
         || esc_rep.total_bytes_saved_per_run == 0
+        || uarch_rep.total_uops_retired == 0
+        || sched_rep.total_instructions == 0
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, or Escape Analysis failed".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, or List Scheduler failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

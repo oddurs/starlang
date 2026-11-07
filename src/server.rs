@@ -12,6 +12,7 @@ use crate::hub::Diagnostic;
 use crate::json::{json_str, parse_flat_json_object};
 use crate::lens::SpokeId;
 use crate::merge::{MergeReport, SemanticDiffReport};
+use crate::microarch::{InstructionScheduleReport, MicroArchReport};
 use crate::mutate::MutationReport;
 use crate::polyhedral::{PolyhedralReport, TerminationWcetReport};
 use crate::quickcheck::QuickCheckReport;
@@ -32,7 +33,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v1.8 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc & Escape Analysis Studio running at:");
+    println!("StarLang v1.9 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc, Escape Analysis, Superscalar OoO CPU/Cache/Branch Sim & Critical-Path List Scheduler Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -530,6 +531,22 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.escape_analysis()
             };
             let payload = escape_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/microarch") | ("GET", "/api/microarch") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.microarch()
+            };
+            let payload = microarch_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/schedule") | ("GET", "/api/schedule") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.schedule_instructions()
+            };
+            let payload = schedule_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -1839,6 +1856,166 @@ fn escape_to_json(rep: &EscapeAnalysisReport) -> String {
         rep.heap_escaping_sites,
         rep.total_bytes_saved_per_run,
         rep.heap_reduction_pct,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn microarch_to_json(rep: &MicroArchReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"uops_retired\":{},\"in_order_cycles\":{},\"ooo_cycles\":{},\"superscalar_ipc\":{:.2},\"alu_uops\":{},\"mul_div_uops\":{},\"mem_uops\":{},\"branch_uops\":{},\"branch_mispredicts\":{},\"l1d_hits\":{},\"l1d_misses\":{},\"bottleneck\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.uops_retired,
+                f.in_order_cycles,
+                f.ooo_cycles,
+                f.superscalar_ipc,
+                f.alu_uops,
+                f.mul_div_uops,
+                f.mem_uops,
+                f.branch_uops,
+                f.branch_mispredicts,
+                f.l1d_hits,
+                f.l1d_misses,
+                json_str(&f.bottleneck)
+            )
+        })
+        .collect();
+
+    let brs_json: Vec<String> = rep
+        .branch_sites
+        .iter()
+        .map(|b| {
+            format!(
+                "{{\"stmt_id\":{},\"fn_name\":{},\"branch_expr\":{},\"taken_count\":{},\"not_taken_count\":{},\"correct_predictions\":{},\"mispredictions\":{},\"accuracy_pct\":{:.1},\"penalty_cycles\":{}}}",
+                b.stmt_id,
+                json_str(&b.fn_name),
+                json_str(&b.branch_expr),
+                b.taken_count,
+                b.not_taken_count,
+                b.correct_predictions,
+                b.mispredictions,
+                b.accuracy_pct,
+                b.penalty_cycles
+            )
+        })
+        .collect();
+
+    let ccs_json: Vec<String> = rep
+        .cache_sites
+        .iter()
+        .map(|c| {
+            format!(
+                "{{\"site_label\":{},\"fn_name\":{},\"accesses\":{},\"l1_hits\":{},\"prefetch_hits\":{},\"misses\":{},\"hit_rate_pct\":{:.1},\"memory_cycles\":{}}}",
+                json_str(&c.site_label),
+                json_str(&c.fn_name),
+                c.accesses,
+                c.l1_hits,
+                c.prefetch_hits,
+                c.misses,
+                c.hit_rate_pct,
+                c.memory_cycles
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_uops_retired\":{},\"total_in_order_cycles\":{},\"total_ooo_cycles\":{},\"superscalar_ipc\":{:.2},\"ooo_speedup\":{:.2},\"total_branches\":{},\"branch_mispredictions\":{},\"branch_accuracy_pct\":{:.1},\"branch_penalty_cycles\":{},\"total_mem_accesses\":{},\"l1d_hits\":{},\"l1d_prefetch_hits\":{},\"l1d_misses\":{},\"l1d_hit_rate_pct\":{:.1},\"dominant_bottleneck\":{},\"elapsed_ms\":{},\"functions\":[{}],\"branch_sites\":[{}],\"cache_sites\":[{}]}}",
+        rep.total_uops_retired,
+        rep.total_in_order_cycles,
+        rep.total_ooo_cycles,
+        rep.superscalar_ipc,
+        rep.ooo_speedup,
+        rep.total_branches,
+        rep.branch_mispredictions,
+        rep.branch_accuracy_pct,
+        rep.branch_penalty_cycles,
+        rep.total_mem_accesses,
+        rep.l1d_hits,
+        rep.l1d_prefetch_hits,
+        rep.l1d_misses,
+        rep.l1d_hit_rate_pct,
+        json_str(&rep.dominant_bottleneck),
+        rep.elapsed_ms,
+        fns_json.join(","),
+        brs_json.join(","),
+        ccs_json.join(",")
+    )
+}
+
+fn schedule_to_json(rep: &InstructionScheduleReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let insts: Vec<String> = f
+                .instructions
+                .iter()
+                .map(|i| {
+                    format!(
+                        "{{\"orig_idx\":{},\"sched_slot\":{},\"issue_cycle\":{},\"ready_cycle\":{},\"unit\":{},\"latency\":{},\"critical_height\":{},\"text\":{}}}",
+                        i.orig_idx,
+                        i.sched_slot,
+                        i.issue_cycle,
+                        i.ready_cycle,
+                        json_str(&i.unit),
+                        i.latency,
+                        i.critical_height,
+                        json_str(&i.text)
+                    )
+                })
+                .collect();
+            let edges: Vec<String> = f
+                .dag_edges
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{{\"from_idx\":{},\"to_idx\":{},\"kind\":{},\"latency\":{},\"var\":{}}}",
+                        e.from_idx,
+                        e.to_idx,
+                        json_str(&e.kind),
+                        e.latency,
+                        json_str(&e.var)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"inst_count\":{},\"dag_edges_count\":{},\"critical_path_cycles\":{},\"in_order_cycles_before\":{},\"scheduled_cycles_after\":{},\"stall_bubbles_before\":{},\"stall_bubbles_after\":{},\"bubbles_eliminated\":{},\"reordered_instructions\":{},\"speedup_ratio\":{:.2},\"instructions\":[{}],\"dag_edges\":[{}],\"unscheduled_listing\":{},\"scheduled_listing\":{},\"mermaid_dag\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.inst_count,
+                f.dag_edges_count,
+                f.critical_path_cycles,
+                f.in_order_cycles_before,
+                f.scheduled_cycles_after,
+                f.stall_bubbles_before,
+                f.stall_bubbles_after,
+                f.bubbles_eliminated,
+                f.reordered_instructions,
+                f.speedup_ratio,
+                insts.join(","),
+                edges.join(","),
+                json_str(&f.unscheduled_listing),
+                json_str(&f.scheduled_listing),
+                json_str(&f.mermaid_dag)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_instructions\":{},\"total_dag_edges\":{},\"total_cycles_before\":{},\"total_cycles_after\":{},\"total_bubbles_eliminated\":{},\"total_reordered_insts\":{},\"overall_speedup\":{:.2},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_instructions,
+        rep.total_dag_edges,
+        rep.total_cycles_before,
+        rep.total_cycles_after,
+        rep.total_bubbles_eliminated,
+        rep.total_reordered_insts,
+        rep.overall_speedup,
         rep.elapsed_ms,
         fns_json.join(",")
     )
