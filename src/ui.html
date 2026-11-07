@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,14 +436,16 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v1.7 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD & WCET Studio</h1>
-        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm & 14-Engine Verification</p>
+        <h1>★ StarLang v1.8 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc & Escape Studio</h1>
+        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64 & 14-Engine Verification</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="regalloc-btn" title="Chaitin-Briggs Kempe-stack graph-coloring & Poletto-Sarkar linear-scan register allocator + Dual-Target AArch64 / x86_64 Native Assembly">🎛 RegAlloc & ASM</button>
+      <button class="opt-btn" id="escape-btn" title="Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO & 13-Spoke Stack/Arena Lifetime Optimizer">📦 Escape & SROA</button>
       <button class="wasm-btn" id="polyhedral-btn" title="Polyhedral loop dependence analysis, associative monoid reduction recognition, Brent Work-Span & 13-spoke SIMD / Map-Reduce vectorizer">🧮 Polyhedral & SIMD</button>
       <button class="verify-btn" id="wcet-btn" title="Floyd-Turing well-founded ranking function termination prover & IPET symbolic BCET/WCET timing bound analyzer">⏳ Termination & WCET</button>
       <button class="wasm-btn" id="egraph-btn" title="Equality Saturation & Congruence-Closure E-Graph Superoptimizer across all 13 languages">🔮 E-Graph Superopt</button>
@@ -666,6 +668,26 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="regalloc-drawer">
+    <div class="run-header">
+      <span id="regalloc-summary">🎛 Chaitin-Briggs Kempe-Stack Graph-Coloring & Linear-Scan Register Allocator + AArch64 / x86_64 Native Assembly...</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="wasm-btn" id="regalloc-k8-btn">K = 8 Registers (Standard)</button>
+        <button class="mut-btn" id="regalloc-k3-btn">K = 3 Registers (Kempe Spill Stress-Test)</button>
+        <button onclick="document.getElementById('regalloc-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="regalloc-cards"></div>
+  </section>
+
+  <section id="escape-drawer">
+    <div class="run-header">
+      <span id="escape-summary">📦 Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO & 13-Spoke Stack/Arena Optimizer...</span>
+      <button onclick="document.getElementById('escape-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="escape-cards"></div>
+  </section>
 
   <section id="polyhedral-drawer">
     <div class="run-header">
@@ -2015,6 +2037,70 @@
           `Timing Jitter (WCET/BCET): ${fn.jitter_ratio}x\n\n` +
           `[Floyd-Turing Loop Ranking Proofs]\n${proofs}\n\n` +
           `[Worst-Case Execution Path (WCEP)]\n${wcep}`;
+        cards.appendChild(card);
+      });
+    });
+
+    async function triggerRegAlloc(kVal) {
+      const drawer = document.getElementById("regalloc-drawer");
+      const summary = document.getElementById("regalloc-summary");
+      const cards = document.getElementById("regalloc-cards");
+      drawer.style.display = "block";
+      summary.textContent = `Running Chaitin-Briggs Kempe K=${kVal} graph coloring, Poletto-Sarkar linear scan & AArch64 / x86_64 codegen...`;
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/regalloc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ k: String(kVal) })
+      });
+      const data = await res.json();
+      const color = data.total_spills === 0 ? "#34d399" : "#fbbf24";
+      summary.innerHTML = `<span style="color:${color};">🎛 Chaitin-Briggs Register Allocator (K=${data.k_registers}): ${data.total_virtual_regs} virtual regs · ${data.total_interference_edges} interference edges · Max pressure: ${data.max_register_pressure} · Coalesced moves: ${data.total_coalesced_moves} · Spills: ${data.total_spills} · AArch64: ${data.total_aarch64_insts} insts · x86_64: ${data.total_x86_64_insts} insts (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const ivLines = (fn.intervals || [])
+          .map(iv => `  ${iv.var_name.padEnd(12)} [pc ${iv.start_pc}..${iv.end_pc}] deg=${iv.degree} wt=${iv.spill_weight} ➔ ARM64: ${iv.aarch64_loc.padEnd(10)} | x86_64: ${iv.x86_64_loc.padEnd(18)} | LinScan: ${iv.linear_scan_loc}`)
+          .join("\n");
+        card.innerHTML = `<strong>🎛 ${fn.signature} (Colors: ${fn.chromatic_colors_used}/${fn.k_registers} · Spills: ${fn.spilled_vars} · Frame: ${fn.stack_frame_bytes}B)</strong><pre style="max-height:320px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Kempe Stack Order: ${(fn.kempe_order || []).join(" → ")}\n\n[Live Intervals & Physical Register Map]\n${ivLines}\n\n[AArch64 (ARM64 AAPCS64) Assembly]\n${fn.aarch64_asm}\n[x86_64 (System V AMD64) Assembly]\n${fn.x86_64_asm}\n[Mermaid Interference Graph]\n${fn.mermaid_graph}`;
+        cards.appendChild(card);
+      });
+    }
+
+    document.getElementById("regalloc-btn").addEventListener("click", () => triggerRegAlloc(8));
+    document.getElementById("regalloc-k8-btn").addEventListener("click", () => triggerRegAlloc(8));
+    document.getElementById("regalloc-k3-btn").addEventListener("click", () => triggerRegAlloc(3));
+
+    document.getElementById("escape-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("escape-drawer");
+      const summary = document.getElementById("escape-summary");
+      const cards = document.getElementById("escape-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Auditing heap allocation escape lattice, Scalar Replacement of Aggregates (SROA) & RVO across 13 languages...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/escape", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.heap_reduction_pct >= 80 ? "#34d399" : "#38bdf8";
+      summary.innerHTML = `<span style="color:${color};">📦 Escape & SROA Analyzer: ${data.total_alloc_sites} allocation site(s) · ${data.stack_promoted_sites} stack/SROA promoted · ${data.rvo_eliminated_sites} RVO return-slot · ${data.sroa_scalarized_fields} scalarized field(s) · ${data.total_bytes_saved_per_run}B heap saved/run (${data.heap_reduction_pct}% heap elision, ${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const siteLines = (fn.sites || [])
+          .map(s => `  • [${s.kind} · ${s.escape_state}] ${s.expr_summary}\n    Strategy: ${s.promotion_strategy} (saves ~${s.estimated_bytes_saved}B, SROA fields: ${s.sroa_fields})\n    Note: ${s.note}`)
+          .join("\n\n") || "  ✓ 0 dynamic allocations (pure register scalar function)";
+        const spk = Object.entries(fn.optimized_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "c", "cpp", "go", "java"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>📦 ${fn.signature} (Saved: ${fn.bytes_saved_per_call}B/call · Stack/SROA: ${fn.stack_or_sroa_sites} · RVO: ${fn.rvo_sites})</strong><pre style="max-height:300px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `[Allocation Escape Lattice Audit]\n${siteLines}\n\n[13-Spoke Stack / Arena / SROA Lowering]\n${spk}`;
         cards.appendChild(card);
       });
     });

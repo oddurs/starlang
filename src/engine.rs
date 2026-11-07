@@ -18,6 +18,10 @@ use crate::polyhedral::{
 };
 use crate::quickcheck::{run_quickcheck, run_quickcheck_default, QuickCheckReport};
 use crate::refactor::{list_symbols, optimize_module, rename_symbol, SymbolEntry};
+use crate::regalloc::{
+    allocate_registers_and_codegen, analyze_escape_and_lifetimes, EscapeAnalysisReport,
+    RegAllocReport,
+};
 use crate::repair::{
     check_module_equivalence, inject_demo_bug, repair_module, EquivalenceReport, RepairReport,
 };
@@ -272,6 +276,18 @@ impl StarEngine {
     /// Implicit Path Enumeration (IPET) Symbolic BCET / WCET Timing Bound Analysis.
     pub fn termination_wcet(&self) -> TerminationWcetReport {
         prove_termination_and_wcet(self.hub())
+    }
+
+    /// Run Chaitin-Briggs Kempe-Stack Graph-Coloring & Poletto-Sarkar Linear-Scan Register Allocation
+    /// and emit Dual-Target Native Assembly (AArch64 AAPCS64 & x86_64 System V AMD64).
+    pub fn regalloc(&self, k_registers: Option<usize>) -> RegAllocReport {
+        allocate_registers_and_codegen(self.hub(), k_registers)
+    }
+
+    /// Run Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA),
+    /// Return-Value Optimization (RVO) & 13-Spoke Stack/Arena Lifetime Synthesis.
+    pub fn escape_analysis(&self) -> EscapeAnalysisReport {
+        analyze_escape_and_lifetimes(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.

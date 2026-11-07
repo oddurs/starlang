@@ -1655,6 +1655,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(wcet_resp.contains("\"all_terminating\":true"), "wcet failed: {}", wcet_resp);
     assert!(wcet_resp.contains("\"module_wcet_cycles_n64\":"));
 
+    // Verify /api/regalloc and /api/escape endpoints
+    let reg_resp = send_http("POST", "/api/regalloc", "{\"k\":\"8\"}");
+    assert!(reg_resp.contains("\"ok\":true"), "regalloc failed: {}", reg_resp);
+    assert!(reg_resp.contains("\"aarch64_asm\":"));
+    assert!(reg_resp.contains("\"x86_64_asm\":"));
+
+    let esc_resp = send_http("POST", "/api/escape", "{}");
+    assert!(esc_resp.contains("\"ok\":true"), "escape failed: {}", esc_resp);
+    assert!(esc_resp.contains("\"heap_reduction_pct\":"));
+    assert!(esc_resp.contains("\"optimized_by_spoke\":{"));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -1747,4 +1758,91 @@ fn polyhedral_loop_vectorizer_and_floyd_turing_termination_wcet_prover_analyze_a
     let inf_wcet = inf_eng.termination_wcet();
     assert!(!inf_wcet.all_terminating);
     assert_eq!(inf_wcet.diverging_or_unproven_loops, 1);
+}
+
+#[test]
+fn chaitin_briggs_register_allocator_native_asm_and_escape_sroa_analyzer_verify_across_thirteen_languages() {
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+
+    // 1. Standard K=8 Chaitin-Briggs Graph-Coloring & Linear-Scan Register Allocation
+    let reg8 = rl_eng.regalloc(Some(8));
+    assert_eq!(reg8.k_registers, 8);
+    assert!(reg8.total_virtual_regs >= 15);
+    assert!(reg8.total_interference_edges >= 10);
+    assert!(reg8.total_aarch64_insts >= 20);
+    assert!(reg8.total_x86_64_insts >= 20);
+
+    let eval_fn = reg8
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "evaluate_quota")
+        .unwrap();
+    assert!(eval_fn.aarch64_asm.contains(".globl _evaluate_quota"));
+    assert!(eval_fn.aarch64_asm.contains("stp x29, x30"));
+    assert!(eval_fn.aarch64_asm.contains("sdiv"));
+    assert!(eval_fn.x86_64_asm.contains(".intel_syntax noprefix"));
+    assert!(eval_fn.x86_64_asm.contains("idiv"));
+    assert!(eval_fn.mermaid_graph.contains("graph LR"));
+
+    // Verify that no two interfering variables share the same physical color in K=8
+    let color_by_var: std::collections::BTreeMap<&str, Option<usize>> = eval_fn
+        .intervals
+        .iter()
+        .map(|iv| (iv.var_name.as_str(), iv.assigned_color))
+        .collect();
+    for edge in &eval_fn.edges {
+        if edge.kind == "Interference" {
+            if let (Some(Some(cu)), Some(Some(cv))) = (
+                color_by_var.get(edge.u.as_str()),
+                color_by_var.get(edge.v.as_str()),
+            ) {
+                assert_ne!(
+                    cu, cv,
+                    "Interfering variables {} and {} were assigned identical color {}",
+                    edge.u, edge.v, cu
+                );
+            }
+        }
+    }
+
+    // 2. Constrained K=2 Kempe Spill Stress-Test: forces stack spill slots `[sp, #offset]` / `QWORD PTR [rbp - offset]`
+    let reg2 = rl_eng.regalloc(Some(2));
+    assert_eq!(reg2.k_registers, 2);
+    assert!(
+        reg2.total_spills > 0,
+        "Expected stack spills when K=2 on ratelimit, got 0"
+    );
+    let eval_fn2 = reg2
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "evaluate_quota")
+        .unwrap();
+    assert!(eval_fn2.spilled_vars > 0);
+    assert!(eval_fn2
+        .intervals
+        .iter()
+        .any(|iv| iv.spilled && iv.aarch64_loc.starts_with("[sp, #")));
+
+    // 3. Interprocedural Escape Analysis, SROA & RVO across `scores` and `ledger`
+    let scores_sample = find_sample("scores").unwrap();
+    let scores_eng =
+        StarEngine::from_source(scores_sample.initial_spoke, scores_sample.source).unwrap();
+    let esc_scores = scores_eng.escape_analysis();
+    assert!(esc_scores.total_alloc_sites >= 4);
+    assert!(esc_scores.stack_promoted_sites >= 1);
+    assert!(esc_scores.rvo_eliminated_sites >= 2);
+    assert!(esc_scores.sroa_scalarized_fields >= 3);
+    assert!(esc_scores.total_bytes_saved_per_run >= 80);
+    assert_eq!(esc_scores.heap_reduction_pct, 100);
+    for f in &esc_scores.functions {
+        assert_eq!(f.optimized_by_spoke.len(), 13);
+    }
+
+    let ledger_sample = find_sample("ledger").unwrap();
+    let ledger_eng =
+        StarEngine::from_source(ledger_sample.initial_spoke, ledger_sample.source).unwrap();
+    let esc_ledger = ledger_eng.escape_analysis();
+    assert!(esc_ledger.sroa_scalarized_fields >= 3);
+    assert!(esc_ledger.total_bytes_saved_per_run >= 60);
 }

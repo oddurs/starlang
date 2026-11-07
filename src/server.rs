@@ -15,6 +15,7 @@ use crate::merge::{MergeReport, SemanticDiffReport};
 use crate::mutate::MutationReport;
 use crate::polyhedral::{PolyhedralReport, TerminationWcetReport};
 use crate::quickcheck::QuickCheckReport;
+use crate::regalloc::{EscapeAnalysisReport, RegAllocReport};
 use crate::repair::RepairReport;
 use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
@@ -31,7 +32,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v1.7 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD & Termination/WCET Studio running at:");
+    println!("StarLang v1.8 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc & Escape Analysis Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -509,6 +510,26 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.termination_wcet()
             };
             let payload = wcet_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/regalloc") | ("GET", "/api/regalloc") => {
+            let parsed = parse_flat_json_object(&body).unwrap_or_default();
+            let k = parsed
+                .get("k")
+                .and_then(|s| s.parse::<usize>().ok());
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.regalloc(k)
+            };
+            let payload = regalloc_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/escape") | ("GET", "/api/escape") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.escape_analysis()
+            };
+            let payload = escape_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -1679,6 +1700,145 @@ fn wcet_to_json(rep: &TerminationWcetReport) -> String {
         rep.diverging_or_unproven_loops,
         rep.module_wcet_cycles_n64,
         rep.module_bcet_cycles_n64,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn regalloc_to_json(rep: &RegAllocReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let ivs: Vec<String> = f
+                .intervals
+                .iter()
+                .map(|iv| {
+                    let col_json = iv
+                        .assigned_color
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "null".to_string());
+                    format!(
+                        "{{\"var_name\":{},\"start_pc\":{},\"end_pc\":{},\"use_count\":{},\"max_loop_depth\":{},\"spill_weight\":{:.1},\"degree\":{},\"assigned_color\":{},\"aarch64_loc\":{},\"x86_64_loc\":{},\"linear_scan_loc\":{},\"spilled\":{}}}",
+                        json_str(&iv.var_name),
+                        iv.start_pc,
+                        iv.end_pc,
+                        iv.use_count,
+                        iv.max_loop_depth,
+                        iv.spill_weight,
+                        iv.degree,
+                        col_json,
+                        json_str(&iv.aarch64_loc),
+                        json_str(&iv.x86_64_loc),
+                        json_str(&iv.linear_scan_loc),
+                        iv.spilled
+                    )
+                })
+                .collect();
+            let eds: Vec<String> = f
+                .edges
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{{\"u\":{},\"v\":{},\"kind\":{}}}",
+                        json_str(&e.u),
+                        json_str(&e.v),
+                        json_str(&e.kind)
+                    )
+                })
+                .collect();
+            let kempe: Vec<String> = f.kempe_order.iter().map(|s| json_str(s)).collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"k_registers\":{},\"virtual_regs\":{},\"interference_edges_count\":{},\"max_pressure_clique\":{},\"chromatic_colors_used\":{},\"coalesced_moves\":{},\"spilled_vars\":{},\"stack_frame_bytes\":{},\"intervals\":[{}],\"edges\":[{}],\"kempe_order\":[{}],\"mermaid_graph\":{},\"aarch64_asm\":{},\"x86_64_asm\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.k_registers,
+                f.virtual_regs,
+                f.interference_edges_count,
+                f.max_pressure_clique,
+                f.chromatic_colors_used,
+                f.coalesced_moves,
+                f.spilled_vars,
+                f.stack_frame_bytes,
+                ivs.join(","),
+                eds.join(","),
+                kempe.join(","),
+                json_str(&f.mermaid_graph),
+                json_str(&f.aarch64_asm),
+                json_str(&f.x86_64_asm)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"k_registers\":{},\"total_functions\":{},\"total_virtual_regs\":{},\"total_interference_edges\":{},\"max_register_pressure\":{},\"total_coalesced_moves\":{},\"total_spills\":{},\"total_aarch64_insts\":{},\"total_x86_64_insts\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.k_registers,
+        rep.total_functions,
+        rep.total_virtual_regs,
+        rep.total_interference_edges,
+        rep.max_register_pressure,
+        rep.total_coalesced_moves,
+        rep.total_spills,
+        rep.total_aarch64_insts,
+        rep.total_x86_64_insts,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn escape_to_json(rep: &EscapeAnalysisReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let sites: Vec<String> = f
+                .sites
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{{\"site_id\":{},\"fn_name\":{},\"kind\":{},\"expr_summary\":{},\"escape_state\":{},\"promotion_strategy\":{},\"sroa_fields\":{},\"estimated_bytes_saved\":{},\"note\":{}}}",
+                        s.site_id,
+                        json_str(&s.fn_name),
+                        json_str(&s.kind),
+                        json_str(&s.expr_summary),
+                        json_str(&s.escape_state),
+                        json_str(&s.promotion_strategy),
+                        s.sroa_fields,
+                        s.estimated_bytes_saved,
+                        json_str(&s.note)
+                    )
+                })
+                .collect();
+            let spk: Vec<String> = f
+                .optimized_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"total_sites\":{},\"stack_or_sroa_sites\":{},\"rvo_sites\":{},\"heap_escape_sites\":{},\"bytes_saved_per_call\":{},\"sites\":[{}],\"optimized_by_spoke\":{{{}}}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.total_sites,
+                f.stack_or_sroa_sites,
+                f.rvo_sites,
+                f.heap_escape_sites,
+                f.bytes_saved_per_call,
+                sites.join(","),
+                spk.join(",")
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_alloc_sites\":{},\"stack_promoted_sites\":{},\"rvo_eliminated_sites\":{},\"sroa_scalarized_fields\":{},\"heap_escaping_sites\":{},\"total_bytes_saved_per_run\":{},\"heap_reduction_pct\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_alloc_sites,
+        rep.stack_promoted_sites,
+        rep.rvo_eliminated_sites,
+        rep.sroa_scalarized_fields,
+        rep.heap_escaping_sites,
+        rep.total_bytes_saved_per_run,
+        rep.heap_reduction_pct,
         rep.elapsed_ms,
         fns_json.join(",")
     )
