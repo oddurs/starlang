@@ -5,6 +5,9 @@ use crate::concolic::{
     analyze_security_flow, explore_concolic_paths, ConcolicReport, SecurityFlowReport,
 };
 use crate::debugger::{record_time_travel_default, TimeTravelReport};
+use crate::egraph::{
+    partial_eval_module, superoptimize_egraph, EGraphReport, PartialEvalReport,
+};
 use crate::eval::{eval_module, eval_tests_default, EvalResult, TestResult};
 use crate::hub::{Diagnostic, HubModule};
 use crate::lens::SpokeId;
@@ -216,6 +219,44 @@ impl StarEngine {
     /// Run Denning Lattice Information-Flow Taint Analysis, Sanitizer Verification & Constant-Time Side-Channel Auditing.
     pub fn security_flow(&self) -> SecurityFlowReport {
         analyze_security_flow(self.hub())
+    }
+
+    /// Run Equality Saturation & Congruence-Closure E-Graph Superoptimization.
+    /// If `apply_to_hub` is true and rewrites or dead-branch eliminations were discovered,
+    /// pushes the superoptimized Hub onto the history stack and returns the updated snapshot.
+    pub fn egraph(&mut self, apply_to_hub: bool) -> (EGraphReport, Option<SyncSnapshot>) {
+        let rep = superoptimize_egraph(self.hub());
+        let snap = if apply_to_hub && (rep.expressions_optimized > 0 || rep.dead_branches_pruned > 0)
+        {
+            let active = self.current().spoke;
+            self.push_hub(rep.optimized_hub.clone(), active);
+            Some(self.snapshot())
+        } else {
+            None
+        };
+        (rep, snap)
+    }
+
+    /// Run Futamura-Projection Partial Evaluation, Interprocedural Constant/Enum Specialization,
+    /// Bounded Loop Unrolling & E-Graph Superoptimization.
+    pub fn partial_eval(
+        &mut self,
+        apply_to_hub: bool,
+    ) -> (PartialEvalReport, Option<SyncSnapshot>) {
+        let rep = partial_eval_module(self.hub());
+        let snap = if apply_to_hub
+            && (rep.specialized_calls > 0
+                || rep.static_branches_folded > 0
+                || rep.loops_unrolled > 0
+                || rep.egraph_rewrites > 0)
+        {
+            let active = self.current().spoke;
+            self.push_hub(rep.residual_hub.clone(), active);
+            Some(self.snapshot())
+        } else {
+            None
+        };
+        (rep, snap)
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.

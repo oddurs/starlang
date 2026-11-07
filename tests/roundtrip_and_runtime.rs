@@ -867,6 +867,97 @@ fn whitebox_concolic_path_explorer_and_taint_security_flow_auditor_synthesize_an
 }
 
 #[test]
+fn equality_saturation_egraph_superoptimizer_and_futamura_partial_evaluator_specialize_and_validate_across_thirteen_languages() {
+    // 1. Test E-Graph Equality Saturation on algebraic cancellation, factoring & absorption identities
+    //    that phase-ordered peephole optimizers miss:
+    //    `((x + y) - y) + (z - z)` => `x`, `min(x, max(x, y))` => `x`, `(x * 3) + (x * 7)` => `(x * 10)`
+    let alg_py = r#"def algebraic_kernel(x: int, y: int, z: int) -> int:
+    a = ((x + y) - y) + (z - z)
+    b = min(x, max(x, y))
+    c = (x * 3) + (x * 7)
+    if False:
+        return -999
+    return (a + b) + (c - c)
+
+def main() -> None:
+    print(algebraic_kernel(21, 99, -42))
+
+def test_kernel() -> None:
+    assert algebraic_kernel(10, 50, 7) == 20
+"#;
+    let mut alg_eng = StarEngine::from_source(SpokeId::Python, alg_py).unwrap();
+    let (eg_rep, snap_opt) = alg_eng.egraph(true);
+    assert!(eg_rep.translation_validated, "{:?}", eg_rep);
+    assert!(
+        eg_rep.expressions_optimized >= 3,
+        "Expected >= 3 E-Graph expression rewrites, got {:?}",
+        eg_rep
+    );
+    assert_eq!(eg_rep.dead_branches_pruned, 1);
+    assert!(
+        eg_rep.gas_saved >= 20,
+        "Expected significant gas savings from E-Graph superoptimization, got {:?}",
+        eg_rep
+    );
+    assert!(eg_rep.mermaid.contains("flowchart TD"));
+    assert!(eg_rep.mermaid.contains("E-Class #"));
+
+    let alg_snap = snap_opt.expect("Expected snapshot after applying E-Graph superoptimizer");
+    assert_eq!(alg_snap.live_eval.stdout.trim(), "42");
+    assert!(alg_snap.test_results.iter().all(|t| t.passed));
+    // Verify simplified code across all 13 spoke languages
+    for spoke in SpokeId::ALL {
+        let code = &alg_snap.views[spoke.as_str()];
+        assert!(
+            !code.contains("999") && !code.contains("z - z"),
+            "Unoptimized expression survived in {:?}:\n{}",
+            spoke,
+            code
+        );
+    }
+
+    // 2. Test Futamura Partial Evaluator & Interprocedural Constant/Enum Specializer on `ratelimit`
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let mut rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+    let (pe_rep, pe_snap_opt) = rl_eng.partial_eval(true);
+    assert!(pe_rep.translation_validated, "{:?}", pe_rep);
+    assert!(
+        pe_rep.specialized_calls >= 2,
+        "Expected Futamura specialization on evaluate_quota(..., 40, TierPolicy::Burst) and effective_capacity(40, TierPolicy::Burst), got {:?}",
+        pe_rep
+    );
+    assert!(pe_rep.residual_functions_synthesized >= 1);
+    assert!(pe_rep.static_branches_folded >= 1);
+    assert!(
+        pe_rep.vm_steps_after < pe_rep.vm_steps_before,
+        "Expected specialized residual program to execute in fewer VM steps ({} vs {})",
+        pe_rep.vm_steps_after,
+        pe_rep.vm_steps_before
+    );
+    assert_eq!(pe_rep.stdout_before, pe_rep.stdout_after);
+    assert_eq!(pe_rep.tests_passed, pe_rep.tests_total);
+
+    let pe_snap = pe_snap_opt.expect("Expected snapshot after applying Futamura partial evaluation");
+    for spoke in SpokeId::ALL {
+        let code = &pe_snap.views[spoke.as_str()];
+        assert!(
+            code.contains("evaluate_quota_spec_i40_burst"),
+            "Specialized residual function missing in {:?}:\n{}",
+            spoke,
+            code
+        );
+    }
+
+    // 3. Test Bounded Static Loop Unrolling (`for i in 0..3`)
+    let loop_py = "def sum_triple(base: int) -> int:\n    acc = base\n    for i in range(0, 3):\n        acc += i * 10\n    return acc\n\ndef main() -> None:\n    print(sum_triple(5))\n";
+    let mut loop_eng = StarEngine::from_source(SpokeId::Python, loop_py).unwrap();
+    let (loop_pe, _) = loop_eng.partial_eval(true);
+    assert!(loop_pe.translation_validated);
+    assert!(loop_pe.loops_unrolled >= 1);
+    assert_eq!(loop_pe.stdout_after, "35");
+}
+
+#[test]
 fn lua_spoke_and_zero_dep_wasm_backend_compile_sync_and_execute_in_v8_jit() {
     // 1. Seed from `backoff` (LuaJIT + LuaCATS preset) and verify symbolic safety obligations
     let sample = find_sample("backoff").unwrap();
@@ -1541,6 +1632,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(sec_resp.contains("\"ok\":true"), "security failed: {}", sec_resp);
     assert!(sec_resp.contains("\"all_sinks_safe\":true"), "security failed: {}", sec_resp);
     assert!(sec_resp.contains("\"flow_edges\":["));
+
+    // Verify /api/egraph and /api/peval endpoints
+    let eg_resp = send_http("POST", "/api/egraph", "{\"apply\":\"false\"}");
+    assert!(eg_resp.contains("\"ok\":true"), "egraph failed: {}", eg_resp);
+    assert!(eg_resp.contains("\"total_eclasses\":"));
+    assert!(eg_resp.contains("\"translation_validated\":true"));
+
+    let pe_resp = send_http("POST", "/api/peval", "{\"apply\":\"false\"}");
+    assert!(pe_resp.contains("\"ok\":true"), "peval failed: {}", pe_resp);
+    assert!(pe_resp.contains("\"translation_validated\":true"), "peval failed: {}", pe_resp);
+    assert!(pe_resp.contains("\"vm_steps_before\":"));
 
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");

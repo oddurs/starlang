@@ -6,6 +6,7 @@ use std::thread;
 use crate::complexity::ComplexityReport;
 use crate::concolic::{ConcolicReport, SecurityFlowReport};
 use crate::debugger::TimeTravelReport;
+use crate::egraph::{EGraphReport, PartialEvalReport};
 use crate::engine::{StarEngine, SyncSnapshot};
 use crate::hub::Diagnostic;
 use crate::json::{json_str, parse_flat_json_object};
@@ -465,6 +466,32 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.security_flow()
             };
             let payload = security_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/egraph") | ("GET", "/api/egraph") => {
+            let parsed = parse_flat_json_object(&body).unwrap_or_default();
+            let apply = parsed
+                .get("apply")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false);
+            let (rep, snap) = {
+                let mut eng = shared.lock().unwrap();
+                eng.egraph(apply)
+            };
+            let payload = egraph_to_json(&rep, snap.as_ref());
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/peval") | ("GET", "/api/peval") => {
+            let parsed = parse_flat_json_object(&body).unwrap_or_default();
+            let apply = parsed
+                .get("apply")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false);
+            let (rep, snap) = {
+                let mut eng = shared.lock().unwrap();
+                eng.partial_eval(apply)
+            };
+            let payload = peval_to_json(&rep, snap.as_ref());
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -1401,6 +1428,107 @@ fn security_to_json(rep: &SecurityFlowReport) -> String {
         rep.unsanitized_sinks,
         rep.elapsed_ms,
         fns_json.join(",")
+    )
+}
+
+fn egraph_to_json(rep: &EGraphReport, snap: Option<&SyncSnapshot>) -> String {
+    let rules_json: Vec<String> = rep
+        .rules_fired
+        .iter()
+        .map(|(k, v)| format!("{}:{}", json_str(k), v))
+        .collect();
+    let rewrites_json: Vec<String> = rep
+        .rewrites
+        .iter()
+        .map(|w| {
+            format!(
+                "{{\"scope\":{},\"eclass_id\":{},\"before_expr\":{},\"after_expr\":{},\"cost_before\":{},\"cost_after\":{},\"class_size\":{}}}",
+                json_str(&w.scope),
+                w.eclass_id,
+                json_str(&w.before_expr),
+                json_str(&w.after_expr),
+                w.cost_before,
+                w.cost_after,
+                w.class_size
+            )
+        })
+        .collect();
+    let views_json: Vec<String> = rep
+        .views_by_spoke
+        .iter()
+        .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+        .collect();
+    let snap_json = snap
+        .map(snapshot_to_json)
+        .unwrap_or_else(|| "null".to_string());
+
+    format!(
+        "{{\"ok\":true,\"total_eclasses\":{},\"total_enodes\":{},\"total_unions\":{},\"saturation_iterations\":{},\"expressions_optimized\":{},\"dead_branches_pruned\":{},\"cost_before\":{},\"cost_after\":{},\"gas_saved\":{},\"translation_validated\":{},\"rules_fired\":{{{}}},\"rewrites\":[{}],\"mermaid\":{},\"views_by_spoke\":{{{}}},\"elapsed_ms\":{},\"snapshot\":{}}}",
+        rep.total_eclasses,
+        rep.total_enodes,
+        rep.total_unions,
+        rep.saturation_iterations,
+        rep.expressions_optimized,
+        rep.dead_branches_pruned,
+        rep.cost_before,
+        rep.cost_after,
+        rep.gas_saved,
+        rep.translation_validated,
+        rules_json.join(","),
+        rewrites_json.join(","),
+        json_str(&rep.mermaid),
+        views_json.join(","),
+        rep.elapsed_ms,
+        snap_json
+    )
+}
+
+fn peval_to_json(rep: &PartialEvalReport, snap: Option<&SyncSnapshot>) -> String {
+    let specs_json: Vec<String> = rep
+        .specializations
+        .iter()
+        .map(|s| {
+            format!(
+                "{{\"caller\":{},\"callee\":{},\"specialized_name\":{},\"static_bindings\":{},\"summary\":{}}}",
+                json_str(&s.caller),
+                json_str(&s.callee),
+                json_str(&s.specialized_name),
+                json_str(&s.static_bindings),
+                json_str(&s.summary)
+            )
+        })
+        .collect();
+    let views_json: Vec<String> = rep
+        .views_by_spoke
+        .iter()
+        .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+        .collect();
+    let snap_json = snap
+        .map(snapshot_to_json)
+        .unwrap_or_else(|| "null".to_string());
+
+    format!(
+        "{{\"ok\":true,\"specialized_calls\":{},\"residual_functions_synthesized\":{},\"static_branches_folded\":{},\"loops_unrolled\":{},\"egraph_rewrites\":{},\"nodes_before\":{},\"nodes_after\":{},\"vm_steps_before\":{},\"vm_steps_after\":{},\"gas_before\":{},\"gas_after\":{},\"translation_validated\":{},\"stdout_before\":{},\"stdout_after\":{},\"tests_passed\":{},\"tests_total\":{},\"specializations\":[{}],\"views_by_spoke\":{{{}}},\"elapsed_ms\":{},\"snapshot\":{}}}",
+        rep.specialized_calls,
+        rep.residual_functions_synthesized,
+        rep.static_branches_folded,
+        rep.loops_unrolled,
+        rep.egraph_rewrites,
+        rep.nodes_before,
+        rep.nodes_after,
+        rep.vm_steps_before,
+        rep.vm_steps_after,
+        rep.gas_before,
+        rep.gas_after,
+        rep.translation_validated,
+        json_str(&rep.stdout_before),
+        json_str(&rep.stdout_after),
+        rep.tests_passed,
+        rep.tests_total,
+        specs_json.join(","),
+        views_json.join(","),
+        rep.elapsed_ms,
+        snap_json
     )
 }
 

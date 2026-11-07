@@ -153,6 +153,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "egraph" => {
+            if let Err(e) = run_egraph_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "peval" => {
+            if let Err(e) = run_peval_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -1531,6 +1543,160 @@ fn run_security_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_egraph_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    let mut apply = false;
+    for a in args {
+        if a == "--apply" || a == "-a" {
+            apply = true;
+        } else if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (mut eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("pipeline").ok_or("missing pipeline sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let (rep, _) = eng.egraph(apply);
+    println!(
+        "=== Equality Saturation & Congruence-Closure E-Graph Superoptimizer: {} ===",
+        label
+    );
+    println!(
+        "E-Classes: {} | E-Nodes: {} | Congruence Unions: {} ({} saturation iters) | Rewrites: {} | Dead Branches Pruned: {} | Gas: {} -> {} (saved {}) | Validated: {} ({}ms)\n",
+        rep.total_eclasses,
+        rep.total_enodes,
+        rep.total_unions,
+        rep.saturation_iterations,
+        rep.expressions_optimized,
+        rep.dead_branches_pruned,
+        rep.cost_before,
+        rep.cost_after,
+        rep.gas_saved,
+        rep.translation_validated,
+        rep.elapsed_ms
+    );
+
+    if !rep.rules_fired.is_empty() {
+        let rules_str: Vec<String> = rep
+            .rules_fired
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
+        println!("Rewrite Rules Fired: {}", rules_str.join(", "));
+    }
+
+    for w in &rep.rewrites {
+        println!(
+            "  • [{} · E-Class #{} ({} forms)] cost {} -> {} :: {}  ==>  {}",
+            w.scope,
+            w.eclass_id,
+            w.class_size,
+            w.cost_before,
+            w.cost_after,
+            w.before_expr,
+            w.after_expr
+        );
+    }
+
+    if !rep.translation_validated {
+        return Err("E-Graph superoptimizer translation validation failed".to_string());
+    }
+    Ok(())
+}
+
+fn run_peval_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    let mut apply = false;
+    for a in args {
+        if a == "--apply" || a == "-a" {
+            apply = true;
+        } else if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (mut eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let (rep, _) = eng.partial_eval(apply);
+    println!(
+        "=== Futamura Partial Evaluator, Interprocedural Specializer & Loop Unroller: {} ===",
+        label
+    );
+    println!(
+        "Specialized Calls: {} | Residual Fns: {} | Static Branches Folded: {} | Loops Unrolled: {} | E-Graph Rewrites: {} ({}ms)",
+        rep.specialized_calls,
+        rep.residual_functions_synthesized,
+        rep.static_branches_folded,
+        rep.loops_unrolled,
+        rep.egraph_rewrites,
+        rep.elapsed_ms
+    );
+    println!(
+        "VM Steps: {} -> {} | Gas: {} -> {} | AST Nodes: {} -> {} | Translation Validated: {} ({}/{} tests pass)\n",
+        rep.vm_steps_before,
+        rep.vm_steps_after,
+        rep.gas_before,
+        rep.gas_after,
+        rep.nodes_before,
+        rep.nodes_after,
+        rep.translation_validated,
+        rep.tests_passed,
+        rep.tests_total
+    );
+
+    for s in &rep.specializations {
+        println!(
+            "  • [{}() -> {}()] bindings: {} :: {}",
+            s.caller, s.callee, s.static_bindings, s.summary
+        );
+    }
+
+    if !rep.translation_validated {
+        return Err("Futamura partial evaluator translation validation failed".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -1735,13 +1901,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v1.5 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare Contracts, Concolic & Taint Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
+        "starlang v1.6 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph & Partial Eval Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- egraph [file|preset] [--apply]       Run Equality Saturation & Congruence-Closure E-Graph Superoptimizer
+  cargo run -- peval [file|preset] [--apply]        Run Futamura Partial Evaluator, Constant/Enum Specializer & Loop Unroller
   cargo run -- concolic [file|preset] [--inject]    Explore execution paths via boundary-negation solver & synthesize path-covering tests
   cargo run -- security [file|preset]               Audit Denning lattice taint flows, dominating sanitizers & constant-time side-channels
   cargo run -- ssa [file|preset]                    Compute Cytron SSA form, Dominance Frontiers, φ-nodes, Liveness & Def-Use chains
@@ -1900,9 +2068,14 @@ fn run_cli_demo() -> Result<(), String> {
     let hoare_rep = rl_eng.contracts();
     let sec_rep = rl_eng.security_flow();
     let mut repair_eng = rl_eng;
+    let (peval_rep, _) = repair_eng.partial_eval(false);
     let (conc_rep, _) = repair_eng.concolic(false);
     let (_, rrep, _) = repair_eng.repair(true);
     let (srep, _) = repair_eng.synthesize(None, false)?;
+    let pipe_sample = find_sample("pipeline").ok_or("missing pipeline sample")?;
+    let mut pipe_eng = StarEngine::from_source(pipe_sample.initial_spoke, pipe_sample.source)
+        .map_err(|d| d.to_string())?;
+    let (eg_rep, _) = pipe_eng.egraph(false);
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -1911,7 +2084,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{}\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -1931,7 +2104,12 @@ fn run_cli_demo() -> Result<(), String> {
         conc_rep.total_paths,
         conc_rep.branch_coverage_pct,
         sec_rep.safe_sinks,
-        sec_rep.total_sinks
+        sec_rep.total_sinks,
+        eg_rep.total_eclasses,
+        eg_rep.gas_saved,
+        peval_rep.specialized_calls,
+        peval_rep.vm_steps_before,
+        peval_rep.vm_steps_after
     );
     if !drep.ok
         || slice_len == 0
@@ -1943,8 +2121,10 @@ fn run_cli_demo() -> Result<(), String> {
         || !hoare_rep.all_verified
         || conc_rep.total_paths == 0
         || !sec_rep.all_sinks_safe
+        || !eg_rep.translation_validated
+        || !peval_rep.translation_validated
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, or Security Taint failed on ratelimit".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, or Partial Eval failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

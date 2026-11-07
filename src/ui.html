@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,7 +436,7 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v1.5 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare Contracts, Concolic & Taint Studio</h1>
+        <h1>★ StarLang v1.6 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph & Partial Eval Studio</h1>
         <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm & 14-Engine Verification</p>
       </div>
     </div>
@@ -444,6 +444,8 @@
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="egraph-btn" title="Equality Saturation & Congruence-Closure E-Graph Superoptimizer across all 13 languages">🔮 E-Graph Superopt</button>
+      <button class="opt-btn" id="peval-btn" title="Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer & Loop Unroller across all 13 languages">⚡ Partial Eval</button>
       <button class="trace-btn" id="concolic-btn" title="Whitebox concolic path exploration, boundary-negation solver & path-covering unit test synthesis across all 13 languages">🧭 Concolic Paths</button>
       <button class="verify-btn" id="security-btn" title="Denning lattice information-flow taint analysis, sanitizer verification & constant-time side-channel auditor">🔒 Taint & Security</button>
       <button class="verify-btn" id="contracts-btn" title="Infer Hoare Logic Design-by-Contract specifications (requires, loop_invariant, ensures) & verify Dijkstra Weakest-Precondition VCs across 13 languages">📜 Hoare Contracts</button>
@@ -662,6 +664,28 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="egraph-drawer">
+    <div class="run-header">
+      <span id="egraph-summary">🔮 Equality Saturation & Congruence-Closure E-Graph Superoptimizer...</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="wasm-btn" id="egraph-apply-btn">🔮 Apply Minimum-Gas AST Across All 13 Spokes</button>
+        <button onclick="document.getElementById('egraph-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="egraph-cards"></div>
+  </section>
+
+  <section id="peval-drawer">
+    <div class="run-header">
+      <span id="peval-summary">⚡ Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer & Loop Unroller...</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="opt-btn" id="peval-apply-btn">⚡ Apply Specialized Residual Program Across All 13 Spokes</button>
+        <button onclick="document.getElementById('peval-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="peval-cards"></div>
+  </section>
 
   <section id="concolic-drawer">
     <div class="run-header">
@@ -1827,6 +1851,94 @@
         cards.appendChild(card);
       });
     });
+
+    async function triggerEGraph(applyFlag) {
+      const drawer = document.getElementById("egraph-drawer");
+      const summary = document.getElementById("egraph-summary");
+      const cards = document.getElementById("egraph-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Running Equality Saturation, Congruence Closure & minimum-gas AST extraction...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/egraph", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apply: applyFlag ? "true" : "false" })
+      });
+      const data = await res.json();
+      if (data.snapshot && applyFlag) {
+        applySnapshot(data.snapshot, null);
+      }
+      const color = data.translation_validated ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">🔮 E-Graph Superoptimizer: ${data.total_eclasses} E-Classes · ${data.total_enodes} E-Nodes · ${data.total_unions} congruence unions (${data.saturation_iterations} iters) · ${data.expressions_optimized} rewrite(s) · Gas: ${data.cost_before} → ${data.cost_after} (saved ${data.gas_saved}) · Validated: ${data.translation_validated} (${data.elapsed_ms}ms)</span>`;
+
+      const rwCard = document.createElement("div");
+      rwCard.className = "run-card";
+      const rwLines = (data.rewrites || [])
+        .map(w => `[${w.scope} · E-Class #${w.eclass_id} (${w.class_size} forms)] cost ${w.cost_before} → ${w.cost_after}\n  ${w.before_expr}  ⇒  ${w.after_expr}`)
+        .join("\n\n") || "✓ All expressions are already in minimal-cost canonical form.";
+      const ruleLines = Object.entries(data.rules_fired || {})
+        .map(([r, c]) => `${r}: ${c}`)
+        .join(", ") || "none";
+      rwCard.innerHTML = `<strong>🔮 Extracted Minimum-Cost E-Class Rewrites (${(data.rewrites || []).length})</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+      rwCard.querySelector("pre").textContent = `Rules Fired: ${ruleLines}\n\n${rwLines}`;
+      cards.appendChild(rwCard);
+
+      const mCard = document.createElement("div");
+      mCard.className = "run-card";
+      mCard.innerHTML = `<strong>🕸 Saturated E-Graph Cluster Diagram (Mermaid)</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+      mCard.querySelector("pre").textContent = data.mermaid || "";
+      cards.appendChild(mCard);
+    }
+
+    document.getElementById("egraph-btn").addEventListener("click", () => triggerEGraph(false));
+    document.getElementById("egraph-apply-btn").addEventListener("click", () => triggerEGraph(true));
+
+    async function triggerPeval(applyFlag) {
+      const drawer = document.getElementById("peval-drawer");
+      const summary = document.getElementById("peval-summary");
+      const cards = document.getElementById("peval-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Running Futamura interprocedural specialization, static branch folding & E-Graph superoptimization...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/peval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apply: applyFlag ? "true" : "false" })
+      });
+      const data = await res.json();
+      if (data.snapshot && applyFlag) {
+        applySnapshot(data.snapshot, null);
+      }
+      const color = data.translation_validated ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">⚡ Futamura Partial Evaluator: ${data.specialized_calls} specialized call(s) · ${data.residual_functions_synthesized} residual fn(s) · ${data.static_branches_folded} static branch(es) folded · ${data.loops_unrolled} loop(s) unrolled · VM Steps: ${data.vm_steps_before} → ${data.vm_steps_after} · Gas: ${data.gas_before} → ${data.gas_after} (${data.elapsed_ms}ms)</span>`;
+
+      const specCard = document.createElement("div");
+      specCard.className = "run-card";
+      const specLines = (data.specializations || [])
+        .map(s => `[${s.caller}() → ${s.callee}()] bindings: ${s.static_bindings}\n  ↳ ${s.summary}`)
+        .join("\n\n") || "(no interprocedural call specialization sites)";
+      specCard.innerHTML = `<strong>⚡ Futamura Specializations & Translation Validation</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+      specCard.querySelector("pre").textContent =
+        `Translation Validated: ${data.translation_validated} (Tests: ${data.tests_passed}/${data.tests_total})\n` +
+        `VM Steps: ${data.vm_steps_before} → ${data.vm_steps_after} | Gas: ${data.gas_before} → ${data.gas_after} | AST Nodes: ${data.nodes_before} → ${data.nodes_after}\n` +
+        `stdout: ${data.stdout_before} == ${data.stdout_after}\n\n${specLines}`;
+      cards.appendChild(specCard);
+
+      const projCard = document.createElement("div");
+      projCard.className = "run-card";
+      const spk = Object.entries(data.views_by_spoke || {})
+        .filter(([k, _]) => ["rust", "zig", "c", "python", "perl"].includes(k))
+        .map(([k, v]) => `[${k}]\n${(v || "").trim()}`)
+        .join("\n\n");
+      projCard.innerHTML = `<strong>🌐 Residual Specialized Program (Selected Spokes)</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+      projCard.querySelector("pre").textContent = spk;
+      cards.appendChild(projCard);
+    }
+
+    document.getElementById("peval-btn").addEventListener("click", () => triggerPeval(false));
+    document.getElementById("peval-apply-btn").addEventListener("click", () => triggerPeval(true));
 
     document.getElementById("undo-btn").addEventListener("click", async () => {
       const res = await fetch("/api/undo", { method: "POST", body: "{}" });
