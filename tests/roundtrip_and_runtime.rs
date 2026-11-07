@@ -696,6 +696,89 @@ fn pbe_inductive_synthesizer_and_dominator_cfg_analyzer_synthesize_and_export_ac
 }
 
 #[test]
+fn cytron_ssa_phi_placement_liveness_and_hoare_logic_contracts_verify_across_thirteen_languages() {
+    let sample = find_sample("ratelimit").unwrap();
+    let engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+
+    // 1. Verify Cytron SSA form, Dominance Frontiers, φ-Node Placement, Liveness & Def-Use Chains
+    let ssa = engine.ssa();
+    assert_eq!(ssa.total_functions, 3);
+    assert!(
+        ssa.total_phi_nodes >= 4,
+        "Expected >= 4 φ-nodes across LoopHeader and Join blocks in ratelimit, got {:?}",
+        ssa
+    );
+    assert!(ssa.total_ssa_defs >= 15);
+    let quota_ssa = ssa
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "evaluate_quota")
+        .unwrap();
+    assert!(quota_ssa.phi_count >= 4);
+    assert!(quota_ssa.ssa_listing.contains("= φ("));
+    assert!(
+        quota_ssa
+            .def_use_chains
+            .iter()
+            .any(|c| c.base_var == "accepted" && !c.uses.is_empty()),
+        "Expected non-empty Def-Use chain for `accepted` in evaluate_quota"
+    );
+    assert!(
+        quota_ssa
+            .blocks
+            .iter()
+            .any(|b| !b.dominance_frontier.is_empty() && !b.live_in.is_empty()),
+        "Expected blocks with non-empty Dominance Frontier and LiveIn sets"
+    );
+
+    // 2. Verify Dead-Store detection when a function contains an unused local variable assignment
+    let dead_py = "def calc(x: int) -> int:\n    unused_tmp = x + 99\n    used = x * 2\n    return used\n\ndef main() -> None:\n    print(calc(5))\n";
+    let dead_eng = StarEngine::from_source(SpokeId::Python, dead_py).unwrap();
+    let dead_ssa = dead_eng.ssa();
+    assert!(
+        dead_ssa.total_dead_stores >= 1,
+        "Expected SSA Def-Use analysis to flag `unused_tmp` as a dead store: {:?}",
+        dead_ssa
+    );
+
+    // 3. Verify Hoare-Logic Contract Inference (`requires` / `loop_invariant` / `ensures`) & WP VCs
+    let contracts = engine.contracts();
+    assert!(contracts.all_verified, "{:?}", contracts);
+    assert_eq!(contracts.proven_vcs, contracts.total_vcs);
+    assert!(contracts.total_vcs >= 6, "{:?}", contracts);
+    assert!(contracts.total_invariants >= 4);
+    assert!(contracts.total_ensures >= 3);
+
+    let quota_contract = contracts
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "evaluate_quota")
+        .unwrap();
+    assert!(quota_contract.verified);
+    assert!(
+        quota_contract
+            .ensures
+            .iter()
+            .any(|e| e.contains("accepted + result.rejected == len(costs)")),
+        "Expected conservation law in Hoare `ensures` clause: {:?}",
+        quota_contract.ensures
+    );
+    for spoke in SpokeId::ALL {
+        let ann = quota_contract
+            .annotated_by_spoke
+            .get(spoke.as_str())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            ann.contains("@requires") && ann.contains("@ensures"),
+            "Missing DbC contract annotations for {:?}: {}",
+            spoke,
+            ann
+        );
+    }
+}
+
+#[test]
 fn lua_spoke_and_zero_dep_wasm_backend_compile_sync_and_execute_in_v8_jit() {
     // 1. Seed from `backoff` (LuaJIT + LuaCATS preset) and verify symbolic safety obligations
     let sample = find_sample("backoff").unwrap();
@@ -1348,6 +1431,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(cfg_resp.contains("\"ok\":true"), "cfg failed: {}", cfg_resp);
     assert!(cfg_resp.contains("\"total_natural_loops\":"));
     assert!(cfg_resp.contains("flowchart TD"));
+
+    // Verify /api/ssa and /api/contracts endpoints
+    let ssa_resp = send_http("POST", "/api/ssa", "{}");
+    assert!(ssa_resp.contains("\"ok\":true"), "ssa failed: {}", ssa_resp);
+    assert!(ssa_resp.contains("\"total_phi_nodes\":"));
+    assert!(ssa_resp.contains("\"def_use_chains\":["));
+
+    let cnt_resp = send_http("POST", "/api/contracts", "{}");
+    assert!(cnt_resp.contains("\"ok\":true"), "contracts failed: {}", cnt_resp);
+    assert!(cnt_resp.contains("\"all_verified\":true"), "contracts failed: {}", cnt_resp);
+    assert!(cnt_resp.contains("\"verification_conditions\":["));
 
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");

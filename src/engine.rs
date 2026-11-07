@@ -13,6 +13,7 @@ use crate::repair::{
     check_module_equivalence, inject_demo_bug, repair_module, EquivalenceReport, RepairReport,
 };
 use crate::spokes::lens_for;
+use crate::ssa::{analyze_ssa, infer_hoare_contracts, HoareContractReport, ModuleSsaReport};
 use crate::synth::{
     analyze_cfg, default_list_synth_spec, default_synth_spec, parse_synth_spec,
     synthesize_from_examples, ModuleCfgReport, SynthReport,
@@ -181,6 +182,17 @@ impl StarEngine {
     /// Analyze Control-Flow Graphs (Basic Blocks, Dominator Trees, Natural Loops, Mermaid & DOT).
     pub fn cfg(&self) -> ModuleCfgReport {
         analyze_cfg(self.hub())
+    }
+
+    /// Compute Cytron Static Single Assignment (SSA) form, Dominance Frontiers, φ-nodes, Liveness & Def-Use chains.
+    pub fn ssa(&self) -> ModuleSsaReport {
+        analyze_ssa(self.hub())
+    }
+
+    /// Infer Design-by-Contract (DbC) Hoare Logic specifications (`requires`, `loop_invariant`, `ensures`)
+    /// and verify Dijkstra Weakest-Precondition (`WP`) Verification Conditions across all 13 spokes.
+    pub fn contracts(&self) -> HoareContractReport {
+        infer_hoare_contracts(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.

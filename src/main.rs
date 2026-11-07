@@ -129,6 +129,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "ssa" => {
+            if let Err(e) = run_ssa_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "contracts" => {
+            if let Err(e) = run_contracts_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -1209,6 +1221,151 @@ fn run_cfg_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_ssa_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.ssa();
+    println!(
+        "=== Cytron Static Single Assignment (SSA), Dominance Frontiers, φ-Nodes & Liveness: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Basic Blocks: {} | φ-Nodes: {} | SSA Definitions: {} | Dead Stores: {} ({}ms)\n",
+        rep.total_functions,
+        rep.total_blocks,
+        rep.total_phi_nodes,
+        rep.total_ssa_defs,
+        rep.total_dead_stores,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        print!("{}", f.ssa_listing);
+        println!("  Def-Use Chains ({}):", f.def_use_chains.len());
+        for c in &f.def_use_chains {
+            println!(
+                "    • {:<16} (BB{} · {:<9}) -> {} use(s){}",
+                c.ssa_var,
+                c.def_block,
+                c.def_kind,
+                c.uses.len(),
+                if c.is_dead_store { " [DEAD STORE]" } else { "" }
+            );
+        }
+        println!();
+    }
+    Ok(())
+}
+
+fn run_contracts_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.contracts();
+    println!(
+        "=== Polyglot Hoare-Logic Design-by-Contract & Weakest-Precondition (WP) Verifier: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Requires: {} | Loop Invariants: {} | Ensures: {} | Verification Conditions: {}/{} proven ({}ms)\n",
+        rep.total_functions,
+        rep.total_requires,
+        rep.total_invariants,
+        rep.total_ensures,
+        rep.proven_vcs,
+        rep.total_vcs,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [VCs: {}/{} proven]",
+            f.signature, f.vcs_proven, f.vcs_total
+        );
+        for r in &f.requires {
+            println!("  requires:       {}", r);
+        }
+        for inv in &f.loop_invariants {
+            println!("  loop_invariant: {}", inv);
+        }
+        for ens in &f.ensures {
+            println!("  ensures:        {}", ens);
+        }
+        println!();
+    }
+
+    println!("Verification Conditions ({}):", rep.verification_conditions.len());
+    for vc in &rep.verification_conditions {
+        println!(
+            "  {} [VC #{} · {} in {}()] {} :: {}",
+            if vc.proven { "✓" } else { "✗" },
+            vc.id,
+            vc.kind,
+            vc.fn_name,
+            vc.wp_formula,
+            vc.proof_note
+        );
+    }
+
+    if !rep.all_verified {
+        return Err("one or more Hoare Verification Conditions could not be proven".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -1413,13 +1570,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v1.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair & PBE Synthesizer Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
+        "starlang v1.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA & Hoare Contracts Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- ssa [file|preset]                    Compute Cytron SSA form, Dominance Frontiers, φ-nodes, Liveness & Def-Use chains
+  cargo run -- contracts [file|preset]              Infer Hoare-Logic DbC contracts (requires/invariant/ensures) & verify WP VCs
   cargo run -- synth [spec|sum_above]               Synthesize a verified polyglot function from I/O examples across all 13 spokes
   cargo run -- cfg [file|preset] [--dot]            Analyze Control-Flow Graphs, Dominator sets, Natural Loops & Mermaid/DOT
   cargo run -- debug [file|preset] [--slice var]    Record time-travel trace across all 13 languages & compute backward causal slice
@@ -1440,7 +1599,7 @@ USAGE:
   cargo run -- refactor <file> <sym> <new> [--to X] Scope-aware cross-language symbol rename
   cargo run -- optimize <file> [--to X]             Constant-fold & prune dead branches via the Hub
   cargo run -- run <file>                           Verify across Hub VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + ruby + luajit + perl + node
-  cargo run -- demo                                 Run an end-to-end 13-spoke sync, Wasm JIT, time-travel, Big-O, QuickCheck, repair, synth & 14-engine demo"
+  cargo run -- demo                                 Run an end-to-end 13-spoke sync, Wasm JIT, time-travel, Big-O, QuickCheck, repair, synth, SSA & 14-engine demo"
     );
 }
 
@@ -1570,6 +1729,8 @@ fn run_cli_demo() -> Result<(), String> {
     let crep = rl_eng.complexity();
     let qrep = rl_eng.quickcheck(Some(32));
     let cfg_rep = rl_eng.cfg();
+    let ssa_rep = rl_eng.ssa();
+    let hoare_rep = rl_eng.contracts();
     let mut repair_eng = rl_eng;
     let (_, rrep, _) = repair_eng.repair(true);
     let (srep, _) = repair_eng.synthesize(None, false)?;
@@ -1581,7 +1742,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s)\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -1593,7 +1754,11 @@ fn run_cli_demo() -> Result<(), String> {
         srep.fn_name,
         srep.pruned_by_obs_equiv,
         cfg_rep.total_blocks,
-        cfg_rep.total_natural_loops
+        cfg_rep.total_natural_loops,
+        ssa_rep.total_phi_nodes,
+        ssa_rep.total_ssa_defs,
+        hoare_rep.proven_vcs,
+        hoare_rep.total_vcs
     );
     if !drep.ok
         || slice_len == 0
@@ -1601,8 +1766,10 @@ fn run_cli_demo() -> Result<(), String> {
         || !rrep.repaired
         || !srep.ok
         || cfg_rep.total_blocks == 0
+        || ssa_rep.total_phi_nodes == 0
+        || !hoare_rep.all_verified
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, or CFG failed on ratelimit".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, or Hoare WP failed on ratelimit".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

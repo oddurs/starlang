@@ -58,6 +58,10 @@ jobs:
         run: cargo run --quiet -- synth > /dev/null
       - name: Run control-flow graph (CFG), dominator tree & natural-loop analyzer
         run: cargo run --quiet -- cfg > /dev/null
+      - name: Run Cytron SSA, dominance frontier, phi-node & liveness analyzer
+        run: cargo run --quiet -- ssa > /dev/null
+      - name: Run Hoare-Logic DbC contract synthesizer & Weakest-Precondition verifier
+        run: cargo run --quiet -- contracts > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier
