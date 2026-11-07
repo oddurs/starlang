@@ -82,6 +82,10 @@ jobs:
         run: cargo run --quiet -- microarch > /dev/null
       - name: Run Gibbons-Muchnick critical-path DAG list instruction scheduler
         run: cargo run --quiet -- schedule > /dev/null
+      - name: Run Forward-Mode Dual & Reverse-Mode Wengert-Tape automatic differentiation
+        run: cargo run --quiet -- autodiff > /dev/null
+      - name: Run IEEE-754 / Fixed-Point numerical stability & Lipschitz bound auditor
+        run: cargo run --quiet -- stability > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier

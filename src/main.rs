@@ -201,6 +201,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "autodiff" => {
+            if let Err(e) = run_autodiff_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "stability" => {
+            if let Err(e) = run_stability_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -2231,6 +2243,154 @@ fn run_schedule_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_autodiff_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    let mut inject = false;
+    for a in args {
+        if a == "--inject" || a == "-i" {
+            inject = true;
+        } else if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (mut eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("pipeline").ok_or("missing pipeline sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let (rep, _) = eng.autodiff(inject);
+    println!(
+        "=== Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} ({} differentiable) | Verified Partials: {}/{} | Wengert Tape Nodes: {} | Max Lipschitz Bound L: {:.2} | Synthesized Gradient: `{}` ({}ms)\n",
+        rep.total_functions,
+        rep.differentiable_functions,
+        rep.verified_partials,
+        rep.total_partials,
+        rep.total_tape_nodes,
+        rep.max_lipschitz_bound,
+        rep.synthesized_grad_fn_name,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Partials: {} | Tape Nodes: {} | Lipschitz L: {:.2} | Jacobian L1: {:.2}]",
+            f.signature,
+            f.differentiable_params,
+            f.tape_nodes_count,
+            f.lipschitz_bound,
+            f.jacobian_norm_l1
+        );
+        for p in &f.partials {
+            println!(
+                "  • {} @ {} => Primal: {} | Forward Dual: {:.3} | Reverse Tape: {:.3} | Finite-Diff: {:.3} [{}]",
+                p.symbolic_derivative,
+                p.sample_point,
+                p.primal_value,
+                p.forward_dual_deriv,
+                p.reverse_tape_adjoint,
+                p.finite_diff_approx,
+                if p.dual_matches_reverse { "✓ VERIFIED" } else { "⚠ MISMATCH" }
+            );
+        }
+        println!();
+    }
+
+    if !rep.all_gradients_verified {
+        return Err("one or more forward/reverse gradients did not match".to_string());
+    }
+    Ok(())
+}
+
+fn run_stability_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.numerical_stability();
+    println!(
+        "=== IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ & Lipschitz Auditor: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Max Condition κ: {:.2} | Max Lipschitz L: {:.2} | Quantization Sites: {} | Overflow Sites: {} | Cancellation Sites: {} ({}ms)\n",
+        rep.total_functions,
+        rep.max_condition_number,
+        rep.max_lipschitz_constant,
+        rep.quantization_sites,
+        rep.overflow_sites,
+        rep.cancellation_sites,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!("Function: {} [{}]", f.signature, f.stability_grade);
+        for h in &f.hazards {
+            println!(
+                "  • [#{} · {} ({})] {}\n      Max Error: {:.2} bits/ULPs — {}",
+                h.site_id,
+                h.kind,
+                h.severity,
+                h.expr_summary,
+                h.max_error_ulps_or_bits,
+                h.recommendation
+            );
+        }
+        println!();
+    }
+
+    if rep.total_functions == 0 {
+        return Err("numerical stability auditor found 0 functions".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -2435,13 +2595,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v1.9 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim & List Scheduler Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64)
+        "starlang v2.0 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff & Lipschitz Numerical Stability Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- autodiff [file|preset] [--inject]    Run Forward-Mode Dual & Reverse-Mode Wengert-Tape AutoDiff + 13-Spoke Gradient Synth
+  cargo run -- stability [file|preset]              Run IEEE-754 / Fixed-Point Numerical Stability, Condition κ & Lipschitz Bound Auditor
   cargo run -- microarch [file|preset]              Run 4-Wide Out-of-Order Superscalar CPU, 2-Bit Branch Predictor & 8-Way L1D Cache Sim
   cargo run -- schedule [file|preset]               Run Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Stall Eliminator
   cargo run -- regalloc [file|preset] [-k N]        Run Chaitin-Briggs Kempe Graph-Coloring & Linear-Scan RegAlloc + AArch64/x86_64 ASM
@@ -2622,6 +2784,8 @@ fn run_cli_demo() -> Result<(), String> {
     let esc_rep = repair_eng.escape_analysis();
     let uarch_rep = repair_eng.microarch();
     let sched_rep = repair_eng.schedule_instructions();
+    let (ad_rep, _) = pipe_eng.autodiff(false);
+    let stab_rep = repair_eng.numerical_stability();
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -2630,7 +2794,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles)\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2}\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -2674,7 +2838,12 @@ fn run_cli_demo() -> Result<(), String> {
         uarch_rep.l1d_hit_rate_pct,
         sched_rep.total_cycles_before,
         sched_rep.total_cycles_after,
-        sched_rep.total_bubbles_eliminated
+        sched_rep.total_bubbles_eliminated,
+        ad_rep.verified_partials,
+        ad_rep.total_partials,
+        ad_rep.synthesized_grad_fn_name,
+        stab_rep.max_condition_number,
+        stab_rep.max_lipschitz_constant
     );
     if !drep.ok
         || slice_len == 0
@@ -2694,8 +2863,10 @@ fn run_cli_demo() -> Result<(), String> {
         || esc_rep.total_bytes_saved_per_run == 0
         || uarch_rep.total_uops_retired == 0
         || sched_rep.total_instructions == 0
+        || !ad_rep.all_gradients_verified
+        || stab_rep.total_functions == 0
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, or List Scheduler failed".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, or Numerical Stability failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

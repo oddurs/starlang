@@ -1,3 +1,4 @@
+pub mod autodiff;
 pub mod complexity;
 pub mod concolic;
 pub mod debugger;

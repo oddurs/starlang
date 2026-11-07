@@ -1677,6 +1677,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(sched_resp.contains("\"total_bubbles_eliminated\":"));
     assert!(sched_resp.contains("\"scheduled_listing\":"));
 
+    // Verify /api/autodiff and /api/stability endpoints
+    let ad_resp = send_http("POST", "/api/autodiff", "{\"inject\":\"false\"}");
+    assert!(ad_resp.contains("\"ok\":true"), "autodiff failed: {}", ad_resp);
+    assert!(ad_resp.contains("\"all_gradients_verified\":true"), "autodiff failed: {}", ad_resp);
+    assert!(ad_resp.contains("\"reverse_tape\":["));
+
+    let stab_resp = send_http("POST", "/api/stability", "{}");
+    assert!(stab_resp.contains("\"ok\":true"), "stability failed: {}", stab_resp);
+    assert!(stab_resp.contains("\"max_condition_number\":"));
+    assert!(stab_resp.contains("\"hardened_by_spoke\":{"));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -1923,5 +1934,69 @@ fn superscalar_cpu_cache_branch_simulator_and_critical_path_list_scheduler_verif
                 edge.latency
             );
         }
+    }
+}
+
+#[test]
+fn forward_dual_and_reverse_tape_autodiff_and_lipschitz_stability_auditor_verify_across_thirteen_languages() {
+    // 1. Test Forward-Mode Dual vs. Reverse-Mode Wengert Tape AD on a polynomial + affine function
+    let poly_py = r#"def poly_energy(x: int, y: int) -> int:
+    return x * x * 3 + x * y * 2 + y * 5
+
+def main() -> None:
+    print(poly_energy(4, 3))
+"#;
+    let mut poly_eng = StarEngine::from_source(SpokeId::Python, poly_py).unwrap();
+    let (ad_poly, snap_opt) = poly_eng.autodiff(true);
+    assert!(ad_poly.all_gradients_verified);
+    assert_eq!(ad_poly.differentiable_functions, 1);
+    assert_eq!(ad_poly.total_partials, 2);
+    assert_eq!(ad_poly.verified_partials, 2);
+
+    let f_poly = &ad_poly.functions[0];
+    assert_eq!(f_poly.fn_name, "poly_energy");
+    assert!(f_poly.tape_nodes_count >= 10);
+    // At sample point (x=12, y=16):
+    // f(x, y) = 3*x^2 + 2*x*y + 5*y
+    // ∂f/∂x = 6*x + 2*y = 6*12 + 2*16 = 72 + 32 = 104
+    // ∂f/∂y = 2*x + 5 = 2*12 + 5 = 29
+    let dx = f_poly.partials.iter().find(|p| p.param_name == "x").unwrap();
+    let dy = f_poly.partials.iter().find(|p| p.param_name == "y").unwrap();
+    assert_eq!(dx.forward_dual_deriv, 104.0);
+    assert_eq!(dx.reverse_tape_adjoint, 104.0);
+    assert!(dx.dual_matches_reverse);
+    assert_eq!(dy.forward_dual_deriv, 29.0);
+    assert_eq!(dy.reverse_tape_adjoint, 29.0);
+    assert!(dy.dual_matches_reverse);
+    assert_eq!(f_poly.grad_by_spoke.len(), 13);
+
+    // Injected `grad_poly_energy` + `test_autodiff_poly_energy` into Hub and verified across all 13 spokes!
+    let snap = snap_opt.expect("Expected snapshot after injecting gradient function");
+    assert!(snap.semantic_diagnostics.is_empty());
+    assert!(snap.test_results.iter().all(|t| t.passed));
+    for spoke in SpokeId::ALL {
+        let lens = lens_for(spoke);
+        let code = &snap.views[spoke.as_str()];
+        assert!(
+            code.contains("grad_poly_energy"),
+            "Missing grad_poly_energy in {}:\n{}",
+            spoke.as_str(),
+            code
+        );
+        let lifted = lens.put(code, poly_eng.hub()).unwrap();
+        assert_eq!(&lifted, poly_eng.hub());
+    }
+
+    // 2. Numerical Stability, Condition Number κ_f & Lipschitz Bound L_f on `ratelimit`
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+    let stab = rl_eng.numerical_stability();
+    assert_eq!(stab.total_functions, 2);
+    assert!(stab.quantization_sites >= 1);
+    assert!(stab.overflow_sites >= 1);
+    assert!(stab.max_condition_number >= 1.0);
+    assert!(stab.max_lipschitz_constant >= 1.0);
+    for f in &stab.functions {
+        assert_eq!(f.hardened_by_spoke.len(), 13);
     }
 }
