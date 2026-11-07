@@ -177,6 +177,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "regalloc" => {
+            if let Err(e) = run_regalloc_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "escape" => {
+            if let Err(e) = run_escape_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -1873,6 +1885,172 @@ fn run_wcet_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_regalloc_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    let mut k_regs: Option<usize> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "-k" || args[i] == "--registers" {
+            if let Some(val) = args.get(i + 1).and_then(|s| s.parse::<usize>().ok()) {
+                k_regs = Some(val);
+            }
+            i += 2;
+        } else if !args[i].starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(args[i].as_str());
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.regalloc(k_regs);
+    println!(
+        "=== Chaitin-Briggs Kempe Graph-Coloring & Linear-Scan Register Allocator (K={}): {} ===",
+        rep.k_registers, label
+    );
+    println!(
+        "Functions: {} | Virtual Regs: {} | Interference Edges: {} | Max Pressure: {} | Coalesced Moves: {} | Spills: {} | AArch64 Insts: {} | x86_64 Insts: {} ({}ms)\n",
+        rep.total_functions,
+        rep.total_virtual_regs,
+        rep.total_interference_edges,
+        rep.max_register_pressure,
+        rep.total_coalesced_moves,
+        rep.total_spills,
+        rep.total_aarch64_insts,
+        rep.total_x86_64_insts,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Colors: {}/{} | Clique Pressure: {} | Coalesced: {} | Spills: {} | Frame: {}B]",
+            f.signature,
+            f.chromatic_colors_used,
+            f.k_registers,
+            f.max_pressure_clique,
+            f.coalesced_moves,
+            f.spilled_vars,
+            f.stack_frame_bytes
+        );
+        for iv in &f.intervals {
+            println!(
+                "  • {:<12} [pc {:>2}..{:>2}] deg={:<2} wt={:<6.1} -> ARM64: {:<10} | x86_64: {:<18} | LinScan: {}",
+                iv.var_name,
+                iv.start_pc,
+                iv.end_pc,
+                iv.degree,
+                iv.spill_weight,
+                iv.aarch64_loc,
+                iv.x86_64_loc,
+                iv.linear_scan_loc
+            );
+        }
+        println!("  --- AArch64 (ARM64 AAPCS64) Assembly ---\n{}", f.aarch64_asm);
+        println!("  --- x86_64 (System V AMD64) Assembly ---\n{}", f.x86_64_asm);
+    }
+
+    if rep.total_virtual_regs == 0 {
+        return Err("register allocator found 0 virtual registers".to_string());
+    }
+    Ok(())
+}
+
+fn run_escape_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("scores").ok_or("missing scores sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.escape_analysis();
+    println!(
+        "=== Interprocedural Escape Analysis, Scalar Replacement (SROA) & RVO Optimizer: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Alloc Sites: {} | Stack/SROA Promoted: {} | RVO Return-Slot: {} | SROA Fields: {} | Heap Saved: {}B/run ({}% heap elision, {}ms)\n",
+        rep.total_functions,
+        rep.total_alloc_sites,
+        rep.stack_promoted_sites,
+        rep.rvo_eliminated_sites,
+        rep.sroa_scalarized_fields,
+        rep.total_bytes_saved_per_run,
+        rep.heap_reduction_pct,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Sites: {} | Stack/SROA: {} | RVO: {} | Saved: {}B/call]",
+            f.signature,
+            f.total_sites,
+            f.stack_or_sroa_sites,
+            f.rvo_sites,
+            f.bytes_saved_per_call
+        );
+        for s in &f.sites {
+            println!(
+                "  • [{} · {}] {}\n      Strategy: {} (saves ~{}B, SROA fields: {})\n      Note:     {}",
+                s.kind,
+                s.escape_state,
+                s.expr_summary,
+                s.promotion_strategy,
+                s.estimated_bytes_saved,
+                s.sroa_fields,
+                s.note
+            );
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -2077,13 +2255,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v1.7 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD & WCET Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
+        "starlang v1.8 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc & Escape Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- regalloc [file|preset] [-k N]        Run Chaitin-Briggs Kempe Graph-Coloring & Linear-Scan RegAlloc + AArch64/x86_64 ASM
+  cargo run -- escape [file|preset]                 Run Interprocedural Escape Analysis, Scalar Replacement (SROA) & RVO Optimizer
   cargo run -- polyhedral [file|preset]             Run Polyhedral Loop Dependence, Monoid Reduction & 13-Spoke SIMD Vectorizer
   cargo run -- wcet [file|preset]                   Run Floyd-Turing Ranking Termination Prover & IPET Symbolic BCET/WCET Analyzer
   cargo run -- egraph [file|preset] [--apply]       Run Equality Saturation & Congruence-Closure E-Graph Superoptimizer
@@ -2256,6 +2436,8 @@ fn run_cli_demo() -> Result<(), String> {
     let (eg_rep, _) = pipe_eng.egraph(false);
     let poly_rep = pipe_eng.polyhedral();
     let wcet_rep = repair_eng.termination_wcet();
+    let reg_rep = repair_eng.regalloc(Some(8));
+    let esc_rep = repair_eng.escape_analysis();
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -2264,7 +2446,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision)\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -2295,7 +2477,13 @@ fn run_cli_demo() -> Result<(), String> {
         poly_rep.max_simd4_speedup,
         wcet_rep.proven_terminating_loops,
         wcet_rep.total_loops_audited,
-        wcet_rep.module_wcet_cycles_n64
+        wcet_rep.module_wcet_cycles_n64,
+        reg_rep.total_virtual_regs,
+        reg_rep.total_spills,
+        reg_rep.total_aarch64_insts,
+        reg_rep.total_x86_64_insts,
+        esc_rep.total_bytes_saved_per_run,
+        esc_rep.heap_reduction_pct
     );
     if !drep.ok
         || slice_len == 0
@@ -2311,8 +2499,10 @@ fn run_cli_demo() -> Result<(), String> {
         || !peval_rep.translation_validated
         || poly_rep.vectorizable_loops == 0
         || !wcet_rep.all_terminating
+        || reg_rep.total_virtual_regs == 0
+        || esc_rep.total_bytes_saved_per_run == 0
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, or Termination/WCET failed".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, or Escape Analysis failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");
