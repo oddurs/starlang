@@ -102,6 +102,10 @@ jobs:
         run: cargo run --quiet -- quantum > /dev/null
       - name: Run Angluin L* active learner & Myhill-Nerode Minimal DFA synthesizer
         run: cargo run --quiet -- automata > /dev/null
+      - name: Run High-Level Synthesis (HLS) ASAP/ALAP FSMD scheduler & SystemVerilog RTL compiler
+        run: cargo run --quiet -- hls > /dev/null
+      - name: Run 32-lane Warp SIMT GPU compute kernel synthesizer (CUDA/WGSL/Metal/OpenCL)
+        run: cargo run --quiet -- gpu > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier

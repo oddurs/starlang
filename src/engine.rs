@@ -16,6 +16,9 @@ use crate::egraph::{
     partial_eval_module, superoptimize_egraph, EGraphReport, PartialEvalReport,
 };
 use crate::eval::{eval_module, eval_tests_default, EvalResult, TestResult};
+use crate::hls_verilog::{
+    compile_gpu_simt, compile_hls_rtl, GpuSimtReport, HlsRtlReport,
+};
 use crate::hub::{Diagnostic, HubModule};
 use crate::lens::SpokeId;
 use crate::merge::{diff_modules, merge_concurrent_edits, MergeReport, SemanticDiffReport};
@@ -391,6 +394,21 @@ impl StarEngine {
     /// pairwise distinguishability witnesses, and 13-Spoke branchless lookup tables.
     pub fn minimal_dfa(&self) -> MinimalDfaReport {
         synthesize_minimal_dfa(self.hub())
+    }
+
+    /// Compile Hub functions into High-Level Synthesis (`HLS`) Control/Data-Flow Graphs (`CDFG`),
+    /// perform ASAP/ALAP Mobility Force-Directed FSMD Scheduling, estimate FPGA `LUT6`/`FF`/`DSP48E2`/`BRAM36`
+    /// utilization and `F_max` timing, and emit synthesizable IEEE-1800 SystemVerilog RTL.
+    pub fn hls_rtl(&self) -> HlsRtlReport {
+        compile_hls_rtl(self.hub())
+    }
+
+    /// Compile Hub functions into 32-Lane Warp `SIMT` GPU Compute Kernels across 4 GPU Shader/Compute ISAs
+    /// (`NVIDIA CUDA C++ / PTX`, `W3C WebGPU WGSL`, `Apple Metal MSL`, and `Khronos OpenCL C`),
+    /// analyze 32-lane warp branch divergence masks, shared-memory 32-bank stride conflict freedom,
+    /// Streaming Multiprocessor (`SM`) occupancy, and Roofline arithmetic intensity.
+    pub fn gpu_simt(&self) -> GpuSimtReport {
+        compile_gpu_simt(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.

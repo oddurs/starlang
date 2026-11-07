@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer, #zk-drawer, #sql-drawer, #refinement-drawer, #prob-drawer, #quantum-drawer, #automata-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer, #zk-drawer, #sql-drawer, #refinement-drawer, #prob-drawer, #quantum-drawer, #automata-drawer, #hls-drawer, #gpu-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,14 +436,16 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v2.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU, AutoDiff, Actors, TLA+, ZK R1CS, Relational SQL, Liquid Types, MCMC Entropy, Reversible Quantum Circuits & Minimal DFA Studio</h1>
-        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64, Circom ZK, SQL, OpenQASM 3.0 & Minimal DFAs</p>
+        <h1>★ StarLang v2.5 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU, AutoDiff, Actors, TLA+, ZK R1CS, Relational SQL, Liquid Types, MCMC Entropy, Reversible Quantum Circuits, Minimal DFA, HLS SystemVerilog RTL & SIMT GPU Kernel Studio</h1>
+        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64, Circom ZK, SQL, OpenQASM 3.0, SystemVerilog RTL & CUDA/WGSL/Metal/OpenCL GPU Kernels</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="hls-btn" title="High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility Force-Directed FSMD Scheduler, FPGA LUT6/FF/DSP48E2/BRAM36 Estimator & Synthesizable IEEE-1800 SystemVerilog RTL Generator">🔌 HLS SystemVerilog RTL</button>
+      <button class="opt-btn" id="gpu-btn" title="32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA C++/PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C), Warp Divergence & Shared-Memory 32-Bank Conflict Analyzer">🚀 GPU SIMT (CUDA/WGSL/MSL)</button>
       <button class="wasm-btn" id="quantum-btn" title="Reversible Bennett-Toffoli Quantum Circuit Compiler (F -> Copy -> F† Uncomputation), Grover Amplitude Amplification Oracle & OpenQASM 3.0 Synthesizer">⚛ Quantum & OpenQASM 3</button>
       <button class="opt-btn" id="automata-btn" title="Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Branchless Lookup Table Vectorizer">🤖 Minimal DFA & L*</button>
       <button class="verify-btn" id="refinement-btn" title="Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 Export & 13-Spoke Dependent / Branded Type Synthesizer">💎 Liquid Types & CHC</button>
@@ -680,6 +682,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="hls-drawer">
+    <div class="run-header">
+      <span id="hls-summary">🔌 High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility Force-Directed FSMD Scheduler, FPGA LUT6/FF/DSP48E2/BRAM36 Estimator & Synthesizable IEEE-1800 SystemVerilog RTL Generator...</span>
+      <button onclick="document.getElementById('hls-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="hls-cards"></div>
+  </section>
+
+  <section id="gpu-drawer">
+    <div class="run-header">
+      <span id="gpu-summary">🚀 32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C), Warp Divergence & Shared-Memory 32-Bank Conflict Analyzer...</span>
+      <button onclick="document.getElementById('gpu-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="gpu-cards"></div>
+  </section>
 
   <section id="quantum-drawer">
     <div class="run-header">
@@ -2603,6 +2621,82 @@
           `[Myhill-Nerode Pairwise Distinguishability Witnesses]\n${wLines}\n\n` +
           `[13-Spoke Branchless Lookup-Table FSM Lowering]\n${spk}\n\n` +
           `[Mermaid Minimal State Diagram]\n${fn.mermaid_dfa}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("hls-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("hls-drawer");
+      const summary = document.getElementById("hls-summary");
+      const cards = document.getElementById("hls-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Scheduling Hub CDFG via ASAP/ALAP Mobility into Finite-State Machine with Datapath (FSMD) & generating IEEE-1800 SystemVerilog RTL...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/hls", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.all_pipelined_ii_1 ? "#34d399" : "#fcd34d";
+      summary.innerHTML = `<span style="color:${color};">🔌 High-Level Synthesis (HLS) SystemVerilog RTL: ${data.total_cdfg_ops} CDFG ops · ${data.total_fsmd_states} FSMD states · LUT6=${data.total_lut6} · FF=${data.total_flip_flops} · DSP48E2=${data.total_dsp48} · Min F_max=${data.min_fmax_mhz} MHz (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const opLines = (fn.operations || [])
+          .map(o => `  • Op #${o.op_id} [${o.scheduled_state} · ${o.functional_unit.padEnd(16)}] ASAP=${o.asap_cycle} ALAP=${o.alap_cycle} Mobility=${o.mobility} (${o.delay_ns}ns) — ${o.source_expr}`)
+          .join("\n");
+        const stLines = (fn.fsmd_states || [])
+          .map(s => `  • [${s.state_name.padEnd(10)}] (${s.stage_delay_ns}ns) Ops: ${s.active_ops.join(", ")}\n    ↳ RTL: ${s.datapath_rtl.join(" ")} | Next: ${s.next_state_rule}`)
+          .join("\n");
+        card.innerHTML = `<strong>🔌 ${fn.module_name} — ${fn.signature} (Latency=${fn.latency_cycles} cyc · II=${fn.initiation_interval} · F_max=${fn.estimated_fmax_mhz} MHz)</strong><pre style="max-height:360px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `FPGA Area: ${fn.lut6_count} LUT6 | ${fn.flip_flops_count} Flip-Flops | ${fn.dsp48_blocks} DSP48E2 | ${fn.bram36_tiles} BRAM36 | Critical Path: ${fn.critical_path_ns} ns\n\n` +
+          `[ASAP / ALAP Mobility Schedule & Functional Unit Binding]\n${opLines}\n\n` +
+          `[FSMD Control-State & Datapath Transition Table]\n${stLines}\n\n` +
+          `[Synthesizable IEEE-1800-2017 SystemVerilog RTL]\n${fn.systemverilog_rtl}\n` +
+          `[Mermaid FSMD Hardware Diagram]\n${fn.mermaid_fsmd}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("gpu-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("gpu-drawer");
+      const summary = document.getElementById("gpu-summary");
+      const cards = document.getElementById("gpu-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Synthesizing 32-Lane Warp SIMT GPU Kernels (CUDA PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C) & auditing warp divergence / 32-bank shared memory...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/gpu", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.total_bank_conflicts === 0 ? "#34d399" : "#fcd34d";
+      summary.innerHTML = `<span style="color:${color};">🚀 SIMT GPU Compute Kernel Synthesizer: ${data.total_gpu_kernels} kernels · Avg SM Occupancy=${data.avg_sm_occupancy_pct}% · Avg Warp Efficiency=${data.avg_warp_efficiency_pct}% · Bank Conflicts=${data.total_bank_conflicts} · Max GPU Speedup=${data.max_gpu_speedup}x (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const divLines = (fn.divergence_sites || []).length === 0
+          ? "  • Branch-free 100% uniform 32-lane warp execution (active_mask = 0xFFFFFFFF)"
+          : (fn.divergence_sites || [])
+              .map(d => `  • Branch #${d.branch_id} [${d.condition_expr}] taken=${d.active_lanes_taken}/32 not_taken=${d.active_lanes_not_taken}/32 mask=${d.active_mask_hex} serial=${d.serialization_factor}x (${d.simd_efficiency_pct}%)\n    ↳ ${d.mitigation_note}`)
+              .join("\n");
+        const bankLines = (fn.bank_accesses || [])
+          .map(b => `  • Access #${b.access_id} [${b.buffer_expr}] stride=${b.stride_elements} (${b.bank_conflict_ways}-way, conflict_free=${b.conflict_free})\n    ↳ ${b.padding_recommendation}`)
+          .join("\n");
+        const spk = Object.entries(fn.host_dispatch_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "c", "cpp", "swift", "java", "go", "python", "typescript", "star"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>🚀 ${fn.kernel_name} (${fn.workgroup_threads} threads/wg · Warp Eff=${fn.warp_efficiency_pct}% · Occ=${fn.sm_occupancy_pct}% · ${fn.estimated_gpu_speedup}x Speedup)</strong><pre style="max-height:360px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Registers/Thread: ${fn.registers_per_thread} | Shared Memory/Workgroup: ${fn.shared_mem_bytes} B | Roofline: ${fn.arithmetic_intensity_flops_per_byte} FLOPs/B (${fn.roofline_bound})\n\n` +
+          `[32-Lane Warp Branch Divergence & Active-Mask Analysis]\n${divLines}\n\n` +
+          `[Shared-Memory 32-Bank Stride Conflict Audit]\n${bankLines}\n\n` +
+          `${fn.cuda_ptx_source}\n\n` +
+          `${fn.webgpu_wgsl_source}\n\n` +
+          `${fn.metal_msl_source}\n\n` +
+          `${fn.opencl_c_source}\n\n` +
+          `[13-Spoke Host Dispatch Bindings]\n${spk}\n\n` +
+          `[Mermaid SIMT Execution Topology]\n${fn.mermaid_simt}`;
         cards.appendChild(card);
       });
     });

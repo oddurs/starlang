@@ -7,6 +7,7 @@ pub mod egraph;
 pub mod engine;
 pub mod eval;
 pub mod fuzzer;
+pub mod hls_verilog;
 pub mod hub;
 pub mod json;
 pub mod lens;

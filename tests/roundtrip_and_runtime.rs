@@ -1732,6 +1732,18 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(dfa_resp.contains("\"all_myhill_nerode_minimal\":true"));
     assert!(dfa_resp.contains("\"fsm_by_spoke\":{"));
 
+    // Verify /api/hls and /api/gpu endpoints
+    let hls_resp = send_http("POST", "/api/hls", "{}");
+    assert!(hls_resp.contains("\"ok\":true"), "hls failed: {}", hls_resp);
+    assert!(hls_resp.contains("`default_nettype none"));
+    assert!(hls_resp.contains("\"fsmd_states\":["));
+
+    let gpu_resp = send_http("POST", "/api/gpu", "{}");
+    assert!(gpu_resp.contains("\"ok\":true"), "gpu failed: {}", gpu_resp);
+    assert!(gpu_resp.contains("__global__ void"));
+    assert!(gpu_resp.contains("@compute @workgroup_size"));
+    assert!(gpu_resp.contains("\"host_dispatch_by_spoke\":{"));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -2270,5 +2282,75 @@ fn reversible_quantum_circuit_compiler_and_angluin_minimal_dfa_synthesizer_verif
         assert!(f.fsm_by_spoke["c"].contains("static const uint8_t DFA_DELTA_"));
         assert!(f.fsm_by_spoke["typescript"].contains("new Uint8Array("));
         assert!(f.mermaid_dfa.contains("stateDiagram-v2"));
+    }
+}
+
+#[test]
+fn hls_systemverilog_rtl_compiler_and_simt_gpu_kernel_synthesizer_verify_across_thirteen_languages() {
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+
+    // 1. High-Level Synthesis (HLS) ASAP/ALAP Mobility FSMD Scheduler & IEEE-1800 SystemVerilog RTL Generator
+    let hls = rl_eng.hls_rtl();
+    assert_eq!(hls.total_functions, 2);
+    assert!(hls.total_cdfg_ops >= 8);
+    assert!(hls.total_fsmd_states >= 8);
+    assert!(hls.total_lut6 >= 300);
+    assert!(hls.total_flip_flops >= 256);
+    assert!(hls.min_fmax_mhz >= 200.0);
+
+    for f in &hls.functions {
+        assert!(f.module_name.ends_with("_accel"));
+        assert!(f.fsmd_states_count >= 3);
+        assert!(f.latency_cycles >= 2);
+        assert!(f.initiation_interval >= 1);
+        assert!(f.critical_path_ns > 0.5);
+        assert!(f.estimated_fmax_mhz >= 200.0);
+        assert!(f.systemverilog_rtl.contains("`default_nettype none"));
+        assert!(f.systemverilog_rtl.contains(&format!("module {} (", f.module_name)));
+        assert!(f.systemverilog_rtl.contains("always_ff @(posedge clk_i or negedge rst_ni)"));
+        assert!(f.systemverilog_rtl.contains("endmodule"));
+        assert!(f.mermaid_fsmd.contains("flowchart LR"));
+
+        // Verify ASAP <= ALAP and Mobility == ALAP - ASAP on every scheduled CDFG node
+        for op in &f.operations {
+            assert!(
+                op.alap_cycle >= op.asap_cycle,
+                "ALAP ({}) must be >= ASAP ({}) for op #{} in {}",
+                op.alap_cycle,
+                op.asap_cycle,
+                op.op_id,
+                f.fn_name
+            );
+            assert_eq!(op.mobility, op.alap_cycle - op.asap_cycle);
+        }
+    }
+
+    // 2. 32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA PTX, WebGPU WGSL, Metal MSL, OpenCL C)
+    let gpu = rl_eng.gpu_simt();
+    assert_eq!(gpu.total_functions, 2);
+    assert_eq!(gpu.total_gpu_kernels, 2);
+    assert!(gpu.total_divergence_sites >= 2);
+    assert_eq!(gpu.total_bank_conflicts, 0);
+    assert!(gpu.avg_sm_occupancy_pct >= 80.0);
+    assert!(gpu.avg_warp_efficiency_pct >= 65.0);
+    assert!(gpu.max_gpu_speedup >= 80.0);
+
+    for f in &gpu.functions {
+        assert_eq!(f.warp_size, 32);
+        assert_eq!(f.workgroup_threads, 64);
+        assert_eq!(f.shared_mem_bank_conflicts, 0);
+        assert!(f.cuda_ptx_source.contains("__global__ void __launch_bounds__(64, 4)"));
+        assert!(f.cuda_ptx_source.contains(".version 8.0"));
+        assert!(f.webgpu_wgsl_source.contains("@compute @workgroup_size(64, 1, 1)"));
+        assert!(f.metal_msl_source.contains("#include <metal_stdlib>"));
+        assert!(f.opencl_c_source.contains("__kernel __attribute__((reqd_work_group_size(64, 1, 1)))"));
+        assert_eq!(f.host_dispatch_by_spoke.len(), 13);
+        assert!(f.host_dispatch_by_spoke["rust"].contains("dispatch_workgroups"));
+        assert!(f.host_dispatch_by_spoke["cpp"].contains("<<<"));
+        assert!(f.host_dispatch_by_spoke["swift"].contains("dispatchThreadgroups"));
+        assert!(f.host_dispatch_by_spoke["python"].contains(&f.kernel_name));
+        assert!(f.host_dispatch_by_spoke["typescript"].contains("dispatchWorkgroups"));
+        assert!(f.mermaid_simt.contains("flowchart LR"));
     }
 }
