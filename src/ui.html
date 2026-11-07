@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,7 +436,7 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v1.6 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph & Partial Eval Studio</h1>
+        <h1>★ StarLang v1.7 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD & WCET Studio</h1>
         <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm & 14-Engine Verification</p>
       </div>
     </div>
@@ -444,6 +444,8 @@
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="polyhedral-btn" title="Polyhedral loop dependence analysis, associative monoid reduction recognition, Brent Work-Span & 13-spoke SIMD / Map-Reduce vectorizer">🧮 Polyhedral & SIMD</button>
+      <button class="verify-btn" id="wcet-btn" title="Floyd-Turing well-founded ranking function termination prover & IPET symbolic BCET/WCET timing bound analyzer">⏳ Termination & WCET</button>
       <button class="wasm-btn" id="egraph-btn" title="Equality Saturation & Congruence-Closure E-Graph Superoptimizer across all 13 languages">🔮 E-Graph Superopt</button>
       <button class="opt-btn" id="peval-btn" title="Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer & Loop Unroller across all 13 languages">⚡ Partial Eval</button>
       <button class="trace-btn" id="concolic-btn" title="Whitebox concolic path exploration, boundary-negation solver & path-covering unit test synthesis across all 13 languages">🧭 Concolic Paths</button>
@@ -664,6 +666,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="polyhedral-drawer">
+    <div class="run-header">
+      <span id="polyhedral-summary">🧮 Polyhedral Loop Dependence, Associative Monoid Reduction & 13-Spoke SIMD / Map-Reduce Vectorizer...</span>
+      <button onclick="document.getElementById('polyhedral-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="polyhedral-cards"></div>
+  </section>
+
+  <section id="wcet-drawer">
+    <div class="run-header">
+      <span id="wcet-summary">⏳ Floyd-Turing Well-Founded Ranking Function Termination Prover & IPET Symbolic BCET/WCET Analyzer...</span>
+      <button onclick="document.getElementById('wcet-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="wcet-cards"></div>
+  </section>
 
   <section id="egraph-drawer">
     <div class="run-header">
@@ -1939,6 +1957,67 @@
 
     document.getElementById("peval-btn").addEventListener("click", () => triggerPeval(false));
     document.getElementById("peval-apply-btn").addEventListener("click", () => triggerPeval(true));
+
+    document.getElementById("polyhedral-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("polyhedral-drawer");
+      const summary = document.getElementById("polyhedral-summary");
+      const cards = document.getElementById("polyhedral-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Analyzing affine iteration domains, Bernstein dependence vectors, associative monoid reductions & 13-spoke SIMD / Map-Reduce kernels...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/polyhedral", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.vectorizable_loops > 0 ? "#34d399" : "#38bdf8";
+      summary.innerHTML = `<span style="color:${color};">🧮 Polyhedral Loop Vectorizer: ${data.total_loops} loop(s) analyzed · ${data.vectorizable_loops} SIMD-vectorizable · ${data.map_reduce_loops} Map-Reduce parallelizable · ${data.total_reductions} associative monoid reduction(s) · Max 4-lane SIMD speedup: ${data.max_simd4_speedup}x (${data.elapsed_ms}ms)</span>`;
+
+      (data.loops || []).forEach(lp => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const deps = (lp.dependences || [])
+          .map(d => `  [${d.kind} · dist ${d.distance}] ${d.variable}${d.is_reduction ? " (Monoid " + d.reduction_monoid + ")" : ""} — ${d.note}`)
+          .join("\n") || "  (no loop-carried dependences — embarrassingly parallel)";
+        const spk = Object.entries(lp.vectorized_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "c", "python", "perl", "typescript"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>🧮 ${lp.fn_name}() [${lp.classification}] · SIMD4: ${lp.estimated_simd4_speedup}x · Brent T₁/T∞(64): ${lp.brent_parallelism_n64}x</strong><pre style="max-height:300px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Domain: ${lp.iteration_domain}\nWork T₁ = ${lp.work_t1_symbolic} | Span T∞ = ${lp.span_tinf_symbolic}\nReductions: ${(lp.reductions || []).join(", ") || "none"}\n\n[Bernstein Dependence Edges]\n${deps}\n\n[13-Spoke Vectorized / Map-Reduce Synthesis]\n${spk}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("wcet-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("wcet-drawer");
+      const summary = document.getElementById("wcet-summary");
+      const cards = document.getElementById("wcet-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Synthesizing Floyd-Turing well-founded ranking functions V(σ) & IPET symbolic BCET/WCET cycle bounds...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/wcet", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.all_terminating ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">⏳ Termination & IPET WCET Prover: ${data.proven_terminating_loops}/${data.total_loops_audited} loop(s) proven terminating · ${data.diverging_or_unproven_loops} unbounded/diverging · Module BCET(N=64): ${data.module_bcet_cycles_n64} cycles · WCET(N=64): ${data.module_wcet_cycles_n64} cycles (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const proofs = (fn.loop_proofs || [])
+          .map(lp => `  ${lp.proven_terminating ? "✓" : "✗"} [${lp.loop_header}] ${lp.status}\n    Ranking V(σ): ${lp.ranking_function}\n    Bounded-Below VC:   ${lp.bounded_below_vc}\n    Strict-Decrease VC: ${lp.strict_decrease_vc}\n    Note: ${lp.witness_or_note}`)
+          .join("\n\n") || "  (loop-free O(1) straight-line / branching function — trivially terminating)";
+        const wcep = (fn.worst_case_path || []).map(s => `  → ${s}`).join("\n");
+        card.innerHTML = `<strong>⏳ ${fn.signature} (${fn.proven_terminating ? "✓ Terminating" : "✗ Unbounded"}) · WCET(64): ${fn.wcet_cycles_n64}c</strong><pre style="max-height:300px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Symbolic BCET: ${fn.bcet_symbolic} (${fn.bcet_cycles_n64} cycles @ N=64)\n` +
+          `Symbolic WCET: ${fn.wcet_symbolic} (${fn.wcet_cycles_n64} cycles @ N=64)\n` +
+          `Timing Jitter (WCET/BCET): ${fn.jitter_ratio}x\n\n` +
+          `[Floyd-Turing Loop Ranking Proofs]\n${proofs}\n\n` +
+          `[Worst-Case Execution Path (WCEP)]\n${wcep}`;
+        cards.appendChild(card);
+      });
+    });
 
     document.getElementById("undo-btn").addEventListener("click", async () => {
       const res = await fetch("/api/undo", { method: "POST", body: "{}" });
