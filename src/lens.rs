@@ -12,12 +12,13 @@ pub enum SpokeId {
     Python,
     Ruby,
     Lua,
+    Perl,
     TypeScript,
     Star,
 }
 
 impl SpokeId {
-    pub const ALL: [SpokeId; 12] = [
+    pub const ALL: [SpokeId; 13] = [
         SpokeId::Rust,
         SpokeId::Zig,
         SpokeId::C,
@@ -28,6 +29,7 @@ impl SpokeId {
         SpokeId::Python,
         SpokeId::Ruby,
         SpokeId::Lua,
+        SpokeId::Perl,
         SpokeId::TypeScript,
         SpokeId::Star,
     ];
@@ -44,6 +46,7 @@ impl SpokeId {
             SpokeId::Python => "python",
             SpokeId::Ruby => "ruby",
             SpokeId::Lua => "lua",
+            SpokeId::Perl => "perl",
             SpokeId::TypeScript => "typescript",
             SpokeId::Star => "star",
         }
@@ -61,6 +64,7 @@ impl SpokeId {
             SpokeId::Python => "Python",
             SpokeId::Ruby => "Ruby",
             SpokeId::Lua => "Lua",
+            SpokeId::Perl => "Perl",
             SpokeId::TypeScript => "TypeScript",
             SpokeId::Star => "Star S-Expr",
         }
@@ -78,6 +82,7 @@ impl SpokeId {
             SpokeId::Python => "py",
             SpokeId::Ruby => "rb",
             SpokeId::Lua => "lua",
+            SpokeId::Perl => "pl",
             SpokeId::TypeScript => "ts",
             SpokeId::Star => "star",
         }
@@ -97,6 +102,7 @@ impl SpokeId {
             SpokeId::Python => Some("py."),
             SpokeId::Ruby => Some("ruby."),
             SpokeId::Lua => Some("lua."),
+            SpokeId::Perl => Some("perl."),
             SpokeId::TypeScript => Some("ts."),
             SpokeId::Star => None,
         }
@@ -114,6 +120,7 @@ impl SpokeId {
             "python" | "py" | ".py" => Some(SpokeId::Python),
             "ruby" | "rb" | ".rb" => Some(SpokeId::Ruby),
             "lua" | "luajit" | ".lua" => Some(SpokeId::Lua),
+            "perl" | "perl5" | "pl" | ".pl" => Some(SpokeId::Perl),
             "typescript" | "ts" | ".ts" => Some(SpokeId::TypeScript),
             "star" | "sexpr" | "lisp" | ".star" => Some(SpokeId::Star),
             _ => None,

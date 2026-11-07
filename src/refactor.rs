@@ -132,7 +132,9 @@ const RESERVED_WORDS: &[&str] = &[
     "threadlocal", "test", "try", "catch", "error", "undefined", "and", "or", "i64", "f64", "u8",
     "usize", "std", "local", "then", "elseif", "repeat", "until", "not", "ipairs", "pairs",
     "tostring", "tonumber", "table", "math", "assert", "print", "star_idiv", "star_irem",
-    "star_eql", "star_contains", "star_print",
+    "star_eql", "star_contains", "star_print", "sub", "my", "our", "state", "last", "redo",
+    "scalar", "push", "pop", "shift", "unshift", "uc", "lc", "eq", "ne", "lt", "gt", "le", "ge",
+    "cmp", "ref", "bless", "die", "use", "no", "strict", "warnings",
 ];
 
 fn validate_identifier(name: &str) -> Result<(), String> {

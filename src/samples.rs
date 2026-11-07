@@ -629,6 +629,84 @@ end
 main()
 "#,
     },
+    SamplePreset {
+        id: "ratelimit",
+        title: "Token-Bucket API Rate Limiter (Seeded from Modern Perl 5.34)",
+        description: "Perl 5.34 subroutine signatures, arrayref/hashref dereferencing ($xs->[$i], $obj->{k}), guarded star_idiv & time-travel slicing",
+        initial_spoke: SpokeId::Perl,
+        source: r#"# Rate limiter tier policy
+# @enum TierPolicy
+my $TierPolicy = {
+    Standard => 0,
+    Burst => 1,
+};
+
+# Audit summary for a burst of API request costs
+# @class QuotaReport
+# @field accepted Int
+# @field rejected Int
+# @field avg_cost Int
+sub new_QuotaReport($o) { return $o; }
+
+# @param $base_capacity Int
+# @param $policy TierPolicy
+# @return Int
+sub effective_capacity($base_capacity, $policy) {
+    if (1) { # @star-match
+        my $__star_m = $policy;
+        if ($__star_m == $TierPolicy->{Standard}) {
+            return $base_capacity;
+        } elsif ($__star_m == $TierPolicy->{Burst}) {
+            return $base_capacity * 2;
+        }
+    }
+    return $base_capacity;
+}
+
+# @param $costs List[Int]
+# @param $base_capacity Int
+# @param $policy TierPolicy
+# @return QuotaReport
+sub evaluate_quota($costs, $base_capacity, $policy) {
+    my $tokens = effective_capacity($base_capacity, $policy);
+    my $accepted = 0;
+    my $rejected = 0;
+    my $spent = 0;
+    for my $i (0 .. scalar(@{$costs}) - 1) {
+        my $cost = $costs->[$i];
+        if ($cost > 0 && $cost <= $tokens) {
+            $tokens -= $cost;
+            $accepted += 1;
+            $spent += $cost;
+        } else {
+            $rejected += 1;
+        }
+    }
+    my $avg_cost = 0;
+    if ($accepted > 0) {
+        $avg_cost = max(0, star_idiv($spent, $accepted));
+    }
+    star_assert($avg_cost >= 0);
+    return new_QuotaReport({ accepted => $accepted, rejected => $rejected, avg_cost => $avg_cost });
+}
+
+sub main() {
+    # @type List[Int]
+    my $traffic = [15, 25, 40, 10, 30];
+    my $rep = evaluate_quota($traffic, 40, $TierPolicy->{Burst});
+    star_print("accepted:", $rep->{accepted}, "rejected:", $rep->{rejected}, "avg_cost:", $rep->{avg_cost});
+}
+
+sub test_quota_bucket() {
+    # @type List[Int]
+    my $sample_costs = [10, 20, 50];
+    my $res = evaluate_quota($sample_costs, 35, $TierPolicy->{Standard});
+    star_assert(star_eql($res, new_QuotaReport({ accepted => 2, rejected => 1, avg_cost => 15 })));
+}
+
+main();
+"#,
+    },
 ];
 
 pub fn find_sample(id: &str) -> Option<&'static SamplePreset> {
