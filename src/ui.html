@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StarLang v0.4 — 7-Spoke Bidirectional Compiler</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --panel: #111827;
+      --panel-header: #172033;
+      --border: #25324d;
+      --text: #e5edff;
+      --muted: #8b9bb8;
+      --accent: #60a5fa;
+      --lift: #f59e0b;
+      --ok: #10b981;
+      --err: #ef4444;
+      --warn: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      padding: 10px 18px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand h1 {
+      font-size: 15.5px;
+      margin: 0;
+      font-weight: 700;
+    }
+    .brand p {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    select, button, input[type="text"] {
+      background: var(--panel-header);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    button { cursor: pointer; }
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    button.run-btn {
+      background: #0f766e;
+      border-color: #14b8a6;
+      color: #ecfdf5;
+      font-weight: 600;
+    }
+    button.run-btn:hover { background: #0d9488; }
+    button.opt-btn {
+      background: #312e81;
+      border-color: #6366f1;
+      color: #e0e7ff;
+      font-weight: 600;
+    }
+    button.opt-btn:hover { background: #3730a3; }
+    .hub-banner {
+      padding: 7px 18px;
+      background: #0d1322;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 12px;
+    }
+    .hub-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .refactor-bar {
+      padding: 6px 18px;
+      background: #0b101d;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 12px;
+    }
+    .refactor-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .vm-preview, .test-pill {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #a7f3d0;
+      max-width: 480px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .test-pill {
+      background: rgba(59, 130, 246, 0.14);
+      border-color: rgba(96, 165, 250, 0.4);
+      color: #bfdbfe;
+    }
+    .vm-preview.err, .test-pill.err {
+      background: rgba(239, 68, 68, 0.16);
+      border-color: rgba(239, 68, 68, 0.45);
+      color: #fecaca;
+    }
+    .spoke-toggles {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .toggle-pill {
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #131c2e;
+      color: var(--muted);
+      font-size: 11.5px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle-pill.on {
+      border-color: #3b82f6;
+      color: #dbeafe;
+      background: rgba(59, 130, 246, 0.16);
+    }
+    .meta-pill {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+    }
+    .action-msg {
+      color: #93c5fd;
+      font-size: 11.5px;
+      font-weight: 500;
+    }
+    .sem-bar {
+      display: none;
+      padding: 6px 18px;
+      background: rgba(180, 83, 9, 0.22);
+      border-bottom: 1px solid rgba(245, 158, 11, 0.5);
+      color: #fde68a;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px;
+    }
+    main.grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      grid-auto-rows: minmax(270px, 1fr);
+      gap: 10px;
+      padding: 10px 14px;
+    }
+    .pane {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: border-color 0.15s ease;
+    }
+    .pane.hidden { display: none; }
+    .pane.active-edit { border-color: var(--lift); }
+    .pane.has-error { border-color: var(--err); }
+    .pane-header {
+      padding: 7px 12px;
+      background: var(--panel-header);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .badges-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .delta-badge {
+      font-size: 10.5px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(56, 189, 248, 0.16);
+      color: #7dd3fc;
+      display: none;
+    }
+    .status {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.14);
+      color: #6ee7b7;
+    }
+    .status.editing {
+      background: rgba(245, 158, 11, 0.18);
+      color: #fcd34d;
+    }
+    .status.error {
+      background: rgba(239, 68, 68, 0.18);
+      color: #fca5a5;
+    }
+    textarea {
+      flex: 1;
+      width: 100%;
+      background: transparent;
+      color: var(--text);
+      border: none;
+      outline: none;
+      resize: none;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.46;
+      tab-size: 4;
+    }
+    .diag-bar {
+      display: none;
+      padding: 6px 12px;
+      background: rgba(127, 29, 29, 0.72);
+      border-top: 1px solid var(--err);
+      color: #fecaca;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px;
+    }
+    .pane.has-error .diag-bar { display: block; }
+    #run-drawer {
+      display: none;
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+      padding: 12px 16px;
+    }
+    .run-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .run-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+      gap: 10px;
+    }
+    .run-card {
+      background: #090d16;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    .run-card pre {
+      margin: 6px 0 0;
+      white-space: pre-wrap;
+      color: #cbd5e1;
+    }
+    svg.star-svg {
+      width: 174px;
+      height: 62px;
+      flex-shrink: 0;
+    }
+    .edge { stroke: #334155; stroke-width: 1.6; transition: stroke 0.2s; }
+    .edge.lift { stroke: var(--lift); stroke-width: 2.5; }
+    .edge.proj { stroke: var(--ok); stroke-width: 2.0; }
+    .node-lbl { fill: #94a3b8; font-size: 7.5px; font-family: ui-monospace, monospace; }
+    .node-hub { fill: #1d4ed8; stroke: #60a5fa; stroke-width: 1.5; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <svg class="star-svg" viewBox="0 0 176 64">
+        <line id="edge-rust" class="edge" x1="88" y1="32" x2="24" y2="8" />
+        <line id="edge-cpp" class="edge" x1="88" y1="32" x2="24" y2="24" />
+        <line id="edge-swift" class="edge" x1="88" y1="32" x2="24" y2="40" />
+        <line id="edge-go" class="edge" x1="88" y1="32" x2="24" y2="56" />
+        <line id="edge-python" class="edge" x1="88" y1="32" x2="150" y2="12" />
+        <line id="edge-typescript" class="edge" x1="88" y1="32" x2="150" y2="32" />
+        <line id="edge-star" class="edge" x1="88" y1="32" x2="150" y2="52" />
+        <circle class="node-hub" cx="88" cy="32" r="11" />
+        <text x="88" y="35" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
+        <text class="node-lbl" x="4" y="11">RS</text>
+        <text class="node-lbl" x="1" y="27">CPP</text>
+        <text class="node-lbl" x="4" y="43">SW</text>
+        <text class="node-lbl" x="4" y="59">GO</text>
+        <text class="node-lbl" x="153" y="15">PY</text>
+        <text class="node-lbl" x="153" y="35">TS</text>
+        <text class="node-lbl" x="153" y="55">IR</text>
+      </svg>
+      <div>
+        <h1>★ StarLang v0.4 — 7-Spoke Bidirectional Compiler</h1>
+        <p>Rust ⇄ C++ ⇄ Swift 6 ⇄ Go ⇄ Python ⇄ TypeScript ⇄ Star IR · Live Unit Tests, Hub VM & 7-Engine Verification</p>
+      </div>
+    </div>
+    <div class="controls">
+      <select id="sample-select"></select>
+      <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
+      <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 7 languages">⚡ Optimize Hub</button>
+      <button class="run-btn" id="run-btn">▶ Run All 7 Engines (VM + rustc + clang++ + swiftc + go + py + node)</button>
+    </div>
+  </header>
+
+  <div class="hub-banner">
+    <div class="hub-left">
+      <span style="color:var(--accent);font-weight:600;" id="hub-rev">Hub rev #1</span>
+      <span id="typecheck-pill" style="color:#34d399;font-weight:500;">✓ Hub Typecheck: OK</span>
+      <span class="test-pill" id="test-pill">✓ Tests: —</span>
+      <span class="vm-preview" id="vm-preview">⚡ Hub VM: ...</span>
+      <div id="meta-badges" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+    </div>
+    <div class="spoke-toggles" id="spoke-toggles">
+      <span style="color:var(--muted);font-size:11px;">Spokes:</span>
+      <span class="toggle-pill on" data-spoke="rust">Rust</span>
+      <span class="toggle-pill on" data-spoke="cpp">C++</span>
+      <span class="toggle-pill on" data-spoke="swift">Swift</span>
+      <span class="toggle-pill on" data-spoke="go">Go</span>
+      <span class="toggle-pill on" data-spoke="python">Python</span>
+      <span class="toggle-pill on" data-spoke="typescript">TypeScript</span>
+      <span class="toggle-pill on" data-spoke="star">Star IR</span>
+    </div>
+  </div>
+
+  <div class="refactor-bar">
+    <div class="refactor-controls">
+      <span style="color:var(--muted);font-weight:600;">Semantic Hub Refactor:</span>
+      <select id="symbol-select" title="Select a Hub symbol to rename across all 7 languages"></select>
+      <input type="text" id="rename-input" placeholder="new_identifier" style="width:165px;" />
+      <button id="rename-btn">✎ Rename Across 7 Languages</button>
+      <span class="action-msg" id="action-msg"></span>
+    </div>
+    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 7 engines</span>
+  </div>
+
+  <div class="sem-bar" id="sem-bar"></div>
+
+  <main class="grid">
+    <section class="pane" id="pane-rust">
+      <div class="pane-header">
+        <span>Rust (<code>.rs</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-rust"></span>
+          <span class="status" id="status-rust">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-rust" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-rust"></div>
+    </section>
+
+    <section class="pane" id="pane-cpp">
+      <div class="pane-header">
+        <span>Modern C++ (<code>.cpp</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-cpp"></span>
+          <span class="status" id="status-cpp">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-cpp" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-cpp"></div>
+    </section>
+
+    <section class="pane" id="pane-swift">
+      <div class="pane-header">
+        <span>Swift 6 (<code>.swift</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-swift"></span>
+          <span class="status" id="status-swift">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-swift" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-swift"></div>
+    </section>
+
+    <section class="pane" id="pane-go">
+      <div class="pane-header">
+        <span>Go (<code>.go</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-go"></span>
+          <span class="status" id="status-go">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-go" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-go"></div>
+    </section>
+
+    <section class="pane" id="pane-python">
+      <div class="pane-header">
+        <span>Python (<code>.py</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-python"></span>
+          <span class="status" id="status-python">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-python" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-python"></div>
+    </section>
+
+    <section class="pane" id="pane-typescript">
+      <div class="pane-header">
+        <span>TypeScript (<code>.ts</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-typescript"></span>
+          <span class="status" id="status-typescript">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-typescript" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-typescript"></div>
+    </section>
+
+    <section class="pane" id="pane-star">
+      <div class="pane-header">
+        <span>Star Canonical Hub S-Expr (<code>.star</code> + Sidecar Metadata)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-star"></span>
+          <span class="status" id="status-star">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-star" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-star"></div>
+    </section>
+  </main>
+
+  <section id="run-drawer">
+    <div class="run-header">
+      <span id="run-summary">Executing across Hub VM, rustc, clang++, swiftc, go, python3, and node...</span>
+      <button onclick="document.getElementById('run-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="run-cards"></div>
+  </section>
+
+  <script>
+    const SPOKES = ["rust", "cpp", "swift", "go", "python", "typescript", "star"];
+    let debounceTimer = null;
+    const prevTexts = {};
+
+    function countChangedLines(a, b) {
+      if (!a) return 0;
+      const la = a.split("\n");
+      const lb = b.split("\n");
+      const max = Math.max(la.length, lb.length);
+      let diff = 0;
+      for (let i = 0; i < max; i++) {
+        if (la[i] !== lb[i]) diff++;
+      }
+      return diff;
+    }
+
+    function applySnapshot(snap, skipSpoke) {
+      document.getElementById("hub-rev").textContent =
+        `Hub rev #${snap.revision} · ${snap.node_count} AST nodes`;
+      document.getElementById("undo-btn").disabled = !snap.can_undo;
+      document.getElementById("redo-btn").disabled = !snap.can_redo;
+
+      const tcPill = document.getElementById("typecheck-pill");
+      const semBar = document.getElementById("sem-bar");
+      const diags = snap.semantic_diagnostics || [];
+      if (diags.length === 0) {
+        tcPill.style.color = "#34d399";
+        tcPill.textContent = "✓ Hub Typecheck: 0 issues";
+        semBar.style.display = "none";
+      } else {
+        tcPill.style.color = "#fbbf24";
+        tcPill.textContent = `⚠ Hub Typecheck: ${diags.length} issue(s)`;
+        semBar.style.display = "block";
+        semBar.textContent = diags
+          .map(d => `[#${d.node_id} in ${d.context}] ${d.message}`)
+          .join("   |   ");
+      }
+
+      const testPill = document.getElementById("test-pill");
+      const tests = snap.test_results || [];
+      if (tests.length === 0) {
+        testPill.classList.remove("err");
+        testPill.textContent = "🧪 Tests: 0 defined";
+        testPill.title = "Add a #[test] fn test_name() / def test_name() in any language";
+      } else {
+        const passedCount = tests.filter(t => t.passed).length;
+        const totalSteps = tests.reduce((acc, t) => acc + (t.steps || 0), 0);
+        if (passedCount === tests.length) {
+          testPill.classList.remove("err");
+          testPill.textContent = `✓ Tests: ${passedCount}/${tests.length} passed (${totalSteps} steps)`;
+          testPill.title = tests.map(t => `✓ test_${t.name} (${t.steps} steps)`).join("\n");
+        } else {
+          testPill.classList.add("err");
+          const firstFail = tests.find(t => !t.passed);
+          testPill.textContent = `✗ Tests: ${passedCount}/${tests.length} — test_${firstFail.name}: ${firstFail.error || "failed"}`;
+          testPill.title = tests
+            .map(t => t.passed ? `✓ test_${t.name}` : `✗ test_${t.name}: ${t.error}`)
+            .join("\n");
+        }
+      }
+
+      const vmEl = document.getElementById("vm-preview");
+      const ev = snap.live_eval;
+      if (ev) {
+        if (ev.ok) {
+          vmEl.classList.remove("err");
+          const outInline = (ev.stdout || "").trim().replace(/\n+/g, " ⏎ ") || "(no stdout)";
+          vmEl.textContent = `⚡ Live Hub VM (${ev.steps} steps): ${outInline}`;
+          vmEl.title = ev.stdout || "(no stdout)";
+        } else {
+          vmEl.classList.add("err");
+          vmEl.textContent = `⚡ Hub VM Error: ${ev.error || "failed"}`;
+          vmEl.title = ev.error || "";
+        }
+      }
+
+      const symSel = document.getElementById("symbol-select");
+      const prevSym = symSel.value;
+      symSel.innerHTML = "";
+      (snap.symbols || []).forEach(sym => {
+        const opt = document.createElement("option");
+        opt.value = sym.spec;
+        opt.textContent = sym.label;
+        symSel.appendChild(opt);
+      });
+      if ([...symSel.options].some(o => o.value === prevSym)) {
+        symSel.value = prevSym;
+      }
+
+      const badgeBox = document.getElementById("meta-badges");
+      badgeBox.innerHTML = "";
+      (snap.metadata_badges || []).forEach(b => {
+        const span = document.createElement("span");
+        span.className = "meta-pill";
+        span.textContent = b;
+        badgeBox.appendChild(span);
+      });
+
+      SPOKES.forEach(s => {
+        const pane = document.getElementById(`pane-${s}`);
+        const status = document.getElementById(`status-${s}`);
+        const delta = document.getElementById(`delta-${s}`);
+        const ed = document.getElementById(`ed-${s}`);
+        const edge = document.getElementById(`edge-${s}`);
+
+        pane.classList.remove("has-error");
+        edge.setAttribute("class", "edge");
+
+        if (s === skipSpoke) {
+          pane.classList.add("active-edit");
+          status.className = "status editing";
+          status.textContent = "Lifted (put → Hub)";
+          delta.style.display = "none";
+          edge.setAttribute("class", "edge lift");
+          prevTexts[s] = ed.value;
+        } else {
+          pane.classList.remove("active-edit");
+          const nextCode = (snap.views && snap.views[s]) || "";
+          const changed = skipSpoke ? countChangedLines(prevTexts[s], nextCode) : 0;
+          ed.value = nextCode;
+          prevTexts[s] = nextCode;
+
+          if (changed > 0) {
+            delta.style.display = "inline-block";
+            delta.textContent = `Δ ${changed} line${changed === 1 ? "" : "s"}`;
+          } else {
+            delta.style.display = "none";
+          }
+          status.className = "status";
+          status.textContent = skipSpoke ? "Projected (Hub → get)" : "Synced";
+          if (skipSpoke) edge.setAttribute("class", "edge proj");
+        }
+      });
+    }
+
+    async function syncSpoke(spoke) {
+      const source = document.getElementById(`ed-${spoke}`).value;
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spoke, source })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        applySnapshot(data.snapshot, spoke);
+      } else if (data.diagnostic) {
+        const pane = document.getElementById(`pane-${spoke}`);
+        const status = document.getElementById(`status-${spoke}`);
+        const diag = document.getElementById(`diag-${spoke}`);
+        pane.classList.add("has-error");
+        status.className = "status error";
+        status.textContent = `Syntax Hold (L${data.diagnostic.line})`;
+        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 6 spokes held at last valid Hub AST`;
+      }
+    }
+
+    SPOKES.forEach(spoke => {
+      const ed = document.getElementById(`ed-${spoke}`);
+      ed.addEventListener("input", () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => syncSpoke(spoke), 110);
+      });
+      ed.addEventListener("keydown", e => {
+        if (e.key === "Tab") {
+          e.preventDefault();
+          const start = ed.selectionStart;
+          const end = ed.selectionEnd;
+          const pad = spoke === "go" ? "\t" : (spoke === "typescript" || spoke === "star" ? "  " : "    ");
+          ed.value = ed.value.substring(0, start) + pad + ed.value.substring(end);
+          ed.selectionStart = ed.selectionEnd = start + pad.length;
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => syncSpoke(spoke), 110);
+        }
+      });
+    });
+
+    document.querySelectorAll(".toggle-pill").forEach(pill => {
+      pill.addEventListener("click", () => {
+        const s = pill.dataset.spoke;
+        pill.classList.toggle("on");
+        document.getElementById(`pane-${s}`).classList.toggle("hidden", !pill.classList.contains("on"));
+      });
+    });
+
+    function flashMessage(msg, isErr) {
+      const el = document.getElementById("action-msg");
+      el.style.color = isErr ? "#fca5a5" : "#93c5fd";
+      el.textContent = msg;
+    }
+
+    document.getElementById("rename-btn").addEventListener("click", async () => {
+      const target = document.getElementById("symbol-select").value;
+      const new_name = document.getElementById("rename-input").value.trim();
+      if (!new_name) {
+        flashMessage("Enter a new identifier name first", true);
+        return;
+      }
+      const res = await fetch("/api/refactor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target, new_name })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById("rename-input").value = "";
+        applySnapshot(data.snapshot, null);
+        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 7 languages`, false);
+      } else {
+        flashMessage(`✗ ${data.error}`, true);
+      }
+    });
+
+    document.getElementById("opt-btn").addEventListener("click", async () => {
+      const res = await fetch("/api/optimize", { method: "POST", body: "{}" });
+      const data = await res.json();
+      if (data.ok) {
+        applySnapshot(data.snapshot, null);
+        if (data.rewrites > 0) {
+          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 7 languages`, false);
+        } else {
+          flashMessage("AST is already in normal form (0 rewrites)", false);
+        }
+      }
+    });
+
+    document.getElementById("undo-btn").addEventListener("click", async () => {
+      const res = await fetch("/api/undo", { method: "POST", body: "{}" });
+      const data = await res.json();
+      if (data.ok) applySnapshot(data.snapshot, null);
+    });
+
+    document.getElementById("redo-btn").addEventListener("click", async () => {
+      const res = await fetch("/api/redo", { method: "POST", body: "{}" });
+      const data = await res.json();
+      if (data.ok) applySnapshot(data.snapshot, null);
+    });
+
+    document.getElementById("sample-select").addEventListener("change", async e => {
+      flashMessage("", false);
+      const res = await fetch("/api/sample", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: e.target.value })
+      });
+      const data = await res.json();
+      if (data.ok) applySnapshot(data.snapshot, null);
+    });
+
+    async function triggerRunAll() {
+      const drawer = document.getElementById("run-drawer");
+      const summary = document.getElementById("run-summary");
+      const cards = document.getElementById("run-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Executing Hub VM + rustc + clang++ (PCH) + swiftc + go + python3 + node in parallel...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/run", { method: "POST", body: "{}" });
+      const data = await res.json();
+      if (data.outputs_match) {
+        summary.innerHTML = `<span style="color:#34d399;">✓ 7/7 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
+      } else {
+        summary.innerHTML = `<span style="color:#f87171;">Runtime Check Completed (${data.wall_time_ms}ms — inspect outputs below)</span>`;
+      }
+
+      (data.results || []).forEach(r => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const badge = r.ok
+          ? `<span style="color:#34d399;">✓ ${r.duration_ms}ms</span>`
+          : `<span style="color:#f87171;">✗ failed (${r.duration_ms}ms)</span>`;
+        const outText = (r.stdout || "") + (r.stderr ? `\n[stderr]\n${r.stderr}` : "");
+        card.innerHTML = `<div style="display:flex;justify-content:space-between;"><strong>${r.language}</strong>${badge}</div><pre></pre>`;
+        card.querySelector("pre").textContent = outText.trim() || "(no stdout)";
+        cards.appendChild(card);
+      });
+    }
+
+    document.getElementById("run-btn").addEventListener("click", triggerRunAll);
+    window.addEventListener("keydown", e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        triggerRunAll();
+      }
+    });
+
+    (async function init() {
+      const res = await fetch("/api/state");
+      const data = await res.json();
+      const sel = document.getElementById("sample-select");
+      (data.samples || []).forEach(s => {
+        const opt = document.createElement("option");
+        opt.value = s.id;
+        opt.textContent = `${s.title} — ${s.description}`;
+        sel.appendChild(opt);
+      });
+      if (data.snapshot) applySnapshot(data.snapshot, null);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+/target
+/star_workspace
+.DS_Store
+*.swp
+*.pch

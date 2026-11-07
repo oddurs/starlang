@@ -1,0 +1,58 @@
+pub mod cpp;
+pub mod go;
+pub mod python;
+pub mod rust;
+pub mod star;
+pub mod swift;
+pub mod typescript;
+
+use crate::lens::{LanguageLens, SpokeId};
+
+pub fn all_lenses() -> Vec<Box<dyn LanguageLens>> {
+    vec![
+        Box::new(rust::RustLens),
+        Box::new(cpp::CppLens),
+        Box::new(swift::SwiftLens),
+        Box::new(go::GoLens),
+        Box::new(python::PythonLens),
+        Box::new(typescript::TypeScriptLens),
+        Box::new(star::StarLens),
+    ]
+}
+
+pub fn lens_for(id: SpokeId) -> Box<dyn LanguageLens> {
+    match id {
+        SpokeId::Rust => Box::new(rust::RustLens),
+        SpokeId::Cpp => Box::new(cpp::CppLens),
+        SpokeId::Swift => Box::new(swift::SwiftLens),
+        SpokeId::Go => Box::new(go::GoLens),
+        SpokeId::Python => Box::new(python::PythonLens),
+        SpokeId::TypeScript => Box::new(typescript::TypeScriptLens),
+        SpokeId::Star => Box::new(star::StarLens),
+    }
+}
+
+pub fn unescape_string(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some('\'') => out.push('\''),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
