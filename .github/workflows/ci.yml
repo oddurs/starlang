@@ -106,6 +106,10 @@ jobs:
         run: cargo run --quiet -- hls > /dev/null
       - name: Run 32-lane Warp SIMT GPU compute kernel synthesizer (CUDA/WGSL/Metal/OpenCL)
         run: cargo run --quiet -- gpu > /dev/null
+      - name: Run Fully Homomorphic Encryption (FHE) Ring-LWE blinded circuit compiler
+        run: cargo run --quiet -- fhe > /dev/null
+      - name: Run Reynolds Separation Logic (P * Q, P -* Q) symbolic heap & borrow verifier
+        run: cargo run --quiet -- seplogic > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier

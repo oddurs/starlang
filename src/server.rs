@@ -10,6 +10,7 @@ use crate::debugger::TimeTravelReport;
 use crate::dist_actor::{ActorConcurrencyReport, ModelCheckReport};
 use crate::egraph::{EGraphReport, PartialEvalReport};
 use crate::engine::{StarEngine, SyncSnapshot};
+use crate::fhe_seplogic::{FheCircuitReport, SeparationLogicReport};
 use crate::hls_verilog::{GpuSimtReport, HlsRtlReport};
 use crate::hub::Diagnostic;
 use crate::json::{json_str, parse_flat_json_object};
@@ -654,6 +655,22 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.gpu_simt()
             };
             let payload = gpu_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/fhe") | ("GET", "/api/fhe") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.fhe_circuit()
+            };
+            let payload = fhe_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/seplogic") | ("GET", "/api/seplogic") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.separation_logic()
+            };
+            let payload = seplogic_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -2964,6 +2981,153 @@ fn gpu_to_json(rep: &GpuSimtReport) -> String {
         rep.avg_sm_occupancy_pct,
         rep.avg_warp_efficiency_pct,
         rep.max_gpu_speedup,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn fhe_to_json(rep: &FheCircuitReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let gs: Vec<String> = f
+                .gates
+                .iter()
+                .map(|g| {
+                    format!(
+                        "{{\"gate_id\":{},\"gate_kind\":{},\"scheme_op\":{},\"rns_level\":{},\"ciphertext_degree\":{},\"noise_bits_after\":{:.1},\"remaining_budget_bits\":{:.1},\"source_expr\":{}}}",
+                        g.gate_id,
+                        json_str(&g.gate_kind),
+                        json_str(&g.scheme_op),
+                        g.rns_level,
+                        g.ciphertext_degree,
+                        g.noise_bits_after,
+                        g.remaining_budget_bits,
+                        json_str(&g.source_expr)
+                    )
+                })
+                .collect();
+            let spk: Vec<String> = f
+                .fhe_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"fhe_scheme\":{},\"poly_modulus_degree_n\":{},\"coeff_modulus_bits_q\":{},\"plaintext_modulus_t\":{},\"security_bits_lambda\":{},\"multiplicative_depth\":{},\"relinearizations_count\":{},\"mod_switches_count\":{},\"oblivious_mux_gates\":{},\"bootstraps_inserted\":{},\"initial_noise_budget_bits\":{:.1},\"final_noise_budget_bits\":{:.1},\"decryption_verified\":{},\"sample_plaintext_out\":{},\"sample_decrypted_out\":{},\"gates\":[{}],\"openfhe_cpp_source\":{},\"fhe_by_spoke\":{{{}}},\"mermaid_fhe\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                json_str(&f.fhe_scheme),
+                f.poly_modulus_degree_n,
+                f.coeff_modulus_bits_q,
+                f.plaintext_modulus_t,
+                f.security_bits_lambda,
+                f.multiplicative_depth,
+                f.relinearizations_count,
+                f.mod_switches_count,
+                f.oblivious_mux_gates,
+                f.bootstraps_inserted,
+                f.initial_noise_budget_bits,
+                f.final_noise_budget_bits,
+                f.decryption_verified,
+                f.sample_plaintext_out,
+                f.sample_decrypted_out,
+                gs.join(","),
+                json_str(&f.openfhe_cpp_source),
+                spk.join(","),
+                json_str(&f.mermaid_fhe)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_fhe_gates\":{},\"total_relinearizations\":{},\"total_oblivious_muxes\":{},\"total_bootstraps\":{},\"max_multiplicative_depth\":{},\"min_remaining_noise_bits\":{:.1},\"all_decryptions_verified\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_fhe_gates,
+        rep.total_relinearizations,
+        rep.total_oblivious_muxes,
+        rep.total_bootstraps,
+        rep.max_multiplicative_depth,
+        rep.min_remaining_noise_bits,
+        rep.all_decryptions_verified,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn seplogic_to_json(rep: &SeparationLogicReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let cs: Vec<String> = f
+                .cells
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{{\"cell_id\":{},\"location_sym\":{},\"owner_var\":{},\"points_to_val\":{},\"permission_frac\":{},\"lifecycle_state\":{}}}",
+                        c.cell_id,
+                        json_str(&c.location_sym),
+                        json_str(&c.owner_var),
+                        json_str(&c.points_to_val),
+                        json_str(&c.permission_frac),
+                        json_str(&c.lifecycle_state)
+                    )
+                })
+                .collect();
+            let ps: Vec<String> = f
+                .proof_steps
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{{\"step_id\":{},\"stmt_summary\":{},\"pre_spatial_heap\":{},\"action_rule\":{},\"post_spatial_heap\":{},\"disjointness_verified\":{}}}",
+                        p.step_id,
+                        json_str(&p.stmt_summary),
+                        json_str(&p.pre_spatial_heap),
+                        json_str(&p.action_rule),
+                        json_str(&p.post_spatial_heap),
+                        p.disjointness_verified
+                    )
+                })
+                .collect();
+            let spk: Vec<String> = f
+                .region_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"spatial_precondition\":{},\"spatial_postcondition\":{},\"frame_invariant_r\":{},\"magic_wand_continuation\":{},\"heap_cells_tracked\":{},\"proof_steps_count\":{},\"no_use_after_free\":{},\"no_double_free\":{},\"no_memory_leak\":{},\"no_mutable_aliasing\":{},\"all_spatial_proofs_valid\":{},\"cells\":[{}],\"proof_steps\":[{}],\"region_by_spoke\":{{{}}},\"mermaid_seplogic\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                json_str(&f.spatial_precondition),
+                json_str(&f.spatial_postcondition),
+                json_str(&f.frame_invariant_r),
+                json_str(&f.magic_wand_continuation),
+                f.heap_cells_tracked,
+                f.proof_steps_count,
+                f.no_use_after_free,
+                f.no_double_free,
+                f.no_memory_leak,
+                f.no_mutable_aliasing,
+                f.all_spatial_proofs_valid,
+                cs.join(","),
+                ps.join(","),
+                spk.join(","),
+                json_str(&f.mermaid_seplogic)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_heap_cells\":{},\"total_proof_steps\":{},\"use_after_free_bugs\":{},\"double_free_bugs\":{},\"memory_leak_bugs\":{},\"aliasing_bugs\":{},\"all_memory_safe\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_heap_cells,
+        rep.total_proof_steps,
+        rep.use_after_free_bugs,
+        rep.double_free_bugs,
+        rep.memory_leak_bugs,
+        rep.aliasing_bugs,
+        rep.all_memory_safe,
         rep.elapsed_ms,
         fns_json.join(",")
     )
