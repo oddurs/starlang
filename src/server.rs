@@ -17,6 +17,7 @@ use crate::merge::{MergeReport, SemanticDiffReport};
 use crate::microarch::{InstructionScheduleReport, MicroArchReport};
 use crate::mutate::MutationReport;
 use crate::polyhedral::{PolyhedralReport, TerminationWcetReport};
+use crate::quantum_automata::{MinimalDfaReport, QuantumCircuitReport};
 use crate::quickcheck::QuickCheckReport;
 use crate::refinement_prob::{LiquidRefinementReport, ProbabilisticEntropyReport};
 use crate::regalloc::{EscapeAnalysisReport, RegAllocReport};
@@ -620,6 +621,22 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.probabilistic_entropy()
             };
             let payload = prob_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/quantum") | ("GET", "/api/quantum") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.quantum_circuit()
+            };
+            let payload = quantum_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/automata") | ("GET", "/api/automata") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.minimal_dfa()
+            };
+            let payload = automata_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -2613,6 +2630,158 @@ fn prob_to_json(rep: &ProbabilisticEntropyReport) -> String {
         rep.max_mutual_info_bits,
         rep.max_output_entropy_bits,
         rep.total_branch_probes,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn quantum_to_json(rep: &QuantumCircuitReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let regs: Vec<String> = f
+                .registers
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{{\"reg_id\":{},\"name\":{},\"role\":{},\"bit_width\":{},\"initial_state\":{},\"final_state\":{}}}",
+                        r.reg_id,
+                        json_str(&r.name),
+                        json_str(&r.role),
+                        r.bit_width,
+                        json_str(&r.initial_state),
+                        json_str(&r.final_state)
+                    )
+                })
+                .collect();
+            let gs: Vec<String> = f
+                .gates
+                .iter()
+                .map(|g| {
+                    format!(
+                        "{{\"step_idx\":{},\"stage\":{},\"gate_op\":{},\"control_qubits\":{},\"target_qubits\":{},\"t_gate_cost\":{},\"source_note\":{}}}",
+                        g.step_idx,
+                        json_str(&g.stage),
+                        json_str(&g.gate_op),
+                        json_str(&g.control_qubits),
+                        json_str(&g.target_qubits),
+                        g.t_gate_cost,
+                        json_str(&g.source_note)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"logical_qubits\":{},\"ancilla_qubits\":{},\"total_qubits\":{},\"forward_gates\":{},\"uncompute_gates\":{},\"total_gates\":{},\"toffoli_count\":{},\"clifford_t_count\":{},\"circuit_depth\":{},\"ancilla_uncomputed_clean\":{},\"grover_search_space_bits\":{},\"grover_optimal_iterations\":{},\"grover_quadratic_speedup\":{:.2},\"registers\":[{}],\"gates\":[{}],\"openqasm3_source\":{},\"mermaid_circuit\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.logical_qubits,
+                f.ancilla_qubits,
+                f.total_qubits,
+                f.forward_gates,
+                f.uncompute_gates,
+                f.total_gates,
+                f.toffoli_count,
+                f.clifford_t_count,
+                f.circuit_depth,
+                f.ancilla_uncomputed_clean,
+                f.grover_search_space_bits,
+                f.grover_optimal_iterations,
+                f.grover_quadratic_speedup,
+                regs.join(","),
+                gs.join(","),
+                json_str(&f.openqasm3_source),
+                json_str(&f.mermaid_circuit)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_qubits_allocated\":{},\"total_reversible_gates\":{},\"total_toffoli_gates\":{},\"total_clifford_t_gates\":{},\"all_ancillas_uncomputed\":{},\"max_grover_speedup\":{:.2},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_qubits_allocated,
+        rep.total_reversible_gates,
+        rep.total_toffoli_gates,
+        rep.total_clifford_t_gates,
+        rep.all_ancillas_uncomputed,
+        rep.max_grover_speedup,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn automata_to_json(rep: &MinimalDfaReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let alph: Vec<String> = f.alphabet.iter().map(|a| json_str(a)).collect();
+            let sts: Vec<String> = f
+                .states
+                .iter()
+                .map(|s| {
+                    let tr: Vec<String> = s
+                        .transitions
+                        .iter()
+                        .map(|(k, v)| format!("{}:{}", json_str(k), v))
+                        .collect();
+                    format!(
+                        "{{\"state_id\":{},\"label\":{},\"access_word\":{},\"is_accepting\":{},\"output_class\":{},\"transitions\":{{{}}}}}",
+                        s.state_id,
+                        json_str(&s.label),
+                        json_str(&s.access_word),
+                        s.is_accepting,
+                        json_str(&s.output_class),
+                        tr.join(",")
+                    )
+                })
+                .collect();
+            let wits: Vec<String> = f
+                .distinguishability_witnesses
+                .iter()
+                .map(|w| {
+                    format!(
+                        "{{\"state_a\":{},\"state_b\":{},\"distinguishing_suffix\":{},\"outcome_a\":{},\"outcome_b\":{}}}",
+                        json_str(&w.state_a),
+                        json_str(&w.state_b),
+                        json_str(&w.distinguishing_suffix),
+                        json_str(&w.outcome_a),
+                        json_str(&w.outcome_b)
+                    )
+                })
+                .collect();
+            let spk: Vec<String> = f
+                .fsm_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"alphabet\":[{}],\"unminimized_states\":{},\"minimal_states\":{},\"myhill_nerode_classes\":{},\"observation_table_queries\":{},\"synthesized_regex\":{},\"branchless_speedup\":{:.2},\"states\":[{}],\"distinguishability_witnesses\":[{}],\"fsm_by_spoke\":{{{}}},\"mermaid_dfa\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                alph.join(","),
+                f.unminimized_states,
+                f.minimal_states,
+                f.myhill_nerode_classes,
+                f.observation_table_queries,
+                json_str(&f.synthesized_regex),
+                f.branchless_speedup,
+                sts.join(","),
+                wits.join(","),
+                spk.join(","),
+                json_str(&f.mermaid_dfa)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_unminimized_states\":{},\"total_minimal_states\":{},\"total_lstar_queries\":{},\"all_myhill_nerode_minimal\":{},\"overall_branchless_speedup\":{:.2},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_unminimized_states,
+        rep.total_minimal_states,
+        rep.total_lstar_queries,
+        rep.all_myhill_nerode_minimal,
+        rep.overall_branchless_speedup,
         rep.elapsed_ms,
         fns_json.join(",")
     )

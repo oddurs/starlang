@@ -14,6 +14,7 @@ pub mod merge;
 pub mod microarch;
 pub mod mutate;
 pub mod polyhedral;
+pub mod quantum_automata;
 pub mod quickcheck;
 pub mod reconcile;
 pub mod refactor;
