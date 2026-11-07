@@ -9,6 +9,7 @@ use crate::json::{json_str, parse_flat_json_object};
 use crate::lens::SpokeId;
 use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
+use crate::trace::TraceReport;
 
 const UI_HTML: &str = include_str!("ui.html");
 
@@ -17,9 +18,9 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v0.4 — 7-Spoke Bidirectional Compiler Studio running at:");
+    println!("StarLang v0.5 — 8-Spoke Bidirectional Compiler Studio running at:");
     println!("  -> http://{}", addr);
-    println!("Edit Rust, C++, Swift, Go, Python, TypeScript, or Star S-Expr to sync all spokes, live VM & unit tests.\n");
+    println!("Edit Rust, C++, Swift, Java, Go, Python, TypeScript, or Star S-Expr to sync all spokes, live VM, tests & AST coverage.\n");
 
     serve_listener(listener)
 }
@@ -196,6 +197,14 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
             let payload = format!("{{\"ok\":true,\"snapshot\":{}}}", snapshot_to_json(&snap));
             send_response(&mut stream, 200, "application/json", &payload)
         }
+        ("POST", "/api/trace") => {
+            let report = {
+                let eng = shared.lock().unwrap();
+                eng.trace()
+            };
+            let payload = trace_to_json(&report);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
         ("POST", "/api/run") => {
             let report = {
                 let eng = shared.lock().unwrap();
@@ -292,18 +301,79 @@ fn snapshot_to_json(snap: &SyncSnapshot) -> String {
         .collect();
 
     format!(
-        "{{\"revision\":{},\"active_spoke\":{},\"node_count\":{},\"can_undo\":{},\"can_redo\":{},\"metadata_badges\":[{}],\"semantic_diagnostics\":[{}],\"symbols\":[{}],\"live_eval\":{},\"test_results\":[{}],\"views\":{{{}}}}}",
+        "{{\"revision\":{},\"active_spoke\":{},\"node_count\":{},\"can_undo\":{},\"can_redo\":{},\"coverage_pct\":{},\"covered_stmts\":{},\"total_stmts\":{},\"metadata_badges\":[{}],\"semantic_diagnostics\":[{}],\"symbols\":[{}],\"live_eval\":{},\"test_results\":[{}],\"views\":{{{}}}}}",
         snap.revision,
         json_str(snap.active_spoke.as_str()),
         snap.node_count,
         snap.can_undo,
         snap.can_redo,
+        snap.coverage_pct,
+        snap.covered_stmts,
+        snap.total_stmts,
         badges_entries.join(","),
         sem_entries.join(","),
         sym_entries.join(","),
         live_json,
         test_entries.join(","),
         views_entries.join(",")
+    )
+}
+
+fn trace_to_json(report: &TraceReport) -> String {
+    let err_json = report
+        .error
+        .as_deref()
+        .map(json_str)
+        .unwrap_or_else(|| "null".to_string());
+    let uncov_entries: Vec<String> = report
+        .uncovered
+        .iter()
+        .map(|u| {
+            format!(
+                "{{\"node_id\":{},\"func\":{},\"summary\":{}}}",
+                u.node_id,
+                json_str(&u.func),
+                json_str(&u.summary)
+            )
+        })
+        .collect();
+    let hotspot_entries: Vec<String> = report
+        .hotspots
+        .iter()
+        .map(|h| {
+            format!(
+                "{{\"name\":{},\"calls\":{},\"total_steps\":{}}}",
+                json_str(&h.name),
+                h.calls,
+                h.total_steps
+            )
+        })
+        .collect();
+    let call_entries: Vec<String> = report
+        .call_trace
+        .iter()
+        .map(|c| {
+            format!(
+                "{{\"depth\":{},\"callee\":{},\"args\":{},\"result\":{},\"steps\":{}}}",
+                c.depth,
+                json_str(&c.callee),
+                json_str(&c.args),
+                json_str(&c.result),
+                c.steps
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":{},\"coverage_pct\":{},\"covered_stmts\":{},\"total_stmts\":{},\"error\":{},\"uncovered\":[{}],\"hotspots\":[{}],\"call_trace\":[{}]}}",
+        report.ok,
+        report.coverage_pct,
+        report.covered_stmts,
+        report.total_stmts,
+        err_json,
+        uncov_entries.join(","),
+        hotspot_entries.join(","),
+        call_entries.join(",")
     )
 }
 

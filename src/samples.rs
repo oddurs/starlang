@@ -213,7 +213,7 @@ fn test_case_insensitive_tag_filter() {
     SamplePreset {
         id: "pipeline",
         title: "Signal Pipeline & Hub Optimizer Lab (Seeded from C++)",
-        description: "Try 'Optimize Hub' & 'Rename Symbol' — folds constants & prunes dead branches across all 7 languages",
+        description: "Try 'Optimize Hub' & 'Trace & Coverage' — folds constants & prunes dead branches across all 8 languages",
         initial_spoke: SpokeId::Cpp,
         source: r#"#include <algorithm>
 #include <cassert>
@@ -250,7 +250,7 @@ void test_calibration_ceiling() {
     SamplePreset {
         id: "ledger",
         title: "Token Bucket Rate-Limiter (Seeded from Swift 6)",
-        description: "Pure-stdlib Swift 6 structs, Equatable assertions, field mutation & 7-language sync",
+        description: "Pure-stdlib Swift 6 structs, Equatable assertions, field mutation & 8-language sync",
         initial_spoke: SpokeId::Swift,
         source: r#"// Token bucket state for API request throttling
 struct BucketState: Equatable {
@@ -286,6 +286,87 @@ func test_token_bucket_burst() {
 }
 
 main()
+"#,
+    },
+    SamplePreset {
+        id: "histogram",
+        title: "Latency Bucket Histogram (Seeded from Java 21)",
+        description: "Modern Java 21 switch arrows, static value classes, Objects.equals assertions & 8-language sync",
+        initial_spoke: SpokeId::Java,
+        source: r#"import java.util.*;
+
+class StarProgram {
+    // Latency tier classification for SLA telemetry
+    enum Tier {
+        Fast,
+        Moderate,
+        Slow
+    }
+
+    static final class Histogram {
+        long fast;
+        long moderate;
+        long slow;
+
+        Histogram(long fast, long moderate, long slow) {
+            this.fast = fast;
+            this.moderate = moderate;
+            this.slow = slow;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof Histogram other)) return false;
+            return Objects.equals(this.fast, other.fast) && Objects.equals(this.moderate, other.moderate) && Objects.equals(this.slow, other.slow);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(this.fast, this.moderate, this.slow);
+        }
+    }
+
+    static Tier classify_ms(long ms) {
+        if (ms < 50L) {
+            return Tier.Fast;
+        } else if (ms < 200L) {
+            return Tier.Moderate;
+        } else {
+            return Tier.Slow;
+        }
+    }
+
+    static Histogram build_histogram(List<Long> samples) {
+        var hist = new Histogram(0L, 0L, 0L);
+        for (final var ms : samples) {
+            final var tier = classify_ms(ms);
+            switch (tier) {
+                case Tier.Fast -> {
+                    hist.fast += 1L;
+                }
+                case Tier.Moderate -> {
+                    hist.moderate += 1L;
+                }
+                case Tier.Slow -> {
+                    hist.slow += 1L;
+                }
+            }
+        }
+        return hist;
+    }
+
+    public static void main(String[] args) {
+        final var latencies = new ArrayList<>(Arrays.asList(18L, 42L, 95L, 240L, 12L, 310L));
+        final var h = build_histogram(latencies);
+        System.out.println(String.join(" ", String.valueOf("fast:"), String.valueOf(h.fast), String.valueOf("mod:"), String.valueOf(h.moderate), String.valueOf("slow:"), String.valueOf(h.slow)));
+    }
+
+    static void test_histogram_buckets() {
+        final var probe = new ArrayList<>(Arrays.asList(10L, 80L, 250L, 35L));
+        final var res = build_histogram(probe);
+        if (!Objects.equals(res, new Histogram(2L, 1L, 1L))) throw new AssertionError("assert_eq failed");
+    }
+}
 "#,
     },
 ];

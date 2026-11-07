@@ -5,6 +5,7 @@ pub enum SpokeId {
     Rust,
     Cpp,
     Swift,
+    Java,
     Go,
     Python,
     TypeScript,
@@ -12,10 +13,11 @@ pub enum SpokeId {
 }
 
 impl SpokeId {
-    pub const ALL: [SpokeId; 7] = [
+    pub const ALL: [SpokeId; 8] = [
         SpokeId::Rust,
         SpokeId::Cpp,
         SpokeId::Swift,
+        SpokeId::Java,
         SpokeId::Go,
         SpokeId::Python,
         SpokeId::TypeScript,
@@ -27,6 +29,7 @@ impl SpokeId {
             SpokeId::Rust => "rust",
             SpokeId::Cpp => "cpp",
             SpokeId::Swift => "swift",
+            SpokeId::Java => "java",
             SpokeId::Go => "go",
             SpokeId::Python => "python",
             SpokeId::TypeScript => "typescript",
@@ -39,6 +42,7 @@ impl SpokeId {
             SpokeId::Rust => "Rust",
             SpokeId::Cpp => "C++",
             SpokeId::Swift => "Swift",
+            SpokeId::Java => "Java",
             SpokeId::Go => "Go",
             SpokeId::Python => "Python",
             SpokeId::TypeScript => "TypeScript",
@@ -51,6 +55,7 @@ impl SpokeId {
             SpokeId::Rust => "rs",
             SpokeId::Cpp => "cpp",
             SpokeId::Swift => "swift",
+            SpokeId::Java => "java",
             SpokeId::Go => "go",
             SpokeId::Python => "py",
             SpokeId::TypeScript => "ts",
@@ -65,6 +70,7 @@ impl SpokeId {
             SpokeId::Rust => Some("rust."),
             SpokeId::Cpp => Some("cpp."),
             SpokeId::Swift => Some("swift."),
+            SpokeId::Java => Some("java."),
             SpokeId::Go => Some("go."),
             SpokeId::Python => Some("py."),
             SpokeId::TypeScript => Some("ts."),
@@ -77,6 +83,7 @@ impl SpokeId {
             "rust" | "rs" | ".rs" => Some(SpokeId::Rust),
             "cpp" | "c++" | "cxx" | "cc" | ".cpp" | ".cc" | ".cxx" => Some(SpokeId::Cpp),
             "swift" | ".swift" => Some(SpokeId::Swift),
+            "java" | ".java" => Some(SpokeId::Java),
             "go" | "golang" | ".go" => Some(SpokeId::Go),
             "python" | "py" | ".py" => Some(SpokeId::Python),
             "typescript" | "ts" | ".ts" => Some(SpokeId::TypeScript),

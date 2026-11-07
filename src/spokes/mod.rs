@@ -1,5 +1,6 @@
 pub mod cpp;
 pub mod go;
+pub mod java;
 pub mod python;
 pub mod rust;
 pub mod star;
@@ -13,6 +14,7 @@ pub fn all_lenses() -> Vec<Box<dyn LanguageLens>> {
         Box::new(rust::RustLens),
         Box::new(cpp::CppLens),
         Box::new(swift::SwiftLens),
+        Box::new(java::JavaLens),
         Box::new(go::GoLens),
         Box::new(python::PythonLens),
         Box::new(typescript::TypeScriptLens),
@@ -25,6 +27,7 @@ pub fn lens_for(id: SpokeId) -> Box<dyn LanguageLens> {
         SpokeId::Rust => Box::new(rust::RustLens),
         SpokeId::Cpp => Box::new(cpp::CppLens),
         SpokeId::Swift => Box::new(swift::SwiftLens),
+        SpokeId::Java => Box::new(java::JavaLens),
         SpokeId::Go => Box::new(go::GoLens),
         SpokeId::Python => Box::new(python::PythonLens),
         SpokeId::TypeScript => Box::new(typescript::TypeScriptLens),

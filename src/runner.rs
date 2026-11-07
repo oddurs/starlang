@@ -70,9 +70,9 @@ pub struct MultiRunReport {
 }
 
 /// Execute the Hub Native VM plus Rust (`rustc`), C++ (`clang++` with cached STL PCH),
-/// Swift (`swiftc`), Go (`go run`), Python (`python3`), and TypeScript (`node`)
-/// concurrently using `std::thread::scope`, verifying byte-for-byte identical stdout
-/// across all 7 execution engines.
+/// Swift (`swiftc`), Java (`javac` + `java`), Go (`go run`), Python (`python3`), and
+/// TypeScript (`node`) concurrently using `std::thread::scope`, verifying byte-for-byte
+/// identical stdout across all 8 execution engines.
 pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let wall_start = Instant::now();
     let run_id = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -87,32 +87,38 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let rust_src = engine.project(SpokeId::Rust);
     let cpp_src = engine.project(SpokeId::Cpp);
     let swift_src = engine.project(SpokeId::Swift);
+    let java_src = engine.project(SpokeId::Java);
     let go_src = engine.project(SpokeId::Go);
     let py_src = engine.project(SpokeId::Python);
     let ts_src = engine.project(SpokeId::TypeScript);
 
-    let (hub_res, rs_res, cpp_res, swift_res, go_res, py_res, ts_res) = thread::scope(|s| {
-        let h_hub = s.spawn(|| run_hub_vm(&hub_clone));
-        let h_rs = s.spawn(|| run_rust(&dir, &rust_src));
-        let h_cpp = s.spawn(|| run_cpp(&dir, &cpp_src));
-        let h_swift = s.spawn(|| run_swift(&dir, &swift_src));
-        let h_go = s.spawn(|| run_go(&dir, &go_src));
-        let h_py = s.spawn(|| run_python(&dir, &py_src));
-        let h_ts = s.spawn(|| run_typescript(&dir, &ts_src));
-        (
-            h_hub.join().unwrap(),
-            h_rs.join().unwrap(),
-            h_cpp.join().unwrap(),
-            h_swift.join().unwrap(),
-            h_go.join().unwrap(),
-            h_py.join().unwrap(),
-            h_ts.join().unwrap(),
-        )
-    });
+    let (hub_res, rs_res, cpp_res, swift_res, java_res, go_res, py_res, ts_res) =
+        thread::scope(|s| {
+            let h_hub = s.spawn(|| run_hub_vm(&hub_clone));
+            let h_rs = s.spawn(|| run_rust(&dir, &rust_src));
+            let h_cpp = s.spawn(|| run_cpp(&dir, &cpp_src));
+            let h_swift = s.spawn(|| run_swift(&dir, &swift_src));
+            let h_java = s.spawn(|| run_java(&dir, &java_src));
+            let h_go = s.spawn(|| run_go(&dir, &go_src));
+            let h_py = s.spawn(|| run_python(&dir, &py_src));
+            let h_ts = s.spawn(|| run_typescript(&dir, &ts_src));
+            (
+                h_hub.join().unwrap(),
+                h_rs.join().unwrap(),
+                h_cpp.join().unwrap(),
+                h_swift.join().unwrap(),
+                h_java.join().unwrap(),
+                h_go.join().unwrap(),
+                h_py.join().unwrap(),
+                h_ts.join().unwrap(),
+            )
+        });
 
     let _ = fs::remove_dir_all(&dir);
 
-    let results = vec![hub_res, rs_res, cpp_res, swift_res, go_res, py_res, ts_res];
+    let results = vec![
+        hub_res, rs_res, cpp_res, swift_res, java_res, go_res, py_res, ts_res,
+    ];
     let all_succeeded = results.iter().all(|r| r.ok);
     let outputs_match = all_succeeded
         && results
@@ -299,6 +305,66 @@ fn run_swift(dir: &PathBuf, src: &str) -> RuntimeOutput {
                 ok: false,
                 stdout: String::new(),
                 stderr: e.to_string(),
+                duration_ms: start.elapsed().as_millis(),
+            },
+        },
+    }
+}
+
+fn run_java(dir: &PathBuf, src: &str) -> RuntimeOutput {
+    let java_path = dir.join("prog.java");
+    let start = Instant::now();
+    if let Err(e) = fs::write(&java_path, src) {
+        return RuntimeOutput {
+            language: "Java (javac)",
+            ok: false,
+            stdout: String::new(),
+            stderr: e.to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        };
+    }
+
+    let compile = Command::new("javac")
+        .arg("--release")
+        .arg("21")
+        .arg("-d")
+        .arg(dir)
+        .arg(&java_path)
+        .output();
+
+    match compile {
+        Ok(out) if !out.status.success() => RuntimeOutput {
+            language: "Java (javac)",
+            ok: false,
+            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        },
+        Err(e) => RuntimeOutput {
+            language: "Java (javac)",
+            ok: false,
+            stdout: String::new(),
+            stderr: format!("failed to invoke javac: {}", e),
+            duration_ms: start.elapsed().as_millis(),
+        },
+        Ok(_) => match Command::new("java")
+            .arg("-cp")
+            .arg(dir)
+            .arg("StarProgram")
+            .output()
+        {
+            Ok(run_out) => RuntimeOutput {
+                language: "Java (javac)",
+                ok: run_out.status.success(),
+                stdout: String::from_utf8_lossy(&run_out.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&run_out.stderr).to_string(),
+                duration_ms: start.elapsed().as_millis(),
+            },
+            Err(e) => RuntimeOutput {
+                language: "Java (javac)",
+                ok: false,
+                stdout: String::new(),
+                stderr: format!("failed to invoke java: {}", e),
                 duration_ms: start.elapsed().as_millis(),
             },
         },

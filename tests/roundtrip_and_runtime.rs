@@ -116,7 +116,7 @@ fn python_and_typescript_edits_preserve_rust_borrow_metadata_and_sync_all_views(
 }
 
 #[test]
-fn cpp_swift_and_go_edits_on_enums_and_metadata_sync_across_all_seven_spokes() {
+fn cpp_swift_java_and_go_edits_on_enums_and_metadata_sync_across_all_eight_spokes() {
     let sample = find_sample("alerts").unwrap();
     let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
 
@@ -169,17 +169,31 @@ fn cpp_swift_and_go_edits_on_enums_and_metadata_sync_across_all_seven_spokes() {
         .expect("Swift edit should lift cleanly");
     assert!(snap2.views["cpp"].contains("std::string evaluate_window(std::vector<int64_t> latencies"));
     assert!(snap2.views["rust"].contains("latencies: &[i64]"));
+    assert!(snap2.views["java"].contains("case Severity.Fatal -> {"));
     assert!(snap2.views["go"].contains("return int64(12)"));
     assert_eq!(snap2.live_eval.stdout.trim(), "checked=4 score=13");
 
+    // Subsequent edit in Modern Java 21 also preserves Rust slice + C++ value metadata!
+    let java_edited = snap2.views["java"].replace(
+        "            case Severity.Fatal -> {\n                return 12L;\n            }",
+        "            case Severity.Fatal -> {\n                return 14L;\n            }",
+    );
+    let snap3 = engine
+        .apply_edit(SpokeId::Java, &java_edited)
+        .expect("Java 21 edit should lift cleanly");
+    assert!(snap3.views["cpp"].contains("std::string evaluate_window(std::vector<int64_t> latencies"));
+    assert!(snap3.views["rust"].contains("latencies: &[i64]"));
+    assert!(snap3.views["swift"].contains("return 14"));
+    assert_eq!(snap3.live_eval.stdout.trim(), "checked=3 score=15");
+
     let report = run_all_spokes(&engine);
-    assert_eq!(report.results.len(), 7);
+    assert_eq!(report.results.len(), 8);
     assert!(
         report.outputs_match,
-        "7-engine outputs diverged: {:?}",
+        "8-engine outputs diverged: {:?}",
         report.results
     );
-    assert_eq!(report.results[0].stdout.trim(), "checked=4 score=13");
+    assert_eq!(report.results[0].stdout.trim(), "checked=3 score=15");
 }
 
 #[test]
@@ -239,6 +253,8 @@ fn polyglot_unit_tests_and_assertions_sync_and_catch_regressions_live() {
     assert!(snap.views["rust"].contains("assert_eq!(result, BucketState"));
     assert!(snap.views["cpp"].contains("void test_token_bucket_burst()"));
     assert!(snap.views["swift"].contains("func test_token_bucket_burst()"));
+    assert!(snap.views["java"].contains("static void test_token_bucket_burst()"));
+    assert!(snap.views["java"].contains("Objects.equals("));
     assert!(snap.views["go"].contains("func test_token_bucket_burst()"));
     assert!(snap.views["go"].contains("reflect.DeepEqual("));
     assert!(snap.views["python"].contains("def test_token_bucket_burst() -> None:"));
@@ -259,8 +275,8 @@ fn polyglot_unit_tests_and_assertions_sync_and_catch_regressions_live() {
 }
 
 #[test]
-fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_seven_spokes() {
-    let report = run_fuzz_suite(0x57A4_2026_0400, 50);
+fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_eight_spokes() {
+    let report = run_fuzz_suite(0x57A4_2026_0500, 50);
     assert!(
         report.ok(),
         "Property-based fuzzer found {} failure(s):\n{}",
@@ -268,9 +284,45 @@ fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_seven_spokes
         report.failures.join("\n\n")
     );
     assert_eq!(report.programs_tested, 50);
-    assert_eq!(report.spoke_roundtrips, 50 * 7);
+    assert_eq!(report.spoke_roundtrips, 50 * 8);
     assert_eq!(report.assertions_passed, 50);
     assert_eq!(report.optimizer_checks, 50);
+}
+
+#[test]
+fn ast_coverage_and_call_tracer_detects_dead_branches_and_hotspots() {
+    let sample = find_sample("pipeline").unwrap();
+    let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+
+    // Before optimizing: `if (false) { return -999; }` leaves `return -999` uncovered!
+    let trace_before = engine.trace();
+    assert!(trace_before.ok);
+    assert!(
+        trace_before.coverage_pct < 100,
+        "Expected <100% coverage due to dead `if (false)` branch, got {}%",
+        trace_before.coverage_pct
+    );
+    assert_eq!(trace_before.uncovered.len(), 1);
+    assert_eq!(trace_before.uncovered[0].func, "calibrate_reading");
+    assert_eq!(trace_before.uncovered[0].summary, "return");
+    assert!(
+        trace_before
+            .hotspots
+            .iter()
+            .any(|h| h.name == "calibrate_reading" && h.calls == 6),
+        "Expected 6 calls to calibrate_reading (4 in main + 2 in unit test), got {:?}",
+        trace_before.hotspots
+    );
+    assert!(!trace_before.call_trace.is_empty());
+
+    // After Hub optimization: dead branch is pruned, elevating AST statement coverage to 100%!
+    let (snap_after, rewrites) = engine.optimize();
+    assert!(rewrites >= 4);
+    assert_eq!(snap_after.coverage_pct, 100);
+
+    let trace_after = engine.trace();
+    assert_eq!(trace_after.coverage_pct, 100);
+    assert!(trace_after.uncovered.is_empty());
 }
 
 #[test]
@@ -340,7 +392,7 @@ if __name__ == "__main__":
 }
 
 #[test]
-fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_seven_spokes() {
+fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_eight_spokes() {
     let sample = find_sample("pipeline").unwrap();
     let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
     let before_out = engine.snapshot().live_eval.stdout;
@@ -350,7 +402,16 @@ fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_seven_spoke
     assert_eq!(snap.live_eval.stdout, before_out);
 
     // `25 * 4` -> `100`, `(sample + 0) * 1` -> `sample`, and `if (false)` pruned in every language!
-    for spoke_key in ["rust", "cpp", "swift", "go", "python", "typescript", "star"] {
+    for spoke_key in [
+        "rust",
+        "cpp",
+        "swift",
+        "java",
+        "go",
+        "python",
+        "typescript",
+        "star",
+    ] {
         let code = &snap.views[spoke_key];
         assert!(!code.contains("999"), "Dead branch survived in {}:\n{}", spoke_key, code);
         assert!(!code.contains("25"), "Unfolded constant survived in {}:\n{}", spoke_key, code);
@@ -449,11 +510,11 @@ fn undo_and_redo_walk_cross_language_history_stack() {
 }
 
 #[test]
-fn all_samples_compile_and_produce_identical_output_across_seven_engines() {
+fn all_samples_compile_and_produce_identical_output_across_eight_engines() {
     for sample in SAMPLES {
         let engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
         let report = run_all_spokes(&engine);
-        assert_eq!(report.results.len(), 7);
+        assert_eq!(report.results.len(), 8);
 
         for r in &report.results {
             assert!(
@@ -467,6 +528,7 @@ fn all_samples_compile_and_produce_identical_output_across_seven_engines() {
                     "Rust (rustc)" => engine.project(SpokeId::Rust),
                     "C++ (clang++)" => engine.project(SpokeId::Cpp),
                     "Swift (swiftc)" => engine.project(SpokeId::Swift),
+                    "Java (javac)" => engine.project(SpokeId::Java),
                     "Go (go run)" => engine.project(SpokeId::Go),
                     "Python (python3)" => engine.project(SpokeId::Python),
                     "TypeScript (node)" => engine.project(SpokeId::TypeScript),
@@ -483,7 +545,7 @@ fn all_samples_compile_and_produce_identical_output_across_seven_engines() {
 }
 
 #[test]
-fn web_studio_http_api_syncs_refactors_optimizes_and_runs_seven_engines() {
+fn web_studio_http_api_syncs_traces_refactors_optimizes_and_runs_eight_engines() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
@@ -508,6 +570,8 @@ fn web_studio_http_api_syncs_refactors_optimizes_and_runs_seven_engines() {
     let state_resp = send_http("GET", "/api/state", "");
     assert!(state_resp.contains("HTTP/1.1 200 OK"));
     assert!(state_resp.contains("\"swift\":"));
+    assert!(state_resp.contains("\"java\":"));
+    assert!(state_resp.contains("\"coverage_pct\":"));
     assert!(state_resp.contains("\"test_results\":"));
     assert!(state_resp.contains("\"live_eval\":"));
 
@@ -516,10 +580,17 @@ fn web_studio_http_api_syncs_refactors_optimizes_and_runs_seven_engines() {
     assert!(sample_resp.contains("\"ok\":true"));
     assert!(sample_resp.contains("calibrate_reading"));
 
+    // Inspect AST coverage & hotspots before optimization via /api/trace
+    let trace_resp = send_http("POST", "/api/trace", "{}");
+    assert!(trace_resp.contains("\"ok\":true"));
+    assert!(trace_resp.contains("\"uncovered\":[{\"node_id\":"));
+    assert!(trace_resp.contains("\"hotspots\":["));
+
     // Optimize via /api/optimize
     let opt_resp = send_http("POST", "/api/optimize", "{}");
     assert!(opt_resp.contains("\"ok\":true"));
     assert!(!opt_resp.contains("-999"));
+    assert!(opt_resp.contains("\"coverage_pct\":100"));
 
     // Rename function via /api/refactor
     let ref_resp = send_http(
@@ -531,12 +602,14 @@ fn web_studio_http_api_syncs_refactors_optimizes_and_runs_seven_engines() {
     assert!(ref_resp.contains("pub fn clamp_sensor("));
     assert!(ref_resp.contains("int64_t clamp_sensor("));
     assert!(ref_resp.contains("func clamp_sensor("));
+    assert!(ref_resp.contains("static long clamp_sensor("));
 
-    // Execute across all 7 engines via /api/run
+    // Execute across all 8 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
     assert!(run_resp.contains("Hub VM (native)"));
     assert!(run_resp.contains("C++ (clang++)"));
     assert!(run_resp.contains("Swift (swiftc)"));
+    assert!(run_resp.contains("Java (javac)"));
     assert!(run_resp.contains("calibrated_sum: 261"));
 }
