@@ -11,6 +11,7 @@ pub mod mutate;
 pub mod quickcheck;
 pub mod reconcile;
 pub mod refactor;
+pub mod repair;
 pub mod runner;
 pub mod samples;
 pub mod server;

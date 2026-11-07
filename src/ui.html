@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,7 +436,7 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v1.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O & QuickCheck Studio</h1>
+        <h1>★ StarLang v1.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck & Auto-Repair Studio</h1>
         <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm & 14-Engine Verification</p>
       </div>
     </div>
@@ -444,6 +444,7 @@
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="mut-btn" id="repair-btn" title="Localize failing unit tests or refuted safety obligations & synthesize a 4-gate verified AST patch across all 13 languages">🩹 Auto-Repair</button>
       <button class="debug-btn" id="debug-btn" title="Scrub forward & backward through execution steps across all 13 languages simultaneously & compute dynamic backward slices">⏱ Time-Travel</button>
       <button class="trace-btn" id="complexity-btn" title="Profile static & empirical Big-O complexity, cyclomatic complexity, gas cost & 13-spoke code density">📈 Big-O & Gas</button>
       <button class="verify-btn" id="qc-btn" title="Run property-based QuickCheck, invariant discovery & minimal counterexample shrinking across all 13 languages">🎲 QuickCheck</button>
@@ -655,6 +656,17 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="repair-drawer">
+    <div class="run-header">
+      <span id="repair-summary">🩹 Counterexample-Guided Automated Program Repair (CEGIS) across all 13 languages...</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="mut-btn" id="repair-demo-btn">🧪 Inject Bug & Auto-Repair</button>
+        <button onclick="document.getElementById('repair-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="repair-cards"></div>
+  </section>
 
   <section id="complexity-drawer">
     <div class="run-header">
@@ -1499,6 +1511,59 @@
         cards.appendChild(card);
       });
     });
+
+    async function triggerRepair(injectDemo) {
+      const drawer = document.getElementById("repair-drawer");
+      const summary = document.getElementById("repair-summary");
+      const cards = document.getElementById("repair-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Running backward-slice fault localization & 4-gate CEGIS AST patch synthesis...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/repair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inject_demo: injectDemo ? "true" : "false" })
+      });
+      const data = await res.json();
+      if (data.snapshot && data.repaired && !data.already_healthy) {
+        applySnapshot(data.snapshot, null);
+      }
+
+      if (data.already_healthy) {
+        summary.innerHTML = `<span style="color:#34d399;">✓ Module is already healthy (${data.tests_passed_after}/${data.tests_total} tests pass, 0 refuted obligations). Click "🧪 Inject Bug & Auto-Repair" to demo live CEGIS synthesis!</span>`;
+        return;
+      }
+
+      const color = data.repaired ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">🩹 CEGIS Auto-Repair: ${data.repaired ? "VERIFIED PATCH SYNTHESIZED" : "UNRESOLVED"} · Evaluated ${data.candidates_evaluated} candidate(s) in ${data.elapsed_ms}ms · Tests: ${data.tests_passed_before}/${data.tests_total} → ${data.tests_passed_after}/${data.tests_total} · QuickCheck: ${data.quickcheck_passed ? "OK" : "FAIL"}</span>`;
+
+      if (data.injected_bug) {
+        const injCard = document.createElement("div");
+        injCard.className = "run-card";
+        injCard.innerHTML = `<strong>🧪 Injected Fault & Localized Symptoms</strong><pre></pre>`;
+        const faultText = (data.faults || []).map(f => `[stmt #${f.stmt_id} in ${f.func}()] ${f.symptom}`).join("\n");
+        injCard.querySelector("pre").textContent = `${data.injected_bug}\n\n${faultText}`;
+        cards.appendChild(injCard);
+      }
+
+      if (data.patch) {
+        const p = data.patch;
+        const patchCard = document.createElement("div");
+        patchCard.className = "run-card";
+        patchCard.style.gridColumn = "span 2";
+        const diffs = Object.entries(p.diffs_by_spoke || {})
+          .filter(([_, d]) => d && d.trim().length > 0)
+          .map(([sp, d]) => `[${sp}]\n${d}`)
+          .join("\n\n");
+        patchCard.innerHTML = `<strong>✓ Synthesized 13-Spoke Patch (${p.kind} in ${p.func}() · ${p.before_summary} → ${p.after_summary})</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+        patchCard.querySelector("pre").textContent = diffs;
+        cards.appendChild(patchCard);
+      }
+    }
+
+    document.getElementById("repair-btn").addEventListener("click", () => triggerRepair(false));
+    document.getElementById("repair-demo-btn").addEventListener("click", () => triggerRepair(true));
 
     document.getElementById("undo-btn").addEventListener("click", async () => {
       const res = await fetch("/api/undo", { method: "POST", body: "{}" });

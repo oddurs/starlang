@@ -52,6 +52,8 @@ jobs:
         run: cargo run --quiet -- complexity > /dev/null
       - name: Run polyglot QuickCheck, invariant discovery & counterexample shrinker
         run: cargo run --quiet -- quickcheck > /dev/null
+      - name: Run CEGIS automated program repair & fault localization
+        run: cargo run --quiet -- repair > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier

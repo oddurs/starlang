@@ -12,6 +12,7 @@ use crate::lens::SpokeId;
 use crate::merge::{MergeReport, SemanticDiffReport};
 use crate::mutate::MutationReport;
 use crate::quickcheck::QuickCheckReport;
+use crate::repair::RepairReport;
 use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
 use crate::trace::TraceReport;
@@ -25,9 +26,9 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v1.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O & QuickCheck Studio running at:");
+    println!("StarLang v1.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck & Auto-Repair Studio running at:");
     println!("  -> http://{}", addr);
-    println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
+    println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
     serve_listener(listener)
 }
@@ -381,6 +382,19 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.quickcheck(trials)
             };
             let payload = quickcheck_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/repair") => {
+            let parsed = parse_flat_json_object(&body).unwrap_or_default();
+            let inject_demo = parsed
+                .get("inject_demo")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false);
+            let (snap, rep, injected_desc) = {
+                let mut eng = shared.lock().unwrap();
+                eng.repair(inject_demo)
+            };
+            let payload = repair_to_json(&snap, &rep, injected_desc.as_deref());
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -928,6 +942,77 @@ fn quickcheck_to_json(rep: &QuickCheckReport) -> String {
         rep.total_invariants,
         rep.elapsed_ms,
         fns_json.join(",")
+    )
+}
+
+fn repair_to_json(
+    snap: &SyncSnapshot,
+    rep: &RepairReport,
+    injected_desc: Option<&str>,
+) -> String {
+    let inj_json = injected_desc
+        .map(json_str)
+        .unwrap_or_else(|| "null".to_string());
+    let faults_json: Vec<String> = rep
+        .faults
+        .iter()
+        .map(|f| {
+            let lines: Vec<String> = f
+                .spoke_lines
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), v))
+                .collect();
+            format!(
+                "{{\"stmt_id\":{},\"func\":{},\"symptom\":{},\"spoke_lines\":{{{}}}}}",
+                f.stmt_id,
+                json_str(&f.func),
+                json_str(&f.symptom),
+                lines.join(",")
+            )
+        })
+        .collect();
+
+    let patch_json = if let Some(p) = &rep.patch {
+        let lines: Vec<String> = p
+            .spoke_lines
+            .iter()
+            .map(|(k, v)| format!("{}:{}", json_str(k), v))
+            .collect();
+        let diffs: Vec<String> = p
+            .diffs_by_spoke
+            .iter()
+            .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+            .collect();
+        format!(
+            "{{\"stmt_id\":{},\"func\":{},\"kind\":{},\"before_summary\":{},\"after_summary\":{},\"spoke_lines\":{{{}}},\"diffs_by_spoke\":{{{}}}}}",
+            p.stmt_id,
+            json_str(&p.func),
+            json_str(&p.kind),
+            json_str(&p.before_summary),
+            json_str(&p.after_summary),
+            lines.join(","),
+            diffs.join(",")
+        )
+    } else {
+        "null".to_string()
+    };
+
+    format!(
+        "{{\"ok\":true,\"already_healthy\":{},\"repaired\":{},\"injected_bug\":{},\"candidates_evaluated\":{},\"tests_passed_before\":{},\"tests_total\":{},\"tests_passed_after\":{},\"safety_refuted_before\":{},\"safety_refuted_after\":{},\"quickcheck_passed\":{},\"elapsed_ms\":{},\"faults\":[{}],\"patch\":{},\"snapshot\":{}}}",
+        rep.already_healthy,
+        rep.repaired,
+        inj_json,
+        rep.candidates_evaluated,
+        rep.tests_passed_before,
+        rep.tests_total,
+        rep.tests_passed_after,
+        rep.safety_refuted_before,
+        rep.safety_refuted_after,
+        rep.quickcheck_passed,
+        rep.elapsed_ms,
+        faults_json.join(","),
+        patch_json,
+        snapshot_to_json(snap)
     )
 }
 
