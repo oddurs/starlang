@@ -11,6 +11,7 @@ use starlang::samples::{find_sample, SAMPLES};
 use starlang::server::serve_listener;
 use starlang::spokes::lens_for;
 use starlang::typecheck::check_module;
+use starlang::verify::{ObligationKind, VerifyStatus};
 
 #[test]
 fn get_put_law_holds_across_all_spokes_and_samples() {
@@ -193,10 +194,10 @@ fn cpp_swift_java_go_and_ruby_edits_on_enums_and_metadata_sync_across_all_nine_s
     assert_eq!(snap3.live_eval.stdout.trim(), "checked=3 score=15");
 
     let report = run_all_spokes(&engine);
-    assert_eq!(report.results.len(), 9);
+    assert_eq!(report.results.len(), 10);
     assert!(
         report.outputs_match,
-        "9-engine outputs diverged: {:?}",
+        "10-engine outputs diverged: {:?}",
         report.results
     );
     assert_eq!(report.results[0].stdout.trim(), "checked=3 score=15");
@@ -260,6 +261,7 @@ fn polyglot_unit_tests_and_assertions_sync_and_catch_regressions_live() {
     let snap = engine.snapshot();
     assert!(snap.views["rust"].contains("#[test]\nfn test_token_bucket_burst()"));
     assert!(snap.views["rust"].contains("assert_eq!(result, BucketState"));
+    assert!(snap.views["c"].contains("void test_token_bucket_burst(void)"));
     assert!(snap.views["cpp"].contains("void test_token_bucket_burst()"));
     assert!(snap.views["swift"].contains("func test_token_bucket_burst()"));
     assert!(snap.views["java"].contains("static void test_token_bucket_burst()"));
@@ -325,6 +327,7 @@ fn hub_mutation_testing_detects_weak_tests_and_auto_hardens_across_nine_spokes()
     // 4. Every spoke receives idiomatic `test_mutation_hardened` and satisfies GetPut!
     for key in [
         "rust",
+        "c",
         "cpp",
         "swift",
         "java",
@@ -355,7 +358,7 @@ fn hub_mutation_testing_detects_weak_tests_and_auto_hardens_across_nine_spokes()
 }
 
 #[test]
-fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_nine_spokes() {
+fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_ten_spokes() {
     let report = run_fuzz_suite(0x57A4_2026_0500, 50);
     assert!(
         report.ok(),
@@ -364,9 +367,106 @@ fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_nine_spokes(
         report.failures.join("\n\n")
     );
     assert_eq!(report.programs_tested, 50);
-    assert_eq!(report.spoke_roundtrips, 50 * 9);
+    assert_eq!(report.spoke_roundtrips, 50 * 10);
     assert_eq!(report.assertions_passed, 50);
     assert_eq!(report.optimizer_checks, 50);
+}
+
+#[test]
+fn hub_symbolic_verifier_proves_guarded_ops_and_synthesizes_crash_counterexamples() {
+    // 1. Modern C11 `packets` preset guards list indexing (`i < payloads.len`), division (`accepted > 0`),
+    //    and contract assertion (`assert(mean_bytes >= 0)`) — all 3 obligations must be proven safe!
+    let pkt = find_sample("packets").unwrap();
+    let pkt_eng = StarEngine::from_source(pkt.initial_spoke, pkt.source).unwrap();
+    let pkt_ver = pkt_eng.verify();
+    assert_eq!(pkt_ver.total_obligations, 3, "{:?}", pkt_ver);
+    assert_eq!(pkt_ver.proven_safe, 3, "{:?}", pkt_ver);
+    assert_eq!(pkt_ver.refuted, 0, "{:?}", pkt_ver);
+    assert_eq!(pkt_ver.warnings, 0, "{:?}", pkt_ver);
+    assert!(pkt_ver.unreachable_branches.is_empty(), "{:?}", pkt_ver.unreachable_branches);
+    assert!(pkt_ver.all_safe());
+
+    // 2. `pipeline` preset contains `if (false) { return -999; }` before optimization -> 1 UNSAT branch;
+    //    after Hub optimization -> 0 UNSAT branches!
+    let pipe = find_sample("pipeline").unwrap();
+    let mut pipe_eng = StarEngine::from_source(pipe.initial_spoke, pipe.source).unwrap();
+    assert_eq!(pipe_eng.verify().unreachable_branches.len(), 1);
+    pipe_eng.optimize();
+    assert!(pipe_eng.verify().unreachable_branches.is_empty());
+
+    // 3. Buggy C11 snippet with unguarded division, unguarded indexing, failing assertion,
+    //    and a path-contradicted `else if (ms >= 600)` after `if (ms >= 500)`:
+    let buggy_c = r#"#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+int64_t unsafe_ratio(int64_t total, int64_t count) {
+    return total / count;
+}
+
+int64_t unsafe_head(StarList_int64_t xs) {
+    return xs.data[0];
+}
+
+int64_t shadowed_tier(int64_t ms) {
+    if (ms >= 500) {
+        return 2;
+    } else if (ms >= 600) {
+        return 3;
+    }
+    assert(ms >= 0);
+    return 1;
+}
+
+int main(void) {
+    return 0;
+}
+"#;
+    let buggy_eng = StarEngine::from_source(SpokeId::C, buggy_c).unwrap();
+    let buggy_ver = buggy_eng.verify();
+
+    // Expect 3 refuted obligations (concrete Hub-VM-validated crash witnesses!) + 1 UNSAT dead branch
+    assert_eq!(buggy_ver.refuted, 3, "Expected 3 refuted obligations, got {:?}", buggy_ver);
+    assert_eq!(
+        buggy_ver.unreachable_branches.len(),
+        1,
+        "Expected 1 UNSAT dead branch (`ms >= 600` shadowed by `ms >= 500`), got {:?}",
+        buggy_ver.unreachable_branches
+    );
+    assert_eq!(buggy_ver.unreachable_branches[0].func, "shadowed_tier");
+
+    let div_ob = buggy_ver
+        .obligations
+        .iter()
+        .find(|o| o.kind == ObligationKind::DivByZero)
+        .unwrap();
+    assert!(matches!(
+        &div_ob.status,
+        VerifyStatus::Refuted { witness_call, runtime_error }
+            if witness_call.contains("unsafe_ratio(") && runtime_error.contains("division by zero")
+    ));
+
+    let idx_ob = buggy_ver
+        .obligations
+        .iter()
+        .find(|o| o.kind == ObligationKind::IndexBounds)
+        .unwrap();
+    assert!(matches!(
+        &idx_ob.status,
+        VerifyStatus::Refuted { witness_call, runtime_error }
+            if witness_call.contains("unsafe_head([])") && runtime_error.contains("out of bounds")
+    ));
+
+    let assert_ob = buggy_ver
+        .obligations
+        .iter()
+        .find(|o| o.kind == ObligationKind::Assertion)
+        .unwrap();
+    assert!(matches!(
+        &assert_ob.status,
+        VerifyStatus::Refuted { witness_call, runtime_error }
+            if witness_call.contains("shadowed_tier(-") && runtime_error.contains("assertion failed")
+    ));
 }
 
 #[test]
@@ -486,6 +586,7 @@ fn hub_optimizer_folds_constants_and_prunes_dead_branches_across_all_nine_spokes
     // `25 * 4` -> `100`, `(sample + 0) * 1` -> `sample`, and `if (false)` pruned in every language!
     for spoke_key in [
         "rust",
+        "c",
         "cpp",
         "swift",
         "java",
@@ -593,11 +694,11 @@ fn undo_and_redo_walk_cross_language_history_stack() {
 }
 
 #[test]
-fn all_samples_compile_and_produce_identical_output_across_nine_engines() {
+fn all_samples_compile_and_produce_identical_output_across_ten_engines() {
     for sample in SAMPLES {
         let engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
         let report = run_all_spokes(&engine);
-        assert_eq!(report.results.len(), 9);
+        assert_eq!(report.results.len(), 10);
 
         for r in &report.results {
             assert!(
@@ -609,6 +710,7 @@ fn all_samples_compile_and_produce_identical_output_across_nine_engines() {
                 r.stderr,
                 match r.language {
                     "Rust (rustc)" => engine.project(SpokeId::Rust),
+                    "C11 (clang)" => engine.project(SpokeId::C),
                     "C++ (clang++)" => engine.project(SpokeId::Cpp),
                     "Swift (swiftc)" => engine.project(SpokeId::Swift),
                     "Java (javac)" => engine.project(SpokeId::Java),
@@ -629,7 +731,7 @@ fn all_samples_compile_and_produce_identical_output_across_nine_engines() {
 }
 
 #[test]
-fn web_studio_http_api_syncs_traces_mutates_hardens_and_runs_nine_engines() {
+fn web_studio_http_api_syncs_verifies_traces_mutates_hardens_and_runs_ten_engines() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
@@ -653,12 +755,20 @@ fn web_studio_http_api_syncs_traces_mutates_hardens_and_runs_nine_engines() {
 
     let state_resp = send_http("GET", "/api/state", "");
     assert!(state_resp.contains("HTTP/1.1 200 OK"));
+    assert!(state_resp.contains("\"c\":"));
     assert!(state_resp.contains("\"swift\":"));
     assert!(state_resp.contains("\"java\":"));
     assert!(state_resp.contains("\"ruby\":"));
+    assert!(state_resp.contains("\"safety_proven\":"));
     assert!(state_resp.contains("\"coverage_pct\":"));
     assert!(state_resp.contains("\"test_results\":"));
     assert!(state_resp.contains("\"live_eval\":"));
+
+    // Run Hub Symbolic Verifier via /api/verify
+    let ver_resp = send_http("POST", "/api/verify", "{}");
+    assert!(ver_resp.contains("\"ok\":true"), "verify failed: {}", ver_resp);
+    assert!(ver_resp.contains("\"proven_safe\":"));
+    assert!(ver_resp.contains("\"obligations\":["));
 
     // Run Hub Mutation Testing via /api/mutate on initial `alerts` preset
     let mut_resp = send_http("POST", "/api/mutate", "{}");
@@ -701,10 +811,11 @@ fn web_studio_http_api_syncs_traces_mutates_hardens_and_runs_nine_engines() {
     assert!(ref_resp.contains("static long clamp_sensor("));
     assert!(ref_resp.contains("def clamp_sensor("));
 
-    // Execute across all 9 engines via /api/run
+    // Execute across all 10 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
     assert!(run_resp.contains("Hub VM (native)"));
+    assert!(run_resp.contains("C11 (clang)"));
     assert!(run_resp.contains("C++ (clang++)"));
     assert!(run_resp.contains("Swift (swiftc)"));
     assert!(run_resp.contains("Java (javac)"));

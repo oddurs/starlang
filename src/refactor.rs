@@ -120,12 +120,14 @@ enum RenameTarget {
 }
 
 const RESERVED_WORDS: &[&str] = &[
-    "fn", "func", "def", "function", "struct", "class", "enum", "type", "interface", "export",
-    "import", "package", "from", "as", "const", "let", "var", "mut", "auto", "pub", "return",
-    "if", "else", "elif", "elsif", "unless", "match", "switch", "case", "when", "default", "for",
-    "while", "in", "of", "range", "break", "continue", "next", "end", "module", "begin", "rescue",
-    "ensure", "nil", "true", "false", "None", "void", "int", "int64", "int64_t", "float",
-    "float64", "double", "bool", "boolean", "str", "string", "number", "Vec", "String", "main",
+    "fn", "func", "def", "function", "struct", "class", "enum", "type", "typedef", "union",
+    "sizeof", "interface", "export", "import", "package", "from", "as", "const", "let", "var",
+    "mut", "auto", "register", "volatile", "restrict", "static", "extern", "inline", "pub",
+    "return", "if", "else", "elif", "elsif", "unless", "match", "switch", "case", "when",
+    "default", "for", "while", "do", "goto", "in", "of", "range", "break", "continue", "next",
+    "end", "module", "begin", "rescue", "ensure", "nil", "NULL", "true", "false", "None", "void",
+    "char", "short", "long", "signed", "unsigned", "int", "int64", "int64_t", "float", "float64",
+    "double", "bool", "boolean", "str", "string", "number", "Vec", "String", "main",
 ];
 
 fn validate_identifier(name: &str) -> Result<(), String> {

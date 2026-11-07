@@ -8,6 +8,7 @@ use crate::refactor::{list_symbols, optimize_module, rename_symbol, SymbolEntry}
 use crate::spokes::lens_for;
 use crate::trace::{trace_module_default, TraceReport};
 use crate::typecheck::{check_module, SemanticDiagnostic};
+use crate::verify::{verify_module, VerifyReport};
 
 const LIVE_PREVIEW_STEP_BUDGET: usize = 50_000;
 
@@ -21,6 +22,10 @@ pub struct SyncSnapshot {
     pub coverage_pct: u8,
     pub covered_stmts: usize,
     pub total_stmts: usize,
+    pub safety_proven: usize,
+    pub safety_total: usize,
+    pub safety_refuted: usize,
+    pub unreachable_count: usize,
     pub metadata_badges: Vec<String>,
     pub semantic_diagnostics: Vec<SemanticDiagnostic>,
     pub symbols: Vec<SymbolEntry>,
@@ -97,6 +102,10 @@ impl StarEngine {
 
     pub fn mutate(&self) -> MutationReport {
         mutate_module(self.hub())
+    }
+
+    pub fn verify(&self) -> VerifyReport {
+        verify_module(self.hub())
     }
 
     /// Auto-synthesize boundary unit test assertions to kill surviving Hub AST mutants across all 9 spokes.
@@ -183,6 +192,7 @@ impl StarEngine {
             views.insert(spoke.as_str(), lens_for(spoke).get(hub));
         }
         let trace = trace_module_default(hub);
+        let ver = verify_module(hub);
         SyncSnapshot {
             revision: self.revision(),
             active_spoke: self.current().spoke,
@@ -192,6 +202,10 @@ impl StarEngine {
             coverage_pct: trace.coverage_pct,
             covered_stmts: trace.covered_stmts,
             total_stmts: trace.total_stmts,
+            safety_proven: ver.proven_safe,
+            safety_total: ver.total_obligations,
+            safety_refuted: ver.refuted,
+            unreachable_count: ver.unreachable_branches.len(),
             metadata_badges: hub.metadata_badges(),
             semantic_diagnostics: check_module(hub),
             symbols: list_symbols(hub),

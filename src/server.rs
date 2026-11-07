@@ -11,6 +11,7 @@ use crate::mutate::MutationReport;
 use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
 use crate::trace::TraceReport;
+use crate::verify::{VerifyReport, VerifyStatus};
 
 const UI_HTML: &str = include_str!("ui.html");
 
@@ -19,9 +20,9 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v0.6 — 9-Spoke Bidirectional Compiler Studio running at:");
+    println!("StarLang v0.7 — 10-Spoke Bidirectional Compiler Studio running at:");
     println!("  -> http://{}", addr);
-    println!("Edit Rust, C++, Swift, Java, Go, Python, Ruby, TypeScript, or Star S-Expr to sync all spokes, live VM, tests, coverage & mutation testing.\n");
+    println!("Edit Rust, C11, C++, Swift, Java, Go, Python, Ruby, TypeScript, or Star S-Expr to sync all spokes, live VM, symbolic safety proofs, tests, coverage & mutation testing.\n");
 
     serve_listener(listener)
 }
@@ -206,6 +207,14 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
             let payload = trace_to_json(&report);
             send_response(&mut stream, 200, "application/json", &payload)
         }
+        ("POST", "/api/verify") => {
+            let report = {
+                let eng = shared.lock().unwrap();
+                eng.verify()
+            };
+            let payload = verify_to_json(&report);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
         ("POST", "/api/mutate") => {
             let report = {
                 let eng = shared.lock().unwrap();
@@ -325,7 +334,7 @@ fn snapshot_to_json(snap: &SyncSnapshot) -> String {
         .collect();
 
     format!(
-        "{{\"revision\":{},\"active_spoke\":{},\"node_count\":{},\"can_undo\":{},\"can_redo\":{},\"coverage_pct\":{},\"covered_stmts\":{},\"total_stmts\":{},\"metadata_badges\":[{}],\"semantic_diagnostics\":[{}],\"symbols\":[{}],\"live_eval\":{},\"test_results\":[{}],\"views\":{{{}}}}}",
+        "{{\"revision\":{},\"active_spoke\":{},\"node_count\":{},\"can_undo\":{},\"can_redo\":{},\"coverage_pct\":{},\"covered_stmts\":{},\"total_stmts\":{},\"safety_proven\":{},\"safety_total\":{},\"safety_refuted\":{},\"unreachable_count\":{},\"metadata_badges\":[{}],\"semantic_diagnostics\":[{}],\"symbols\":[{}],\"live_eval\":{},\"test_results\":[{}],\"views\":{{{}}}}}",
         snap.revision,
         json_str(snap.active_spoke.as_str()),
         snap.node_count,
@@ -334,6 +343,10 @@ fn snapshot_to_json(snap: &SyncSnapshot) -> String {
         snap.coverage_pct,
         snap.covered_stmts,
         snap.total_stmts,
+        snap.safety_proven,
+        snap.safety_total,
+        snap.safety_refuted,
+        snap.unreachable_count,
         badges_entries.join(","),
         sem_entries.join(","),
         sym_entries.join(","),
@@ -429,6 +442,61 @@ fn mutation_to_json(report: &MutationReport) -> String {
         report.score_pct,
         report.elapsed_ms,
         items.join(",")
+    )
+}
+
+fn verify_to_json(report: &VerifyReport) -> String {
+    let ob_entries: Vec<String> = report
+        .obligations
+        .iter()
+        .map(|ob| {
+            let (witness_json, err_json) = match &ob.status {
+                VerifyStatus::Refuted {
+                    witness_call,
+                    runtime_error,
+                } => (json_str(witness_call), json_str(runtime_error)),
+                _ => ("null".to_string(), "null".to_string()),
+            };
+            format!(
+                "{{\"id\":{},\"func\":{},\"kind\":{},\"label\":{},\"expr\":{},\"status\":{},\"note\":{},\"witness_call\":{},\"runtime_error\":{}}}",
+                ob.id,
+                json_str(&ob.func),
+                json_str(ob.kind.as_str()),
+                json_str(ob.kind.label()),
+                json_str(&ob.expr_summary),
+                json_str(ob.status.as_str()),
+                json_str(&ob.proof_note),
+                witness_json,
+                err_json
+            )
+        })
+        .collect();
+
+    let dead_entries: Vec<String> = report
+        .unreachable_branches
+        .iter()
+        .map(|u| {
+            format!(
+                "{{\"func\":{},\"stmt_id\":{},\"branch\":{},\"cond\":{},\"reason\":{}}}",
+                json_str(&u.func),
+                u.stmt_id,
+                json_str(u.branch),
+                json_str(&u.cond_summary),
+                json_str(&u.reason)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"all_safe\":{},\"total_obligations\":{},\"proven_safe\":{},\"refuted\":{},\"warnings\":{},\"elapsed_ms\":{},\"obligations\":[{}],\"unreachable_branches\":[{}]}}",
+        report.all_safe(),
+        report.total_obligations,
+        report.proven_safe,
+        report.refuted,
+        report.warnings,
+        report.elapsed_ms,
+        ob_entries.join(","),
+        dead_entries.join(",")
     )
 }
 

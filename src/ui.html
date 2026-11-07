@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StarLang v0.6 — 9-Spoke Bidirectional Compiler</title>
+  <title>StarLang v0.7 — 10-Spoke Bidirectional Compiler</title>
   <style>
     :root {
       --bg: #090d16;
@@ -100,6 +100,13 @@
       font-weight: 600;
     }
     button.mut-btn:hover { background: #5b21b6; }
+    button.verify-btn {
+      background: #065f46;
+      border-color: #34d399;
+      color: #ecfdf5;
+      font-weight: 600;
+    }
+    button.verify-btn:hover { background: #047857; }
     .hub-banner {
       padding: 7px 18px;
       background: #0d1322;
@@ -134,7 +141,7 @@
       gap: 8px;
       flex-wrap: wrap;
     }
-    .vm-preview, .test-pill, .cov-pill {
+    .vm-preview, .test-pill, .cov-pill, .safety-pill {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 11.5px;
       padding: 3px 10px;
@@ -146,6 +153,17 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .safety-pill {
+      cursor: pointer;
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(52, 211, 153, 0.45);
+      color: #a7f3d0;
+    }
+    .safety-pill.warn {
+      background: rgba(245, 158, 11, 0.16);
+      border-color: rgba(251, 191, 36, 0.45);
+      color: #fde68a;
     }
     .test-pill {
       background: rgba(59, 130, 246, 0.14);
@@ -163,7 +181,7 @@
       border-color: rgba(251, 191, 36, 0.45);
       color: #fde68a;
     }
-    .vm-preview.err, .test-pill.err {
+    .vm-preview.err, .test-pill.err, .safety-pill.err {
       background: rgba(239, 68, 68, 0.16);
       border-color: rgba(239, 68, 68, 0.45);
       color: #fecaca;
@@ -295,7 +313,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -343,10 +361,11 @@
   <header>
     <div class="brand">
       <svg class="star-svg" viewBox="0 0 176 64">
-        <line id="edge-rust" class="edge" x1="88" y1="32" x2="24" y2="8" />
-        <line id="edge-cpp" class="edge" x1="88" y1="32" x2="24" y2="24" />
-        <line id="edge-swift" class="edge" x1="88" y1="32" x2="24" y2="40" />
-        <line id="edge-java" class="edge" x1="88" y1="32" x2="24" y2="56" />
+        <line id="edge-rust" class="edge" x1="88" y1="32" x2="24" y2="6" />
+        <line id="edge-c" class="edge" x1="88" y1="32" x2="24" y2="19" />
+        <line id="edge-cpp" class="edge" x1="88" y1="32" x2="24" y2="32" />
+        <line id="edge-swift" class="edge" x1="88" y1="32" x2="24" y2="45" />
+        <line id="edge-java" class="edge" x1="88" y1="32" x2="24" y2="58" />
         <line id="edge-go" class="edge" x1="88" y1="32" x2="150" y2="6" />
         <line id="edge-python" class="edge" x1="88" y1="32" x2="150" y2="19" />
         <line id="edge-ruby" class="edge" x1="88" y1="32" x2="150" y2="32" />
@@ -354,10 +373,11 @@
         <line id="edge-star" class="edge" x1="88" y1="32" x2="150" y2="58" />
         <circle class="node-hub" cx="88" cy="32" r="11" />
         <text x="88" y="35" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
-        <text class="node-lbl" x="4" y="11">RS</text>
-        <text class="node-lbl" x="1" y="27">CPP</text>
-        <text class="node-lbl" x="4" y="43">SW</text>
-        <text class="node-lbl" x="4" y="59">JV</text>
+        <text class="node-lbl" x="4" y="9">RS</text>
+        <text class="node-lbl" x="1" y="22">C11</text>
+        <text class="node-lbl" x="1" y="35">CPP</text>
+        <text class="node-lbl" x="4" y="48">SW</text>
+        <text class="node-lbl" x="4" y="61">JV</text>
         <text class="node-lbl" x="153" y="9">GO</text>
         <text class="node-lbl" x="153" y="22">PY</text>
         <text class="node-lbl" x="153" y="35">RB</text>
@@ -365,18 +385,19 @@
         <text class="node-lbl" x="153" y="61">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v0.6 — 9-Spoke Bidirectional Compiler</h1>
-        <p>Rust ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ TypeScript ⇄ Star IR · Mutation Testing, AST Coverage & 9-Engine Verification</p>
+        <h1>★ StarLang v0.7 — 10-Spoke Bidirectional Compiler</h1>
+        <p>Rust ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ TypeScript ⇄ Star IR · Symbolic Verifier, Mutation Testing & 10-Engine Verification</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="verify-btn" id="verify-btn" title="Prove div-by-zero, bounds & assertions via interval abstract interpretation + concolic witnesses">🛡 Symbolic Verify</button>
       <button class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph & hotspots">🔍 Trace & Coverage</button>
       <button class="mut-btn" id="mut-btn" title="Run sub-ms Hub AST mutation testing & auto-synthesize missing boundary unit tests">🧬 Mutation Test</button>
-      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 9 languages">⚡ Optimize Hub</button>
-      <button class="run-btn" id="run-btn">▶ Run All 9 Engines (VM + rustc + clang++ + swiftc + javac + go + py + rb + node)</button>
+      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 10 languages">⚡ Optimize Hub</button>
+      <button class="run-btn" id="run-btn">▶ Run All 10 Engines (VM + rustc + clang + clang++ + swiftc + javac + go + py + rb + node)</button>
     </div>
   </header>
 
@@ -384,6 +405,7 @@
     <div class="hub-left">
       <span style="color:var(--accent);font-weight:600;" id="hub-rev">Hub rev #1</span>
       <span id="typecheck-pill" style="color:#34d399;font-weight:500;">✓ Hub Typecheck: OK</span>
+      <span class="safety-pill" id="safety-pill" title="Click to inspect symbolic safety proofs, crash counterexamples & UNSAT dead branches">🛡 Safety: —</span>
       <span class="test-pill" id="test-pill">✓ Tests: —</span>
       <span class="cov-pill" id="cov-pill" title="Click to inspect call trace & uncovered AST branches">🎯 Coverage: —</span>
       <span class="vm-preview" id="vm-preview">⚡ Hub VM: ...</span>
@@ -392,6 +414,7 @@
     <div class="spoke-toggles" id="spoke-toggles">
       <span style="color:var(--muted);font-size:11px;">Spokes:</span>
       <span class="toggle-pill on" data-spoke="rust">Rust</span>
+      <span class="toggle-pill on" data-spoke="c">C11</span>
       <span class="toggle-pill on" data-spoke="cpp">C++</span>
       <span class="toggle-pill on" data-spoke="swift">Swift</span>
       <span class="toggle-pill on" data-spoke="java">Java</span>
@@ -406,12 +429,12 @@
   <div class="refactor-bar">
     <div class="refactor-controls">
       <span style="color:var(--muted);font-weight:600;">Semantic Hub Refactor:</span>
-      <select id="symbol-select" title="Select a Hub symbol to rename across all 9 languages"></select>
+      <select id="symbol-select" title="Select a Hub symbol to rename across all 10 languages"></select>
       <input type="text" id="rename-input" placeholder="new_identifier" style="width:165px;" />
-      <button id="rename-btn">✎ Rename Across 9 Languages</button>
+      <button id="rename-btn">✎ Rename Across 10 Languages</button>
       <span class="action-msg" id="action-msg"></span>
     </div>
-    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 9 engines</span>
+    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 10 engines</span>
   </div>
 
   <div class="sem-bar" id="sem-bar"></div>
@@ -427,6 +450,18 @@
       </div>
       <textarea id="ed-rust" spellcheck="false"></textarea>
       <div class="diag-bar" id="diag-rust"></div>
+    </section>
+
+    <section class="pane" id="pane-c">
+      <div class="pane-header">
+        <span>Modern ISO C11 (<code>.c</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-c"></span>
+          <span class="status" id="status-c">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-c" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-c"></div>
     </section>
 
     <section class="pane" id="pane-cpp">
@@ -526,11 +561,19 @@
     </section>
   </main>
 
+  <section id="verify-drawer">
+    <div class="run-header">
+      <span id="verify-summary">Running Hub interval abstract interpretation & concolic witness search...</span>
+      <button onclick="document.getElementById('verify-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="verify-cards"></div>
+  </section>
+
   <section id="mut-drawer">
     <div class="run-header">
       <span id="mut-summary">Running semantic Hub AST mutation suite...</span>
       <div style="display:flex;gap:8px;">
-        <button class="mut-btn" id="harden-btn">🛡 Auto-Harden Tests Across 9 Languages</button>
+        <button class="mut-btn" id="harden-btn">🛡 Auto-Harden Tests Across 10 Languages</button>
         <button onclick="document.getElementById('mut-drawer').style.display='none'">Close</button>
       </div>
     </div>
@@ -547,14 +590,14 @@
 
   <section id="run-drawer">
     <div class="run-header">
-      <span id="run-summary">Executing across Hub VM, rustc, clang++, swiftc, javac, go, python3, ruby, and node...</span>
+      <span id="run-summary">Executing across Hub VM, rustc, clang -std=c11, clang++, swiftc, javac, go, python3, ruby, and node...</span>
       <button onclick="document.getElementById('run-drawer').style.display='none'">Close</button>
     </div>
     <div class="run-cards" id="run-cards"></div>
   </section>
 
   <script>
-    const SPOKES = ["rust", "cpp", "swift", "java", "go", "python", "ruby", "typescript", "star"];
+    const SPOKES = ["rust", "c", "cpp", "swift", "java", "go", "python", "ruby", "typescript", "star"];
     let debounceTimer = null;
     const prevTexts = {};
 
@@ -612,6 +655,21 @@
           testPill.title = tests
             .map(t => t.passed ? `✓ test_${t.name}` : `✗ test_${t.name}: ${t.error}`)
             .join("\n");
+        }
+      }
+
+      const safetyPill = document.getElementById("safety-pill");
+      if (typeof snap.safety_total === "number") {
+        safetyPill.classList.remove("err", "warn");
+        if (snap.safety_refuted > 0) {
+          safetyPill.classList.add("err");
+          safetyPill.textContent = `🛡 Safety: ✗ ${snap.safety_refuted} crash witness(es)`;
+        } else if (snap.unreachable_count > 0 || snap.safety_proven < snap.safety_total) {
+          safetyPill.classList.add("warn");
+          const deadNote = snap.unreachable_count > 0 ? ` · ${snap.unreachable_count} dead branch` : "";
+          safetyPill.textContent = `🛡 Safety: ${snap.safety_proven}/${snap.safety_total} proven${deadNote}`;
+        } else {
+          safetyPill.textContent = `🛡 Safety: ✓ ${snap.safety_proven}/${snap.safety_total} proven`;
         }
       }
 
@@ -712,7 +770,7 @@
         pane.classList.add("has-error");
         status.className = "status error";
         status.textContent = `Syntax Hold (L${data.diagnostic.line})`;
-        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 8 spokes held at last valid Hub AST`;
+        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 9 spokes held at last valid Hub AST`;
       }
     }
 
@@ -766,7 +824,7 @@
       if (data.ok) {
         document.getElementById("rename-input").value = "";
         applySnapshot(data.snapshot, null);
-        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 9 languages`, false);
+        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 10 languages`, false);
       } else {
         flashMessage(`✗ ${data.error}`, true);
       }
@@ -778,7 +836,7 @@
       if (data.ok) {
         applySnapshot(data.snapshot, null);
         if (data.rewrites > 0) {
-          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 9 languages`, false);
+          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 10 languages`, false);
         } else {
           flashMessage("AST is already in normal form (0 rewrites)", false);
         }
@@ -833,7 +891,7 @@
         applySnapshot(data.snapshot, null);
         renderMutationReport(data.mutation);
         if (data.added_assertions > 0) {
-          flashMessage(`🛡 Synthesized ${data.added_assertions} boundary unit test assertion(s) across all 9 languages (${data.before_score_pct}% → ${data.after_score_pct}%)`, false);
+          flashMessage(`🛡 Synthesized ${data.added_assertions} boundary unit test assertion(s) across all 10 languages (${data.before_score_pct}% → ${data.after_score_pct}%)`, false);
         } else {
           flashMessage("No additional distinguishing boundary inputs found", false);
         }
@@ -877,6 +935,56 @@
       cards.appendChild(uncovCard);
     }
 
+    async function triggerVerify() {
+      const drawer = document.getElementById("verify-drawer");
+      const summary = document.getElementById("verify-summary");
+      const cards = document.getElementById("verify-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Running Cousot interval abstract interpretation + concolic Hub VM counterexample search...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/verify", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.refuted > 0 ? "#f87171" : (data.all_safe ? "#34d399" : "#fbbf24");
+      summary.innerHTML = `<span style="color:${color};">🛡 Symbolic Safety Verifier: ${data.proven_safe}/${data.total_obligations} proven safe · ${data.refuted} refuted · ${(data.unreachable_branches || []).length} UNSAT dead branch(es) (${data.elapsed_ms}ms)</span>`;
+
+      const obs = data.obligations || [];
+      const refutedList = obs.filter(o => o.status === "refuted");
+      const provenList = obs.filter(o => o.status === "safe");
+      const warnList = obs.filter(o => o.status === "warning");
+
+      const refCard = document.createElement("div");
+      refCard.className = "run-card";
+      refCard.innerHTML = `<strong>✗ Crash Counterexamples (${refutedList.length})</strong><pre></pre>`;
+      refCard.querySelector("pre").textContent =
+        refutedList.length === 0
+          ? "✓ 0 crash counterexamples — no division-by-zero, out-of-bounds index, or assertion failure witnesses!"
+          : refutedList.map(o => `[#${o.id} in ${o.func}] ${o.label}: ${o.expr}\n  ↳ Witness: ${o.witness_call} => ${o.runtime_error}`).join("\n");
+      cards.appendChild(refCard);
+
+      const safeCard = document.createElement("div");
+      safeCard.className = "run-card";
+      safeCard.innerHTML = `<strong>✓ Proven Safe Obligations (${provenList.length})</strong><pre></pre>`;
+      safeCard.querySelector("pre").textContent =
+        provenList.map(o => `[#${o.id} in ${o.func}] ${o.expr} — ${o.note}`).join("\n")
+        + (warnList.length > 0 ? "\n" + warnList.map(o => `[#${o.id} in ${o.func}] ⚠ ${o.expr} — ${o.note}`).join("\n") : "")
+        || "(no runtime safety obligations in module)";
+      cards.appendChild(safeCard);
+
+      const dead = data.unreachable_branches || [];
+      const deadCard = document.createElement("div");
+      deadCard.className = "run-card";
+      deadCard.innerHTML = `<strong>🧭 UNSAT Unreachable Branches (${dead.length})</strong><pre></pre>`;
+      deadCard.querySelector("pre").textContent =
+        dead.length === 0
+          ? "✓ 0 unreachable / contradicted branches."
+          : dead.map(d => `[stmt #${d.stmt_id} in ${d.func}] ${d.branch}-branch of (${d.cond}) — ${d.reason}`).join("\n");
+      cards.appendChild(deadCard);
+    }
+
+    document.getElementById("verify-btn").addEventListener("click", triggerVerify);
+    document.getElementById("safety-pill").addEventListener("click", triggerVerify);
+
     document.getElementById("trace-btn").addEventListener("click", triggerTrace);
     document.getElementById("cov-pill").addEventListener("click", triggerTrace);
 
@@ -908,13 +1016,13 @@
       const summary = document.getElementById("run-summary");
       const cards = document.getElementById("run-cards");
       drawer.style.display = "block";
-      summary.textContent = "Executing Hub VM + rustc + clang++ (PCH) + swiftc + javac + go + python3 + ruby + node in parallel...";
+      summary.textContent = "Executing Hub VM + rustc + clang -std=c11 + clang++ (PCH) + swiftc + javac + go + python3 + ruby + node in parallel...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/run", { method: "POST", body: "{}" });
       const data = await res.json();
       if (data.outputs_match) {
-        summary.innerHTML = `<span style="color:#34d399;">✓ 9/9 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
+        summary.innerHTML = `<span style="color:#34d399;">✓ 10/10 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
       } else {
         summary.innerHTML = `<span style="color:#f87171;">Runtime Check Completed (${data.wall_time_ms}ms — inspect outputs below)</span>`;
       }

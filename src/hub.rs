@@ -1052,6 +1052,15 @@ fn normalize_expr(
                             base: Box::new(inner.clone()),
                             field: "length".to_string(),
                         };
+                    } else if struct_fields
+                        .get(&sname)
+                        .map(|m| m.contains_key("len"))
+                        .unwrap_or(false)
+                    {
+                        *expr = Expr::FieldAccess {
+                            base: Box::new(inner.clone()),
+                            field: "len".to_string(),
+                        };
                     }
                 }
             }

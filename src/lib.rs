@@ -13,4 +13,5 @@ pub mod server;
 pub mod spokes;
 pub mod trace;
 pub mod typecheck;
+pub mod verify;
 pub mod watcher;

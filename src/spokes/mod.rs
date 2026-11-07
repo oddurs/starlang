@@ -1,3 +1,4 @@
+pub mod c;
 pub mod cpp;
 pub mod go;
 pub mod java;
@@ -13,6 +14,7 @@ use crate::lens::{LanguageLens, SpokeId};
 pub fn all_lenses() -> Vec<Box<dyn LanguageLens>> {
     vec![
         Box::new(rust::RustLens),
+        Box::new(c::CLens),
         Box::new(cpp::CppLens),
         Box::new(swift::SwiftLens),
         Box::new(java::JavaLens),
@@ -27,6 +29,7 @@ pub fn all_lenses() -> Vec<Box<dyn LanguageLens>> {
 pub fn lens_for(id: SpokeId) -> Box<dyn LanguageLens> {
     match id {
         SpokeId::Rust => Box::new(rust::RustLens),
+        SpokeId::C => Box::new(c::CLens),
         SpokeId::Cpp => Box::new(cpp::CppLens),
         SpokeId::Swift => Box::new(swift::SwiftLens),
         SpokeId::Java => Box::new(java::JavaLens),

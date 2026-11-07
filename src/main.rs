@@ -9,6 +9,7 @@ use starlang::lens::SpokeId;
 use starlang::runner::run_all_spokes;
 use starlang::samples::find_sample;
 use starlang::server::serve_web_studio;
+use starlang::verify::VerifyStatus;
 use starlang::watcher::watch_directory;
 
 fn main() {
@@ -57,6 +58,12 @@ fn main() {
         }
         "trace" => {
             if let Err(e) = run_trace_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "verify" => {
+            if let Err(e) = run_verify_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
@@ -153,7 +160,7 @@ fn parse_target_spoke(args: &[String]) -> Result<Option<SpokeId>, String> {
 
 fn run_convert(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang convert <file> [--to rust|cpp|swift|java|go|python|ruby|ts|star]".to_string()
+        "usage: starlang convert <file> [--to rust|c|cpp|swift|java|go|python|ruby|ts|star]".to_string()
     })?;
     let (eng, src_spoke) = load_engine_from_path(input)?;
 
@@ -314,6 +321,95 @@ fn run_trace_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_verify_cli(args: &[String]) -> Result<(), String> {
+    let (eng, label) = if let Some(path) = args.first() {
+        let (e, spoke) = load_engine_from_path(path)?;
+        (e, format!("{} ({})", path, spoke.display_name()))
+    } else {
+        let sample = find_sample("packets").ok_or("missing packets sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.verify();
+    println!("=== Hub Symbolic Safety & Dead-Branch Verifier: {} ===", label);
+    println!(
+        "Safety Obligations: {}/{} proven safe | {} refuted | {} unproven | {} UNSAT dead branch(es) ({}ms)",
+        rep.proven_safe,
+        rep.total_obligations,
+        rep.refuted,
+        rep.warnings,
+        rep.unreachable_branches.len(),
+        rep.elapsed_ms
+    );
+
+    if !rep.obligations.is_empty() {
+        println!("\nProof Obligations:");
+        for ob in &rep.obligations {
+            match &ob.status {
+                VerifyStatus::ProvenSafe => {
+                    println!(
+                        "  ✓ [SAFE #{} in {}()] {}: {} — {}",
+                        ob.id,
+                        ob.func,
+                        ob.kind.label(),
+                        ob.expr_summary,
+                        ob.proof_note
+                    );
+                }
+                VerifyStatus::Refuted {
+                    witness_call,
+                    runtime_error,
+                } => {
+                    println!(
+                        "  ✗ [REFUTED #{} in {}()] {}: {}\n      ↳ Counterexample witness: {} => {}",
+                        ob.id,
+                        ob.func,
+                        ob.kind.label(),
+                        ob.expr_summary,
+                        witness_call,
+                        runtime_error
+                    );
+                }
+                VerifyStatus::UnprovenWarning => {
+                    println!(
+                        "  ⚠ [UNPROVEN #{} in {}()] {}: {} — {}",
+                        ob.id,
+                        ob.func,
+                        ob.kind.label(),
+                        ob.expr_summary,
+                        ob.proof_note
+                    );
+                }
+            }
+        }
+    }
+
+    if rep.unreachable_branches.is_empty() {
+        println!("\n✓ 0 UNSAT unreachable branches.");
+    } else {
+        println!("\nUNSAT Unreachable Branches ({}):", rep.unreachable_branches.len());
+        for u in &rep.unreachable_branches {
+            println!(
+                "  ⚠ [stmt #{} in {}()] {}-branch of `{}` — {}",
+                u.stmt_id, u.func, u.branch, u.cond_summary, u.reason
+            );
+        }
+    }
+
+    if rep.refuted > 0 {
+        return Err(format!(
+            "{} safety obligation(s) refuted with concrete crash counterexamples",
+            rep.refuted
+        ));
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -365,7 +461,7 @@ fn run_mutate_cli(args: &[String]) -> Result<(), String> {
             for m in rep.survivors() {
                 println!("  ⚠ [mutant #{} in {}()] {}", m.id, m.func, m.description);
             }
-            println!("\nTip: run `cargo run -- mutate --harden` to synthesize boundary assertions across all 9 languages.");
+            println!("\nTip: run `cargo run -- mutate --harden` to synthesize boundary assertions across all 10 languages.");
         } else {
             println!("\n✓ 0 surviving mutants — unit test suite killed 100% of Hub mutants.");
         }
@@ -424,11 +520,11 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 
     let report = run_fuzz_suite(seed, count);
     println!(
-        "★ Property-Based 9-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
+        "★ Property-Based 10-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
         report.seed, report.programs_tested
     );
     println!(
-        "  • 9-spoke GetPut + cold Put round-trips: {}",
+        "  • 10-spoke GetPut + cold Put round-trips: {}",
         report.spoke_roundtrips
     );
     println!(
@@ -455,7 +551,7 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 fn run_refactor(args: &[String]) -> Result<(), String> {
     if args.len() < 3 {
         return Err(
-            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|cpp|swift|java|go|python|ruby|ts|star]"
+            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|c|cpp|swift|java|go|python|ruby|ts|star]"
                 .to_string(),
         );
     }
@@ -473,7 +569,7 @@ fn run_refactor(args: &[String]) -> Result<(), String> {
 
 fn run_optimize(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang optimize <file> [--to rust|cpp|swift|java|go|python|ruby|ts|star]"
+        "usage: starlang optimize <file> [--to rust|c|cpp|swift|java|go|python|ruby|ts|star]"
             .to_string()
     })?;
     let (mut eng, src_spoke) = load_engine_from_path(input)?;
@@ -507,7 +603,7 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Outputs match across all 9 engines: {}",
+        "\nParallel wall time: {}ms | Outputs match across all 10 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
@@ -518,23 +614,24 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v0.6 — 9-Spoke Bidirectional Compiler (Rust <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> TypeScript <-> Star IR)
+        "starlang v0.7 — 10-Spoke Bidirectional Compiler (Rust <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> TypeScript <-> Star IR)
 
 USAGE:
-  cargo run                                         Start the 9-pane live web studio on http://127.0.0.1:7878
+  cargo run                                         Start the 10-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
-  cargo run -- watch [dir] [stem]                   Live-sync .rs, .cpp, .swift, .java, .go, .py, .rb, .ts, .star files
-  cargo run -- convert <file> [--to ruby]           Transpile a file into one or all other spokes
+  cargo run -- watch [dir] [stem]                   Live-sync .rs, .c, .cpp, .swift, .java, .go, .py, .rb, .ts, .star files
+  cargo run -- convert <file> [--to c]              Transpile a file into one or all other spokes
   cargo run -- check <file>                         Run the central Hub static type & scope checker
+  cargo run -- verify [file]                        Prove safety obligations & detect UNSAT dead branches via Hub abstract interpretation
   cargo run -- eval <file>                          Execute main() instantly in the native in-memory Hub VM
   cargo run -- test <file>                          Execute polyglot unit tests instantly in the Hub VM
   cargo run -- trace [file]                         Report Hub AST statement coverage %, hotspots & call trace
   cargo run -- mutate [file] [--harden] [--to X]    Run Hub AST mutation testing & auto-harden boundary tests
-  cargo run -- fuzz [count] [--seed N]              Run property-based 9-spoke GetPut & VM equivalence fuzzer
+  cargo run -- fuzz [count] [--seed N]              Run property-based 10-spoke GetPut & VM equivalence fuzzer
   cargo run -- refactor <file> <sym> <new> [--to X] Scope-aware cross-language symbol rename
   cargo run -- optimize <file> [--to X]             Constant-fold & prune dead branches via the Hub
-  cargo run -- run <file>                           Verify across Hub VM + rustc + clang++ + swiftc + javac + go + py + ruby + node
-  cargo run -- demo                                 Run an end-to-end 9-spoke sync, mutation harden, fuzz & 9-engine demo"
+  cargo run -- run <file>                           Verify across Hub VM + rustc + clang + clang++ + swiftc + javac + go + py + ruby + node
+  cargo run -- demo                                 Run an end-to-end 10-spoke sync, symbolic verify, mutation harden, fuzz & 10-engine demo"
     );
 }
 
@@ -546,8 +643,10 @@ fn run_cli_demo() -> Result<(), String> {
     let init_snap = engine.snapshot();
     let passed_tests = init_snap.test_results.iter().filter(|t| t.passed).count();
     println!(
-        "Hub initialized: {} AST nodes | Coverage: {}% ({}/{}) | Tests: {}/{} passed | Hub VM: {}\n",
+        "Hub initialized: {} AST nodes | Safety: {}/{} proven | Coverage: {}% ({}/{}) | Tests: {}/{} passed | Hub VM: {}\n",
         init_snap.node_count,
+        init_snap.safety_proven,
+        init_snap.safety_total,
         init_snap.coverage_pct,
         init_snap.covered_stmts,
         init_snap.total_stmts,
@@ -556,10 +655,11 @@ fn run_cli_demo() -> Result<(), String> {
         init_snap.live_eval.stdout.trim()
     );
 
-    let ruby_before = engine.project(SpokeId::Ruby);
-    println!("--- Projected Modern Ruby + RBS View ---\n{}", ruby_before);
+    let c_before = engine.project(SpokeId::C);
+    println!("--- Projected Modern ISO C11 View ---\n{}", c_before);
 
     println!("=== 2. Editing in Ruby (escalating Critical weight 5 -> 10) ===");
+    let ruby_before = engine.project(SpokeId::Ruby);
     let ruby_edited = ruby_before.replace(
         "  when Severity::Critical\n    return 5",
         "  when Severity::Critical\n    # Escalated critical weight in Ruby\n    return 10",
@@ -572,7 +672,7 @@ fn run_cli_demo() -> Result<(), String> {
     let (snap, renamed_sites) = engine.rename_symbol("Severity::Critical", "Emergency")?;
     let passed_after = snap.test_results.iter().filter(|t| t.passed).count();
     println!(
-        "Renamed {} AST sites across all 9 languages | Coverage: {}% | Tests: {}/{} passed | Live Hub VM: {}\n",
+        "Renamed {} AST sites across all 10 languages | Coverage: {}% | Tests: {}/{} passed | Live Hub VM: {}\n",
         renamed_sites,
         snap.coverage_pct,
         passed_after,
@@ -580,7 +680,7 @@ fn run_cli_demo() -> Result<(), String> {
         snap.live_eval.stdout.trim()
     );
 
-    println!("=== 4. Hub AST Mutation Testing & Auto-Test Hardening Across All 9 Languages ===");
+    println!("=== 4. Hub AST Mutation Testing & Auto-Test Hardening Across All 10 Languages ===");
     let (hardened_snap, hrep) = engine.harden_tests();
     let hardened_passed = hardened_snap
         .test_results
@@ -597,12 +697,32 @@ fn run_cli_demo() -> Result<(), String> {
         hardened_passed,
         hardened_snap.test_results.len()
     );
-    println!(
-        "--- Updated Rust View (`latencies: &[i64]` slice + `test_mutation_hardened` survived Ruby edit & Hub rename!) ---\n{}",
-        hardened_snap.views["rust"]
-    );
 
-    println!("=== 5. Differential Execution Across All 9 Engines (Hub VM + rustc + clang++ PCH + swiftc + javac + go + python3 + ruby + node) ===");
+    println!("=== 5. Hub Symbolic Safety & Dead-Branch Verifier (`packets` C11 preset) ===");
+    let pkt_sample = find_sample("packets").ok_or("missing packets sample")?;
+    let pkt_eng = StarEngine::from_source(pkt_sample.initial_spoke, pkt_sample.source)
+        .map_err(|d| d.to_string())?;
+    let vrep = pkt_eng.verify();
+    println!(
+        "Proven Safe: {}/{} obligations ({}ms) | Refuted: {} | UNSAT Dead Branches: {}",
+        vrep.proven_safe,
+        vrep.total_obligations,
+        vrep.elapsed_ms,
+        vrep.refuted,
+        vrep.unreachable_branches.len()
+    );
+    for ob in &vrep.obligations {
+        println!(
+            "  ✓ [{}()] {}: {} — {}",
+            ob.func,
+            ob.kind.label(),
+            ob.expr_summary,
+            ob.proof_note
+        );
+    }
+    println!();
+
+    println!("=== 6. Differential Execution Across All 10 Engines (Hub VM + rustc + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + node) ===");
     let report = run_all_spokes(&engine);
     for r in &report.results {
         println!(
@@ -617,14 +737,14 @@ fn run_cli_demo() -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Byte-for-byte match across all 9 engines: {}",
+        "\nParallel wall time: {}ms | Byte-for-byte match across all 10 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
         return Err("runtime outputs diverged".to_string());
     }
 
-    println!("\n=== 6. Property-Based 9-Spoke Lens Fuzzer (25 Synthesized Programs × 9 Spokes) ===");
+    println!("\n=== 7. Property-Based 10-Spoke Lens Fuzzer (25 Synthesized Programs × 10 Spokes) ===");
     let fuzz = run_fuzz_suite(0x57A4_2026_0500, 25);
     println!(
         "Verified {} GetPut round-trips & {} test suites in {}ms — Failures: {}",
