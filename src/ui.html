@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,7 +436,7 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v1.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA & Hoare Contracts Studio</h1>
+        <h1>★ StarLang v1.5 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare Contracts, Concolic & Taint Studio</h1>
         <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm & 14-Engine Verification</p>
       </div>
     </div>
@@ -444,6 +444,8 @@
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="trace-btn" id="concolic-btn" title="Whitebox concolic path exploration, boundary-negation solver & path-covering unit test synthesis across all 13 languages">🧭 Concolic Paths</button>
+      <button class="verify-btn" id="security-btn" title="Denning lattice information-flow taint analysis, sanitizer verification & constant-time side-channel auditor">🔒 Taint & Security</button>
       <button class="verify-btn" id="contracts-btn" title="Infer Hoare Logic Design-by-Contract specifications (requires, loop_invariant, ensures) & verify Dijkstra Weakest-Precondition VCs across 13 languages">📜 Hoare Contracts</button>
       <button class="trace-btn" id="ssa-btn" title="Compute Cytron Static Single Assignment (SSA) form, Dominance Frontiers, φ-nodes, Liveness & Def-Use chains">🧬 SSA & Liveness</button>
       <button class="wasm-btn" id="synth-btn" title="Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages">✨ PBE Synth</button>
@@ -660,6 +662,25 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="concolic-drawer">
+    <div class="run-header">
+      <span id="concolic-summary">🧭 Whitebox Concolic Path Explorer, Boundary-Negation Solver & Path-Covering Unit Test Synthesizer...</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="wasm-btn" id="concolic-inject-btn">🧪 Inject Path-Covering Unit Tests Into All 13 Spokes</button>
+        <button onclick="document.getElementById('concolic-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="concolic-cards"></div>
+  </section>
+
+  <section id="security-drawer">
+    <div class="run-header">
+      <span id="security-summary">🔒 Denning Lattice Information-Flow Taint, Sanitizer Verification & Constant-Time Side-Channel Auditor...</span>
+      <button onclick="document.getElementById('security-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="security-cards"></div>
+  </section>
 
   <section id="contracts-drawer">
     <div class="run-header">
@@ -1739,6 +1760,70 @@
         card.innerHTML = `<strong>📜 ${fn.signature} (${fn.vcs_proven}/${fn.vcs_total} VCs proven)</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
         card.querySelector("pre").textContent =
           `${reqs}\n${invs ? invs + "\n" : ""}${enss}\n\n[Polyglot DbC Annotations]\n${spk}`;
+        cards.appendChild(card);
+      });
+    });
+
+    async function triggerConcolic(injectFlag) {
+      const drawer = document.getElementById("concolic-drawer");
+      const summary = document.getElementById("concolic-summary");
+      const cards = document.getElementById("concolic-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Running whitebox concolic path exploration & boundary-negation solver across all Hub functions...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/concolic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inject: injectFlag ? "true" : "false" })
+      });
+      const data = await res.json();
+      if (data.snapshot && injectFlag) {
+        applySnapshot(data.snapshot, null);
+      }
+      const color = data.branch_coverage_pct >= 80 ? "#34d399" : "#38bdf8";
+      summary.innerHTML = `<span style="color:${color};">🧭 Whitebox Concolic Explorer: ${data.total_paths} distinct execution paths · ${data.branch_coverage_pct}% branch coverage (${data.covered_branches}/${data.total_branches} branches) · ${data.synthesized_assertions_count} path-covering assertion(s) (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const pathLines = (fn.paths || [])
+          .map(p => `[Path #${p.path_id} · ${p.steps} steps] ${p.input_args} => ${p.output_val}\n  Π: ${p.path_condition}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>🧭 ${fn.signature} (${fn.paths_discovered} paths · ${fn.branch_coverage_pct}% branch cov)</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent = pathLines;
+        cards.appendChild(card);
+      });
+    }
+
+    document.getElementById("concolic-btn").addEventListener("click", () => triggerConcolic(false));
+    document.getElementById("concolic-inject-btn").addEventListener("click", () => triggerConcolic(true));
+
+    document.getElementById("security-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("security-drawer");
+      const summary = document.getElementById("security-summary");
+      const cards = document.getElementById("security-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Auditing Denning information-flow taint lattice, dominating sanitizers & constant-time side-channels...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/security", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.all_sinks_safe ? "#34d399" : "#fbbf24";
+      summary.innerHTML = `<span style="color:${color};">🔒 Taint & Security Audit: ${data.safe_sinks}/${data.total_sinks} sensitive sinks guarded · ${data.unsanitized_sinks} unsanitized · ${data.total_sanitizers} sanitizer(s) · ${data.total_flows} flow edge(s) (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const flows = (fn.flow_edges || [])
+          .map(fl => `  [${fl.flow_kind}] ${fl.from_var} ➔ ${fl.to_target} (${fl.taint_label})`)
+          .join("\n") || "  (no taint propagation)";
+        const sinks = (fn.sink_audits || [])
+          .map(s => `  ${s.safe ? "✓" : "✗"} [${s.sink_kind}] ${s.expr_summary} (${s.taint_state}) — ${s.note}`)
+          .join("\n") || "  (no sensitive sinks)";
+        card.innerHTML = `<strong>🔒 ${fn.signature} (${fn.constant_time_clean ? "CT: Clean" : "CT: Branch Hazard"})</strong><pre style="max-height:280px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Untrusted: ${(fn.untrusted_params || []).join(", ") || "none"} | Confidential: ${(fn.confidential_params || []).join(", ") || "none"}\n\n[Information-Flow Edges]\n${flows}\n\n[Sensitive Sinks & Sanitizers]\n${sinks}\n\n[Constant-Time Audit]\n  ${fn.timing_note}`;
         cards.appendChild(card);
       });
     });

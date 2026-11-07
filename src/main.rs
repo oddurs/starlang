@@ -141,6 +141,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "concolic" => {
+            if let Err(e) = run_concolic_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "security" => {
+            if let Err(e) = run_security_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -1366,6 +1378,159 @@ fn run_contracts_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_concolic_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    let mut inject = false;
+    for a in args {
+        if a == "--inject" || a == "-i" {
+            inject = true;
+        } else if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (mut eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let (rep, _) = eng.concolic(inject);
+    println!(
+        "=== Whitebox Concolic Path Explorer, Boundary-Negation Solver & Test Synthesizer: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Distinct Execution Paths: {} | Branch Coverage: {}% ({}/{} branches) | Synthesized Assertions: {} ({}ms)\n",
+        rep.total_functions,
+        rep.total_paths,
+        rep.branch_coverage_pct,
+        rep.covered_branches,
+        rep.total_branches,
+        rep.synthesized_assertions_count,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [{} distinct path(s), {}% branch coverage ({}/{})]",
+            f.signature,
+            f.paths_discovered,
+            f.branch_coverage_pct,
+            f.covered_branches,
+            f.total_branches
+        );
+        for p in &f.paths {
+            println!(
+                "  • [Path #{} · {:>2} steps] {} => {}\n      Π: {}",
+                p.path_id, p.steps, p.input_args, p.output_val, p.path_condition
+            );
+        }
+        println!();
+    }
+
+    if rep.total_paths == 0 {
+        return Err("concolic explorer discovered 0 execution paths".to_string());
+    }
+    Ok(())
+}
+
+fn run_security_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.security_flow();
+    println!(
+        "=== Denning Lattice Information-Flow Taint, Sanitizer & Constant-Time Auditor: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Sensitive Sinks: {}/{} guarded ({} unsanitized) | Sanitizers: {} | Taint Flows: {} | All Sinks Safe: {} ({}ms)\n",
+        rep.total_functions,
+        rep.safe_sinks,
+        rep.total_sinks,
+        rep.unsanitized_sinks,
+        rep.total_sanitizers,
+        rep.total_flows,
+        rep.all_sinks_safe,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Sanitizers: {} | Constant-Time: {}]",
+            f.signature, f.sanitizers_applied, f.constant_time_clean
+        );
+        for fl in &f.flow_edges {
+            println!(
+                "  flow [{}]: {} -> {} ({})",
+                fl.flow_kind, fl.from_var, fl.to_target, fl.taint_label
+            );
+        }
+        for s in &f.sink_audits {
+            println!(
+                "  {} sink [{}]: {} ({}) — {}",
+                if s.safe { "✓" } else { "✗" },
+                s.sink_kind,
+                s.expr_summary,
+                s.taint_state,
+                s.note
+            );
+        }
+        println!("  timing: {}\n", f.timing_note);
+    }
+
+    if !rep.all_sinks_safe {
+        return Err(format!(
+            "{} sensitive sink(s) reached by unsanitized taint",
+            rep.unsanitized_sinks
+        ));
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -1570,13 +1735,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v1.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA & Hoare Contracts Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
+        "starlang v1.5 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare Contracts, Concolic & Taint Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- concolic [file|preset] [--inject]    Explore execution paths via boundary-negation solver & synthesize path-covering tests
+  cargo run -- security [file|preset]               Audit Denning lattice taint flows, dominating sanitizers & constant-time side-channels
   cargo run -- ssa [file|preset]                    Compute Cytron SSA form, Dominance Frontiers, φ-nodes, Liveness & Def-Use chains
   cargo run -- contracts [file|preset]              Infer Hoare-Logic DbC contracts (requires/invariant/ensures) & verify WP VCs
   cargo run -- synth [spec|sum_above]               Synthesize a verified polyglot function from I/O examples across all 13 spokes
@@ -1731,7 +1898,9 @@ fn run_cli_demo() -> Result<(), String> {
     let cfg_rep = rl_eng.cfg();
     let ssa_rep = rl_eng.ssa();
     let hoare_rep = rl_eng.contracts();
+    let sec_rep = rl_eng.security_flow();
     let mut repair_eng = rl_eng;
+    let (conc_rep, _) = repair_eng.concolic(false);
     let (_, rrep, _) = repair_eng.repair(true);
     let (srep, _) = repair_eng.synthesize(None, false)?;
     println!(
@@ -1742,7 +1911,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -1758,7 +1927,11 @@ fn run_cli_demo() -> Result<(), String> {
         ssa_rep.total_phi_nodes,
         ssa_rep.total_ssa_defs,
         hoare_rep.proven_vcs,
-        hoare_rep.total_vcs
+        hoare_rep.total_vcs,
+        conc_rep.total_paths,
+        conc_rep.branch_coverage_pct,
+        sec_rep.safe_sinks,
+        sec_rep.total_sinks
     );
     if !drep.ok
         || slice_len == 0
@@ -1768,8 +1941,10 @@ fn run_cli_demo() -> Result<(), String> {
         || cfg_rep.total_blocks == 0
         || ssa_rep.total_phi_nodes == 0
         || !hoare_rep.all_verified
+        || conc_rep.total_paths == 0
+        || !sec_rep.all_sinks_safe
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, or Hoare WP failed on ratelimit".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, or Security Taint failed on ratelimit".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

@@ -779,6 +779,94 @@ fn cytron_ssa_phi_placement_liveness_and_hoare_logic_contracts_verify_across_thi
 }
 
 #[test]
+fn whitebox_concolic_path_explorer_and_taint_security_flow_auditor_synthesize_and_verify_across_thirteen_languages() {
+    let sample = find_sample("ratelimit").unwrap();
+    let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+
+    // 1. Whitebox Concolic Path Exploration & Path-Covering Unit Test Synthesis across all 13 spokes
+    let (conc, snap_opt) = engine.concolic(true);
+    assert_eq!(conc.total_functions, 2);
+    assert!(
+        conc.total_paths >= 6,
+        "Expected >= 6 distinct execution paths across ratelimit functions, got {:?}",
+        conc
+    );
+    assert_eq!(
+        conc.branch_coverage_pct, 100,
+        "Expected 100% branch coverage via boundary-negation solver, got {:?}",
+        conc
+    );
+    assert!(conc.synthesized_assertions_count >= 6);
+    assert!(conc.all_synthesized_tests_pass);
+
+    let quota_fn = conc
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "evaluate_quota")
+        .unwrap();
+    assert!(
+        quota_fn.paths_discovered >= 5,
+        "Expected evaluate_quota to have >= 5 distinct paths, got {:?}",
+        quota_fn
+    );
+    assert_eq!(quota_fn.branch_coverage_pct, 100);
+    for spoke in SpokeId::ALL {
+        let test_code = conc
+            .views_by_spoke
+            .get(spoke.as_str())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            test_code.contains("concolic_effective_capacity")
+                && test_code.contains("concolic_evaluate_quota"),
+            "Synthesized concolic unit tests missing for {:?}: {}",
+            spoke,
+            test_code
+        );
+    }
+
+    let snap = snap_opt.expect("Expected snapshot with injected concolic unit tests");
+    assert!(snap.views["rust"].contains("fn test_concolic_evaluate_quota()"));
+    assert!(snap.views["perl"].contains("sub test_concolic_evaluate_quota()"));
+    assert!(
+        snap.test_results.iter().all(|t| t.passed),
+        "All injected concolic unit tests must pass in Hub VM: {:?}",
+        snap.test_results
+    );
+
+    // 2. Denning Lattice Information-Flow Taint & Dominating Sanitizer Verification on `ratelimit`
+    let sec = engine.security_flow();
+    assert!(
+        sec.all_sinks_safe,
+        "Expected all sensitive divisor/bounds sinks in ratelimit to be guarded by sanitizers: {:?}",
+        sec
+    );
+    assert_eq!(sec.unsanitized_sinks, 0);
+    assert!(sec.safe_sinks >= 1);
+
+    // 3. Verify that an unguarded untrusted divisor sink and secret-dependent branch are flagged
+    let vuln_py = "def leak_and_divide(secret_token: int, raw_input: int) -> int:\n    if secret_token > 100:\n        return 1000 // raw_input\n    return 0\n\ndef main() -> None:\n    print(leak_and_divide(50, 2))\n";
+    let vuln_eng = StarEngine::from_source(SpokeId::Python, vuln_py).unwrap();
+    let vuln_sec = vuln_eng.security_flow();
+    assert!(
+        !vuln_sec.all_sinks_safe,
+        "Expected unguarded raw_input divisor to fail sanitizer audit: {:?}",
+        vuln_sec
+    );
+    assert!(vuln_sec.unsanitized_sinks >= 1);
+    let leak_fn = vuln_sec
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "leak_and_divide")
+        .unwrap();
+    assert!(
+        !leak_fn.constant_time_clean,
+        "Expected secret_token branch to be flagged as a timing side-channel hazard: {:?}",
+        leak_fn
+    );
+}
+
+#[test]
 fn lua_spoke_and_zero_dep_wasm_backend_compile_sync_and_execute_in_v8_jit() {
     // 1. Seed from `backoff` (LuaJIT + LuaCATS preset) and verify symbolic safety obligations
     let sample = find_sample("backoff").unwrap();
@@ -1442,6 +1530,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(cnt_resp.contains("\"ok\":true"), "contracts failed: {}", cnt_resp);
     assert!(cnt_resp.contains("\"all_verified\":true"), "contracts failed: {}", cnt_resp);
     assert!(cnt_resp.contains("\"verification_conditions\":["));
+
+    // Verify /api/concolic and /api/security endpoints
+    let conc_resp = send_http("POST", "/api/concolic", "{\"inject\":\"false\"}");
+    assert!(conc_resp.contains("\"ok\":true"), "concolic failed: {}", conc_resp);
+    assert!(conc_resp.contains("\"total_paths\":"));
+    assert!(conc_resp.contains("\"path_condition\":"));
+
+    let sec_resp = send_http("POST", "/api/security", "{}");
+    assert!(sec_resp.contains("\"ok\":true"), "security failed: {}", sec_resp);
+    assert!(sec_resp.contains("\"all_sinks_safe\":true"), "security failed: {}", sec_resp);
+    assert!(sec_resp.contains("\"flow_edges\":["));
 
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");

@@ -1,7 +1,7 @@
 [package]
 name = "starlang"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2021"
-description = "A star-topology bidirectional 13-language compiler, WebAssembly backend, time-travel debugger, Big-O profiler, QuickCheck shrinker, CEGIS auto-repair, PBE synthesizer, Cytron SSA & Hoare WP contract verifier (Rust <-> Zig <-> C11 <-> C++ <-> Swift <-> Java <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)"
+description = "A star-topology bidirectional 13-language compiler, WebAssembly backend, time-travel debugger, Big-O profiler, QuickCheck shrinker, CEGIS auto-repair, PBE synthesizer, Cytron SSA, Hoare WP contract verifier, whitebox concolic path explorer & Denning taint security auditor (Rust <-> Zig <-> C11 <-> C++ <-> Swift <-> Java <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)"
 
 [dependencies]

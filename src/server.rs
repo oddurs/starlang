@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::complexity::ComplexityReport;
+use crate::concolic::{ConcolicReport, SecurityFlowReport};
 use crate::debugger::TimeTravelReport;
 use crate::engine::{StarEngine, SyncSnapshot};
 use crate::hub::Diagnostic;
@@ -28,7 +29,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v1.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA & Hoare Contracts Studio running at:");
+    println!("StarLang v1.5 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic & Taint Security Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -443,6 +444,27 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.contracts()
             };
             let payload = contracts_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/concolic") | ("GET", "/api/concolic") => {
+            let parsed = parse_flat_json_object(&body).unwrap_or_default();
+            let inject = parsed
+                .get("inject")
+                .map(|s| s == "true" || s == "1")
+                .unwrap_or(false);
+            let (rep, snap) = {
+                let mut eng = shared.lock().unwrap();
+                eng.concolic(inject)
+            };
+            let payload = concolic_to_json(&rep, snap.as_ref());
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/security") | ("GET", "/api/security") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.security_flow()
+            };
+            let payload = security_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -1255,6 +1277,130 @@ fn contracts_to_json(rep: &HoareContractReport) -> String {
         rep.elapsed_ms,
         fns_json.join(","),
         vcs_json.join(",")
+    )
+}
+
+fn concolic_to_json(rep: &ConcolicReport, snap: Option<&SyncSnapshot>) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let paths: Vec<String> = f
+                .paths
+                .iter()
+                .map(|p| {
+                    let brs: Vec<String> = p.branches_taken.iter().map(|b| json_str(b)).collect();
+                    format!(
+                        "{{\"path_id\":{},\"signature_key\":{},\"path_condition\":{},\"input_args\":{},\"output_val\":{},\"branches_taken\":[{}],\"steps\":{}}}",
+                        p.path_id,
+                        json_str(&p.signature_key),
+                        json_str(&p.path_condition),
+                        json_str(&p.input_args),
+                        json_str(&p.output_val),
+                        brs.join(","),
+                        p.steps
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"total_branches\":{},\"covered_branches\":{},\"branch_coverage_pct\":{},\"paths_discovered\":{},\"synthesized_assertions\":{},\"paths\":[{}]}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.total_branches,
+                f.covered_branches,
+                f.branch_coverage_pct,
+                f.paths_discovered,
+                f.synthesized_assertions,
+                paths.join(",")
+            )
+        })
+        .collect();
+
+    let snap_json = snap
+        .map(snapshot_to_json)
+        .unwrap_or_else(|| "null".to_string());
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_paths\":{},\"total_branches\":{},\"covered_branches\":{},\"branch_coverage_pct\":{},\"synthesized_tests_count\":{},\"synthesized_assertions_count\":{},\"all_synthesized_tests_pass\":{},\"elapsed_ms\":{},\"functions\":[{}],\"snapshot\":{}}}",
+        rep.total_functions,
+        rep.total_paths,
+        rep.total_branches,
+        rep.covered_branches,
+        rep.branch_coverage_pct,
+        rep.synthesized_tests_count,
+        rep.synthesized_assertions_count,
+        rep.all_synthesized_tests_pass,
+        rep.elapsed_ms,
+        fns_json.join(","),
+        snap_json
+    )
+}
+
+fn security_to_json(rep: &SecurityFlowReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let untrusted: Vec<String> = f.untrusted_params.iter().map(|s| json_str(s)).collect();
+            let confid: Vec<String> = f.confidential_params.iter().map(|s| json_str(s)).collect();
+            let edges: Vec<String> = f
+                .flow_edges
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{{\"from_var\":{},\"to_target\":{},\"flow_kind\":{},\"taint_label\":{},\"stmt_id\":{}}}",
+                        json_str(&e.from_var),
+                        json_str(&e.to_target),
+                        json_str(&e.flow_kind),
+                        json_str(&e.taint_label),
+                        e.stmt_id
+                    )
+                })
+                .collect();
+            let sinks: Vec<String> = f
+                .sink_audits
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{{\"stmt_id\":{},\"func\":{},\"sink_kind\":{},\"expr_summary\":{},\"taint_state\":{},\"safe\":{},\"note\":{}}}",
+                        s.stmt_id,
+                        json_str(&s.func),
+                        json_str(&s.sink_kind),
+                        json_str(&s.expr_summary),
+                        json_str(&s.taint_state),
+                        s.safe,
+                        json_str(&s.note)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"untrusted_params\":[{}],\"confidential_params\":[{}],\"sanitizers_applied\":{},\"explicit_flows\":{},\"implicit_control_flows\":{},\"constant_time_clean\":{},\"timing_note\":{},\"flow_edges\":[{}],\"sink_audits\":[{}]}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                untrusted.join(","),
+                confid.join(","),
+                f.sanitizers_applied,
+                f.explicit_flows,
+                f.implicit_control_flows,
+                f.constant_time_clean,
+                json_str(&f.timing_note),
+                edges.join(","),
+                sinks.join(",")
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"all_sinks_safe\":{},\"total_functions\":{},\"total_flows\":{},\"total_sanitizers\":{},\"total_sinks\":{},\"safe_sinks\":{},\"unsanitized_sinks\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.all_sinks_safe,
+        rep.total_functions,
+        rep.total_flows,
+        rep.total_sanitizers,
+        rep.total_sinks,
+        rep.safe_sinks,
+        rep.unsanitized_sinks,
+        rep.elapsed_ms,
+        fns_json.join(",")
     )
 }
 

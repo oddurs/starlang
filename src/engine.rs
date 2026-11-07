@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::complexity::{analyze_complexity, ComplexityReport};
+use crate::concolic::{
+    analyze_security_flow, explore_concolic_paths, ConcolicReport, SecurityFlowReport,
+};
 use crate::debugger::{record_time_travel_default, TimeTravelReport};
 use crate::eval::{eval_module, eval_tests_default, EvalResult, TestResult};
 use crate::hub::{Diagnostic, HubModule};
@@ -193,6 +196,26 @@ impl StarEngine {
     /// and verify Dijkstra Weakest-Precondition (`WP`) Verification Conditions across all 13 spokes.
     pub fn contracts(&self) -> HoareContractReport {
         infer_hoare_contracts(self.hub())
+    }
+
+    /// Run DART/KLEE-style Whitebox Concolic Path Exploration & Path-Coverage Unit Test Synthesis.
+    /// If `inject_tests` is true, appends the synthesized path-covering `test_concolic_*` functions
+    /// to the active Hub module and projects across all 13 spokes.
+    pub fn concolic(&mut self, inject_tests: bool) -> (ConcolicReport, Option<SyncSnapshot>) {
+        let rep = explore_concolic_paths(self.hub());
+        let snap = if inject_tests && rep.synthesized_tests_count > 0 {
+            let active = self.current().spoke;
+            self.push_hub(rep.hub_with_tests.clone(), active);
+            Some(self.snapshot())
+        } else {
+            None
+        };
+        (rep, snap)
+    }
+
+    /// Run Denning Lattice Information-Flow Taint Analysis, Sanitizer Verification & Constant-Time Side-Channel Auditing.
+    pub fn security_flow(&self) -> SecurityFlowReport {
+        analyze_security_flow(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.
