@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer, #zk-drawer, #sql-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,14 +436,16 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v1.8 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc & Escape Studio</h1>
-        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64 & 14-Engine Verification</p>
+        <h1>★ StarLang v2.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU, AutoDiff, Actors, TLA+, ZK R1CS & Relational SQL Studio</h1>
+        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64, Circom ZK & SQL</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="zk-btn" title="Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Witness Verifier & Circom 2.0 Synthesizer">🔐 ZK R1CS & Circom</button>
+      <button class="opt-btn" id="sql-btn" title="Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer & 13-Spoke SQL / DataFrame Synthesizer">🗄 Relational SQL & Pushdown</button>
       <button class="wasm-btn" id="actors-btn" title="Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer">📡 Actors & Vector Clocks</button>
       <button class="verify-btn" id="modelcheck-btn" title="Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability & TLA+ Spec Synthesizer">📐 TLA+ & Model Check</button>
       <button class="wasm-btn" id="autodiff-btn" title="Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer">∇ AutoDiff & Tape</button>
@@ -674,6 +676,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="zk-drawer">
+    <div class="run-header">
+      <span id="zk-summary">🔐 Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Groth16 / Plonk Gate Arithmetizer & Zero-Knowledge Witness Verifier...</span>
+      <button onclick="document.getElementById('zk-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="zk-cards"></div>
+  </section>
+
+  <section id="sql-drawer">
+    <div class="run-header">
+      <span id="sql-summary">🗄 Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer & 13-Spoke SQL / DataFrame Synthesizer...</span>
+      <button onclick="document.getElementById('sql-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="sql-cards"></div>
+  </section>
 
   <section id="actors-drawer">
     <div class="run-header">
@@ -2351,6 +2369,64 @@
         card.innerHTML = `<strong>📐 ${fn.signature} (${fn.reachable_states} states · ${fn.transitions_explored} transitions · depth ${fn.max_bfs_depth})</strong><pre style="max-height:340px;overflow:auto;"></pre>`;
         card.querySelector("pre").textContent =
           `[Temporal Safety (□I), Liveness (□◇) & Herlihy-Wing Linearizability]\n${pLines}\n\n[Synthesized TLA+ Specification]\n${fn.tla_plus_spec}\n\n[Mermaid Kripke State Diagram]\n${fn.mermaid_kripke}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("zk-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("zk-drawer");
+      const summary = document.getElementById("zk-summary");
+      const cards = document.getElementById("zk-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Arithmetizing Hub AST into Rank-1 Constraint System (R1CS) <A_i, w> * <B_i, w> == <C_i, w> (mod p) & verifying Zero-Knowledge Witness...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/zk", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.all_circuits_satisfied ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">🔐 ZK R1CS Circuit Prover (${data.field_modulus_str}): ${data.total_wires} wires · ${data.satisfied_constraints}/${data.total_constraints} R1CS constraints satisfied (100% <A_i, w> * <B_i, w> ≡ <C_i, w> mod p, ${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const wLines = (fn.wires || [])
+          .map(w => `  w_${w.wire_idx} [${w.visibility.padEnd(16)}] ${w.symbol.padEnd(20)} = ${w.value_fp}`)
+          .join("\n");
+        const cLines = (fn.constraints || [])
+          .map(c => `  ✓ #${c.constraint_id} [${c.gate_kind.padEnd(13)}] (${c.a_linear_comb}) * (${c.b_linear_comb}) == (${c.c_linear_comb})\n    ↳ Eval in F_p: ${c.lhs_eval} == ${c.rhs_eval} [SAT=${c.satisfied}] (${c.source_note})`)
+          .join("\n");
+        card.innerHTML = `<strong>🔐 ${fn.signature} (${fn.total_wires} wires · ${fn.satisfied_constraints}/${fn.r1cs_constraints} R1CS constraints · Depth: ${fn.multiplicative_depth})</strong><pre style="max-height:340px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `[Witness Vector w in F_p]\n${wLines}\n\n[Rank-1 Constraint System (A * B = C mod p)]\n${cLines}\n\n[Synthesized Circom 2.1.6 ZK Template]\n${fn.circom_template}\n\n[Mermaid Arithmetic Circuit]\n${fn.mermaid_circuit}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("sql-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("sql-drawer");
+      const summary = document.getElementById("sql-summary");
+      const cards = document.getElementById("sql-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Lifting Hub loops into Relational Algebra (σ, π, Γ), applying Selection Pushdown & synthesizing ANSI SQL + 13-Spoke DataFrame queries...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/sql", { method: "POST", body: "{}" });
+      const data = await res.json();
+      summary.innerHTML = `<span style="color:#34d399;">🗄 Relational Algebra & Vectorized SQL Optimizer: ${data.query_lifted_functions}/${data.total_functions} functions lifted · ${data.total_pushed_predicates} selection pushdown(s) · Volcano ${data.total_volcano_cycles}c ➔ Vectorized Columnar ${data.total_columnar_cycles}c (${data.overall_columnar_speedup}x speedup, ${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const opLines = (fn.plan_nodes || [])
+          .map(op => `  • #${op.step_id} [${op.op_symbol.padEnd(22)}] ${op.expression}\n    ↳ Rows: ${op.est_rows_in} -> ${op.est_rows_out} | Vectorized Batch: ${op.vectorized_batch_cycles}c`)
+          .join("\n");
+        const spk = Object.entries(fn.query_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "c", "java", "go", "python", "perl", "typescript", "star"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>🗄 ${fn.signature} (Volcano ${fn.volcano_tuple_cycles}c ➔ Columnar ${fn.vectorized_columnar_cycles}c · ${fn.columnar_speedup}x)</strong><pre style="max-height:340px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Relational Algebra Plan: ${fn.relational_algebra_expr}\n\n[Relational Operator Tree]\n${opLines}\n\n[Synthesized ANSI SQL Query]\n${fn.ansi_sql_query}\n\n[13-Spoke Vectorized DataFrame / Stream Lowering]\n${spk}`;
         cards.appendChild(card);
       });
     });
