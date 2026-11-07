@@ -237,6 +237,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "refinement" => {
+            if let Err(e) = run_refinement_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "prob" => {
+            if let Err(e) = run_prob_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -2699,6 +2711,154 @@ fn run_sql_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_refinement_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.liquid_refinements();
+    println!(
+        "=== Liquid Refinement Types ({{ ν: T | φ(ν) }}) & Constrained Horn Clause (CHC) Prover: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Refined Bindings: {} | Qualifiers: {} | CHCs Discharged: {}/{} | All Verified: {} ({}ms)\n",
+        rep.total_functions,
+        rep.total_refined_bindings,
+        rep.total_qualifiers_inferred,
+        rep.discharged_horn_clauses,
+        rep.total_horn_clauses,
+        rep.all_subtypes_verified,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Bindings: {} | CHCs: {}/{} | Fixpoint Iters: {}]",
+            f.refined_signature,
+            f.total_bindings,
+            f.horn_clauses_discharged,
+            f.horn_clauses_total,
+            f.fixpoint_iterations
+        );
+        for b in &f.bindings {
+            println!("  • [{:<13}] {:<16} :: {}", b.role, b.symbol, b.liquid_type);
+        }
+        for c in f.horn_clauses.iter().take(6) {
+            println!(
+                "  {} CHC #{:<2} [{:<22}] {} ({})",
+                if c.discharged { "✓" } else { "✗" },
+                c.clause_id,
+                c.kind,
+                c.horn_implication,
+                c.solver_note
+            );
+        }
+        println!("  --- SMT-LIB2 HORN Logic Script ---\n{}\n", f.smtlib2_horn_script);
+    }
+
+    if !rep.all_subtypes_verified {
+        return Err("one or more Liquid Refinement Constrained Horn Clauses failed".to_string());
+    }
+    Ok(())
+}
+
+fn run_prob_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.probabilistic_entropy();
+    println!(
+        "=== Probabilistic MCMC Sampler & Quantitative Information Flow (QIF) Shannon Entropy Quantifier: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | MCMC Samples: {} | Max Output Entropy H(Y): {:.2} bits | Max Mutual Info I(X;Y): {:.2} bits ({}ms)\n",
+        rep.total_functions,
+        rep.total_mcmc_samples,
+        rep.max_output_entropy_bits,
+        rep.max_mutual_info_bits,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [E[Y]={:.2} | σ={:.2} | 90% CI={} | H(X)={:.2}b | H(Y)={:.2}b | I(X;Y)={:.2}b | L_∞={:.2}b]",
+            f.signature,
+            f.posterior_mean,
+            f.posterior_std_dev,
+            f.credible_interval_90,
+            f.input_shannon_entropy_bits,
+            f.output_shannon_entropy_bits,
+            f.mutual_information_bits,
+            f.min_entropy_leakage_bits
+        );
+        for h in &f.posterior_histogram {
+            println!(
+                "  {} | p={:<4.2} ({:>3}) | {}",
+                h.bucket_label, h.probability, h.count, h.ascii_bar
+            );
+        }
+        println!();
+    }
+
+    if rep.total_functions == 0 {
+        return Err("probabilistic entropy analyzer found 0 functions".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -2903,13 +3063,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v2.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Circuit Prover & Relational SQL Optimizer Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64 / Circom / SQL)
+        "starlang v2.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Circuit Prover, Relational SQL Optimizer, Liquid Refinement Types & Probabilistic MCMC/Entropy Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64 / Circom / SQL)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- refinement [file|preset]             Infer Liquid Refinement Types ({{ ν: T | φ(ν) }}), solve CHCs & emit 13-Spoke Refined Types
+  cargo run -- prob [file|preset]                   Run Metropolis-Hastings MCMC sampler & compute Shannon Entropy H(X)/H(Y) & Mutual Info I(X;Y)
   cargo run -- zk [file|preset]                     Run Rank-1 Constraint System (R1CS) ZK Circuit Compiler, Witness Verifier & Circom Synth
   cargo run -- sql [file|preset]                    Run Relational Algebra (σ, π, Γ), Selection Pushdown & Vectorized SQL / DataFrame Optimizer
   cargo run -- actors [file|preset]                 Run Lamport Vector-Clock Happens-Before Race Detector, Deadlock Prover & 13-Spoke Actors
@@ -3102,6 +3264,8 @@ fn run_cli_demo() -> Result<(), String> {
     let mc_rep = repair_eng.model_check();
     let zk_rep = repair_eng.zk_r1cs();
     let sql_rep = repair_eng.relational_sql();
+    let ref_rep = repair_eng.liquid_refinements();
+    let prob_rep = repair_eng.probabilistic_entropy();
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -3110,7 +3274,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2} | Actors: {} stages, {} VC events, DRF={} | TLA+ BMC: {} states, {}/{} temporal properties | ZK R1CS: {} wires, {}/{} constraints SAT | Relational SQL: {} pushdown(s), {:.2}x columnar speedup\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2} | Actors: {} stages, {} VC events, DRF={} | TLA+ BMC: {} states, {}/{} temporal properties | ZK R1CS: {} wires, {}/{} constraints SAT | Relational SQL: {} pushdown(s), {:.2}x columnar speedup | Liquid Types: {} bindings, {}/{} CHCs | Probabilistic QIF: {} MCMC samples, max I(X;Y)={:.2}b\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -3170,7 +3334,12 @@ fn run_cli_demo() -> Result<(), String> {
         zk_rep.satisfied_constraints,
         zk_rep.total_constraints,
         sql_rep.total_pushed_predicates,
-        sql_rep.overall_columnar_speedup
+        sql_rep.overall_columnar_speedup,
+        ref_rep.total_refined_bindings,
+        ref_rep.discharged_horn_clauses,
+        ref_rep.total_horn_clauses,
+        prob_rep.total_mcmc_samples,
+        prob_rep.max_mutual_info_bits
     );
     if !drep.ok
         || slice_len == 0
@@ -3196,8 +3365,10 @@ fn run_cli_demo() -> Result<(), String> {
         || !mc_rep.all_verified
         || !zk_rep.all_circuits_satisfied
         || sql_rep.query_lifted_functions == 0
+        || !ref_rep.all_subtypes_verified
+        || prob_rep.total_mcmc_samples == 0
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, Numerical Stability, Actor Concurrency, TLA+ Model Checker, ZK R1CS Prover, or Relational SQL Optimizer failed".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, Numerical Stability, Actor Concurrency, TLA+ Model Checker, ZK R1CS Prover, Relational SQL Optimizer, Liquid Refinement Prover, or Probabilistic Entropy Analyzer failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");
