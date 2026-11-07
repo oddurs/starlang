@@ -429,6 +429,60 @@ if __FILE__ == $0
 end
 "#,
     },
+    SamplePreset {
+        id: "packets",
+        title: "Telemetry Packet Filter (Seeded from Modern C11)",
+        description: "ISO C11 compound literals, symbolic array-bounds + non-zero divisor + contract verification",
+        initial_spoke: SpokeId::C,
+        source: r#"#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Summary of validated network telemetry frames
+typedef struct PacketStats {
+    int64_t accepted;
+    int64_t dropped;
+    int64_t mean_bytes;
+} PacketStats;
+
+PacketStats analyze_packets(StarList_int64_t payloads, int64_t mtu) {
+    int64_t accepted = 0;
+    int64_t dropped = 0;
+    int64_t total_bytes = 0;
+    for (int64_t i = 0; i < payloads.len; i++) {
+        const int64_t sz = payloads.data[i];
+        if (sz > 0 && sz <= mtu) {
+            accepted += 1;
+            total_bytes += sz;
+        } else {
+            dropped += 1;
+        }
+    }
+    int64_t mean_bytes = 0;
+    if (accepted > 0) {
+        mean_bytes = total_bytes / accepted;
+    }
+    assert(mean_bytes >= 0);
+    return (PacketStats){ .accepted = accepted, .dropped = dropped, .mean_bytes = mean_bytes };
+}
+
+int main(void) {
+    const StarList_int64_t frames = StarList_int64_t_of((const int64_t[]){120, -4, 480, 1800, 300}, 5);
+    const PacketStats stats = analyze_packets(frames, 1500);
+    printf("%s %lld %s %lld %s %lld\n", "ok:", (long long)stats.accepted, "drop:", (long long)stats.dropped, "mean:", (long long)stats.mean_bytes);
+    return 0;
+}
+
+void test_packet_mtu_filter(void) {
+    const StarList_int64_t sample = StarList_int64_t_of((const int64_t[]){100, 200, 9000}, 3);
+    const PacketStats res = analyze_packets(sample, 1500);
+    assert(PacketStats_eq(res, (PacketStats){ .accepted = 2, .dropped = 1, .mean_bytes = 150 }));
+}
+"#,
+    },
 ];
 
 pub fn find_sample(id: &str) -> Option<&'static SamplePreset> {

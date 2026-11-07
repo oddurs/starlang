@@ -69,10 +69,11 @@ pub struct MultiRunReport {
     pub wall_time_ms: u128,
 }
 
-/// Execute the Hub Native VM plus Rust (`rustc`), C++ (`clang++` with cached STL PCH),
-/// Swift (`swiftc`), Java (`javac` + `java`), Go (`go run`), Python (`python3`),
-/// Ruby (`ruby`), and TypeScript (`node`) concurrently using `std::thread::scope`,
-/// verifying byte-for-byte identical stdout across all 9 execution engines.
+/// Execute the Hub Native VM plus Rust (`rustc`), C11 (`clang -std=c11`),
+/// C++ (`clang++` with cached STL PCH), Swift (`swiftc`), Java (`javac` + `java`),
+/// Go (`go run`), Python (`python3`), Ruby (`ruby`), and TypeScript (`node`)
+/// concurrently using `std::thread::scope`, verifying byte-for-byte identical
+/// stdout across all 10 execution engines.
 pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let wall_start = Instant::now();
     let run_id = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -85,6 +86,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
 
     let hub_clone = engine.hub().clone();
     let rust_src = engine.project(SpokeId::Rust);
+    let c_src = engine.project(SpokeId::C);
     let cpp_src = engine.project(SpokeId::Cpp);
     let swift_src = engine.project(SpokeId::Swift);
     let java_src = engine.project(SpokeId::Java);
@@ -93,10 +95,11 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let ruby_src = engine.project(SpokeId::Ruby);
     let ts_src = engine.project(SpokeId::TypeScript);
 
-    let (hub_res, rs_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res, ts_res) =
+    let (hub_res, rs_res, c_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res, ts_res) =
         thread::scope(|s| {
             let h_hub = s.spawn(|| run_hub_vm(&hub_clone));
             let h_rs = s.spawn(|| run_rust(&dir, &rust_src));
+            let h_c = s.spawn(|| run_c(&dir, &c_src));
             let h_cpp = s.spawn(|| run_cpp(&dir, &cpp_src));
             let h_swift = s.spawn(|| run_swift(&dir, &swift_src));
             let h_java = s.spawn(|| run_java(&dir, &java_src));
@@ -107,6 +110,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
             (
                 h_hub.join().unwrap(),
                 h_rs.join().unwrap(),
+                h_c.join().unwrap(),
                 h_cpp.join().unwrap(),
                 h_swift.join().unwrap(),
                 h_java.join().unwrap(),
@@ -120,7 +124,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let _ = fs::remove_dir_all(&dir);
 
     let results = vec![
-        hub_res, rs_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res, ts_res,
+        hub_res, rs_res, c_res, cpp_res, swift_res, java_res, go_res, py_res, rb_res, ts_res,
     ];
     let all_succeeded = results.iter().all(|r| r.ok);
     let outputs_match = all_succeeded
@@ -194,6 +198,63 @@ fn run_rust(dir: &PathBuf, src: &str) -> RuntimeOutput {
             },
             Err(e) => RuntimeOutput {
                 language: "Rust (rustc)",
+                ok: false,
+                stdout: String::new(),
+                stderr: e.to_string(),
+                duration_ms: start.elapsed().as_millis(),
+            },
+        },
+    }
+}
+
+fn run_c(dir: &PathBuf, src: &str) -> RuntimeOutput {
+    let c_path = dir.join("prog.c");
+    let bin_path = dir.join("prog_c");
+    let start = Instant::now();
+    if let Err(e) = fs::write(&c_path, src) {
+        return RuntimeOutput {
+            language: "C11 (clang)",
+            ok: false,
+            stdout: String::new(),
+            stderr: e.to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        };
+    }
+
+    let compile = Command::new("clang")
+        .arg("-std=c11")
+        .arg("-O0")
+        .arg(&c_path)
+        .arg("-lm")
+        .arg("-o")
+        .arg(&bin_path)
+        .output();
+
+    match compile {
+        Ok(out) if !out.status.success() => RuntimeOutput {
+            language: "C11 (clang)",
+            ok: false,
+            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        },
+        Err(e) => RuntimeOutput {
+            language: "C11 (clang)",
+            ok: false,
+            stdout: String::new(),
+            stderr: format!("failed to invoke clang: {}", e),
+            duration_ms: start.elapsed().as_millis(),
+        },
+        Ok(_) => match Command::new(&bin_path).output() {
+            Ok(run_out) => RuntimeOutput {
+                language: "C11 (clang)",
+                ok: run_out.status.success(),
+                stdout: String::from_utf8_lossy(&run_out.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&run_out.stderr).to_string(),
+                duration_ms: start.elapsed().as_millis(),
+            },
+            Err(e) => RuntimeOutput {
+                language: "C11 (clang)",
                 ok: false,
                 stdout: String::new(),
                 stderr: e.to_string(),

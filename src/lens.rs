@@ -3,6 +3,7 @@ use crate::hub::{BinOp, Diagnostic, Expr, HubModule};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpokeId {
     Rust,
+    C,
     Cpp,
     Swift,
     Java,
@@ -14,8 +15,9 @@ pub enum SpokeId {
 }
 
 impl SpokeId {
-    pub const ALL: [SpokeId; 9] = [
+    pub const ALL: [SpokeId; 10] = [
         SpokeId::Rust,
+        SpokeId::C,
         SpokeId::Cpp,
         SpokeId::Swift,
         SpokeId::Java,
@@ -29,6 +31,7 @@ impl SpokeId {
     pub fn as_str(&self) -> &'static str {
         match self {
             SpokeId::Rust => "rust",
+            SpokeId::C => "c",
             SpokeId::Cpp => "cpp",
             SpokeId::Swift => "swift",
             SpokeId::Java => "java",
@@ -43,6 +46,7 @@ impl SpokeId {
     pub fn display_name(&self) -> &'static str {
         match self {
             SpokeId::Rust => "Rust",
+            SpokeId::C => "C11",
             SpokeId::Cpp => "C++",
             SpokeId::Swift => "Swift",
             SpokeId::Java => "Java",
@@ -57,6 +61,7 @@ impl SpokeId {
     pub fn extension(&self) -> &'static str {
         match self {
             SpokeId::Rust => "rs",
+            SpokeId::C => "c",
             SpokeId::Cpp => "cpp",
             SpokeId::Swift => "swift",
             SpokeId::Java => "java",
@@ -73,6 +78,7 @@ impl SpokeId {
     pub fn meta_prefix(&self) -> Option<&'static str> {
         match self {
             SpokeId::Rust => Some("rust."),
+            SpokeId::C => Some("c."),
             SpokeId::Cpp => Some("cpp."),
             SpokeId::Swift => Some("swift."),
             SpokeId::Java => Some("java."),
@@ -87,6 +93,7 @@ impl SpokeId {
     pub fn from_name_or_ext(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "rust" | "rs" | ".rs" => Some(SpokeId::Rust),
+            "c" | "c11" | ".c" => Some(SpokeId::C),
             "cpp" | "c++" | "cxx" | "cc" | ".cpp" | ".cc" | ".cxx" => Some(SpokeId::Cpp),
             "swift" | ".swift" => Some(SpokeId::Swift),
             "java" | ".java" => Some(SpokeId::Java),

@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::hub::{
-    normalize_module, EnumDecl, Field, FnDecl, HubModule, Item, Metadata, NodeId, Param, Stmt,
-    StructDecl, TestDecl, Type,
+    normalize_module, EnumDecl, Expr, Field, FnDecl, HubModule, Item, Metadata, NodeId, Param,
+    Stmt, StructDecl, TestDecl, Type,
 };
 use crate::lens::SpokeId;
 
@@ -441,7 +441,13 @@ fn reconcile_stmts(
                 };
                 *id = claim_id(pid, next_id, used);
             }
-            Stmt::Let { id, ty, meta, .. } => {
+            Stmt::Let {
+                id,
+                ty,
+                value,
+                meta,
+                ..
+            } => {
                 if let Some(Stmt::Let {
                     id: pid,
                     ty: pty,
@@ -455,6 +461,11 @@ fn reconcile_stmts(
                         if pty.is_some() {
                             *ty = pty.clone();
                         }
+                    } else if edited_spoke == SpokeId::C
+                        && pty.is_none()
+                        && !matches!(value, Expr::List(items) if items.is_empty())
+                    {
+                        *ty = None;
                     }
                 } else {
                     *id = claim_id(None, next_id, used);
