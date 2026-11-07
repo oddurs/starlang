@@ -7,6 +7,7 @@ use crate::autodiff::{AutoDiffReport, NumericalStabilityReport};
 use crate::complexity::ComplexityReport;
 use crate::concolic::{ConcolicReport, SecurityFlowReport};
 use crate::debugger::TimeTravelReport;
+use crate::dist_actor::{ActorConcurrencyReport, ModelCheckReport};
 use crate::egraph::{EGraphReport, PartialEvalReport};
 use crate::engine::{StarEngine, SyncSnapshot};
 use crate::hub::Diagnostic;
@@ -34,7 +35,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v2.0 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc, Escape Analysis, Superscalar OoO CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff & Lipschitz Numerical Stability Studio running at:");
+    println!("StarLang v2.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc, Escape Analysis, Superscalar OoO CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier & TLA+ Bounded Model Checker Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -569,6 +570,22 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.numerical_stability()
             };
             let payload = stability_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/actors") | ("GET", "/api/actors") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.actors()
+            };
+            let payload = actors_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/modelcheck") | ("GET", "/api/modelcheck") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.model_check()
+            };
+            let payload = modelcheck_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -2174,6 +2191,115 @@ fn stability_to_json(rep: &NumericalStabilityReport) -> String {
         rep.max_condition_number,
         rep.max_lipschitz_constant,
         rep.well_conditioned_functions,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn actors_to_json(rep: &ActorConcurrencyReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let evs: Vec<String> = f
+                .events
+                .iter()
+                .map(|e| {
+                    let vc_s: Vec<String> = e.vector_clock.iter().map(|n| n.to_string()).collect();
+                    format!(
+                        "{{\"event_id\":{},\"actor_name\":{},\"op_kind\":{},\"variable\":{},\"vector_clock\":[{}],\"happens_before_note\":{}}}",
+                        e.event_id,
+                        json_str(&e.actor_name),
+                        json_str(&e.op_kind),
+                        json_str(&e.variable),
+                        vc_s.join(","),
+                        json_str(&e.happens_before_note)
+                    )
+                })
+                .collect();
+            let spk: Vec<String> = f
+                .actor_by_spoke
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"actor_stages\":{},\"channel_capacity\":{},\"vector_clock_events\":{},\"concurrent_races_detected\":{},\"wait_for_cycles\":{},\"data_race_free\":{},\"deadlock_free\":{},\"topology_kind\":{},\"events\":[{}],\"actor_by_spoke\":{{{}}}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.actor_stages,
+                f.channel_capacity,
+                f.vector_clock_events,
+                f.concurrent_races_detected,
+                f.wait_for_cycles,
+                f.data_race_free,
+                f.deadlock_free,
+                json_str(&f.topology_kind),
+                evs.join(","),
+                spk.join(",")
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_actor_stages\":{},\"total_vc_events\":{},\"total_races_detected\":{},\"total_wait_for_cycles\":{},\"all_data_race_free\":{},\"all_deadlock_free\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_actor_stages,
+        rep.total_vc_events,
+        rep.total_races_detected,
+        rep.total_wait_for_cycles,
+        rep.all_data_race_free,
+        rep.all_deadlock_free,
+        rep.elapsed_ms,
+        fns_json.join(",")
+    )
+}
+
+fn modelcheck_to_json(rep: &ModelCheckReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let svs: Vec<String> = f.state_variables.iter().map(|s| json_str(s)).collect();
+            let props: Vec<String> = f
+                .properties
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{{\"property_id\":{},\"fn_name\":{},\"kind\":{},\"formula\":{},\"verified\":{},\"states_checked\":{},\"proof_or_counterexample\":{}}}",
+                        p.property_id,
+                        json_str(&p.fn_name),
+                        json_str(&p.kind),
+                        json_str(&p.formula),
+                        p.verified,
+                        p.states_checked,
+                        json_str(&p.proof_or_counterexample)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"fn_name\":{},\"signature\":{},\"reachable_states\":{},\"transitions_explored\":{},\"max_bfs_depth\":{},\"state_variables\":[{}],\"all_properties_verified\":{},\"properties\":[{}],\"tla_plus_spec\":{},\"mermaid_kripke\":{}}}",
+                json_str(&f.fn_name),
+                json_str(&f.signature),
+                f.reachable_states,
+                f.transitions_explored,
+                f.max_bfs_depth,
+                svs.join(","),
+                f.all_properties_verified,
+                props.join(","),
+                json_str(&f.tla_plus_spec),
+                json_str(&f.mermaid_kripke)
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"total_reachable_states\":{},\"total_transitions\":{},\"total_properties\":{},\"verified_properties\":{},\"all_verified\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.total_functions,
+        rep.total_reachable_states,
+        rep.total_transitions,
+        rep.total_properties,
+        rep.verified_properties,
+        rep.all_verified,
         rep.elapsed_ms,
         fns_json.join(",")
     )

@@ -8,6 +8,10 @@ use crate::concolic::{
     analyze_security_flow, explore_concolic_paths, ConcolicReport, SecurityFlowReport,
 };
 use crate::debugger::{record_time_travel_default, TimeTravelReport};
+use crate::dist_actor::{
+    analyze_concurrency_and_actors, model_check_state_space, ActorConcurrencyReport,
+    ModelCheckReport,
+};
 use crate::egraph::{
     partial_eval_module, superoptimize_egraph, EGraphReport, PartialEvalReport,
 };
@@ -326,6 +330,18 @@ impl StarEngine {
     /// Truncating Division Quantization & 64-Bit Overflow Risk Audit.
     pub fn numerical_stability(&self) -> NumericalStabilityReport {
         audit_numerical_stability(self.hub())
+    }
+
+    /// Run Lamport Vector-Clock Happens-Before (`->`) Data-Race Freedom (DRF) Analysis,
+    /// Wait-For Graph Deadlock Prover & 13-Spoke Actor / Channel Lowering Synthesizer.
+    pub fn actors(&self) -> ActorConcurrencyReport {
+        analyze_concurrency_and_actors(self.hub())
+    }
+
+    /// Run Explicit-State Bounded Model Checking (Kripke Structure M = (S, S0, R, L)),
+    /// Temporal Safety (`□I`), Liveness (`□◇Terminated`), Herlihy-Wing Linearizability & TLA+ Spec Synthesis.
+    pub fn model_check(&self) -> ModelCheckReport {
+        model_check_state_space(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.

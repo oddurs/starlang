@@ -1688,6 +1688,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(stab_resp.contains("\"max_condition_number\":"));
     assert!(stab_resp.contains("\"hardened_by_spoke\":{"));
 
+    // Verify /api/actors and /api/modelcheck endpoints
+    let act_resp = send_http("POST", "/api/actors", "{}");
+    assert!(act_resp.contains("\"ok\":true"), "actors failed: {}", act_resp);
+    assert!(act_resp.contains("\"all_data_race_free\":true"));
+    assert!(act_resp.contains("\"actor_by_spoke\":{"));
+
+    let mc_resp = send_http("POST", "/api/modelcheck", "{}");
+    assert!(mc_resp.contains("\"ok\":true"), "modelcheck failed: {}", mc_resp);
+    assert!(mc_resp.contains("\"all_verified\":true"));
+    assert!(mc_resp.contains("\"tla_plus_spec\":"));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -1999,4 +2010,62 @@ def main() -> None:
     for f in &stab.functions {
         assert_eq!(f.hardened_by_spoke.len(), 13);
     }
+}
+
+#[test]
+fn lamport_vector_clock_actor_verifier_and_tlaplus_bounded_model_checker_verify_across_thirteen_languages() {
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+
+    // 1. Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor Lowering
+    let act = rl_eng.actors();
+    assert_eq!(act.total_functions, 2);
+    assert!(act.total_actor_stages >= 5);
+    assert!(act.total_vc_events >= 10);
+    assert_eq!(act.total_races_detected, 0);
+    assert_eq!(act.total_wait_for_cycles, 0);
+    assert!(act.all_data_race_free);
+    assert!(act.all_deadlock_free);
+
+    for f in &act.functions {
+        assert!(f.data_race_free);
+        assert!(f.deadlock_free);
+        assert_eq!(f.actor_by_spoke.len(), 13);
+        assert!(f.actor_by_spoke["rust"].contains("sync_channel"));
+        assert!(f.actor_by_spoke["swift"].contains("actor "));
+        assert!(f.actor_by_spoke["go"].contains("make(chan"));
+        assert!(f.actor_by_spoke["ruby"].contains("Ractor.new"));
+        // Verify strict monotonic progression of Lamport Vector Clocks along causal chain
+        for w in f.events.windows(2) {
+            let vc_prev = &w[0].vector_clock;
+            let vc_next = &w[1].vector_clock;
+            assert!(
+                vc_prev.iter().zip(vc_next.iter()).all(|(a, b)| a <= b)
+                    && vc_prev.iter().zip(vc_next.iter()).any(|(a, b)| a < b),
+                "Expected strict happens-before VC {:?} < {:?} in {}",
+                vc_prev,
+                vc_next,
+                f.fn_name
+            );
+        }
+    }
+
+    // 2. Explicit-State Bounded Model Checker (Kripke Structure) & TLA+ Specification Synthesizer
+    let mc = rl_eng.model_check();
+    assert_eq!(mc.total_functions, 2);
+    assert!(mc.total_reachable_states >= 20);
+    assert!(mc.total_transitions >= 40);
+    assert_eq!(mc.total_properties, 6);
+    assert_eq!(mc.verified_properties, 6);
+    assert!(mc.all_verified);
+
+    let eval_mc = mc
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "evaluate_quota")
+        .unwrap();
+    assert!(eval_mc.tla_plus_spec.contains("---- MODULE evaluate_quota_TLA ----"));
+    assert!(eval_mc.tla_plus_spec.contains("SafetyInvariant =="));
+    assert!(eval_mc.tla_plus_spec.contains("Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)"));
+    assert!(eval_mc.mermaid_kripke.contains("stateDiagram-v2"));
 }

@@ -2,6 +2,7 @@ pub mod autodiff;
 pub mod complexity;
 pub mod concolic;
 pub mod debugger;
+pub mod dist_actor;
 pub mod egraph;
 pub mod engine;
 pub mod eval;
