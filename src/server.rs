@@ -3,6 +3,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::complexity::ComplexityReport;
 use crate::debugger::TimeTravelReport;
 use crate::engine::{StarEngine, SyncSnapshot};
 use crate::hub::Diagnostic;
@@ -10,6 +11,7 @@ use crate::json::{json_str, parse_flat_json_object};
 use crate::lens::SpokeId;
 use crate::merge::{MergeReport, SemanticDiffReport};
 use crate::mutate::MutationReport;
+use crate::quickcheck::QuickCheckReport;
 use crate::runner::run_all_spokes;
 use crate::samples::{find_sample, SAMPLES};
 use crate::trace::TraceReport;
@@ -23,9 +25,9 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v1.0 — 13-Spoke Bidirectional Compiler, WebAssembly & Time-Travel Studio running at:");
+    println!("StarLang v1.1 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O & QuickCheck Studio running at:");
     println!("  -> http://{}", addr);
-    println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
+    println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
     serve_listener(listener)
 }
@@ -359,6 +361,26 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                 eng.time_travel(slice_target)
             };
             let payload = time_travel_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/complexity") | ("GET", "/api/complexity") => {
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.complexity()
+            };
+            let payload = complexity_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
+        }
+        ("POST", "/api/quickcheck") => {
+            let parsed = parse_flat_json_object(&body).unwrap_or_default();
+            let trials = parsed
+                .get("trials")
+                .and_then(|s| s.parse::<usize>().ok());
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.quickcheck(trials)
+            };
+            let payload = quickcheck_to_json(&rep);
             send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
@@ -783,6 +805,129 @@ fn time_travel_to_json(rep: &TimeTravelReport) -> String {
         json_str(&rep.final_stdout),
         steps_json.join(","),
         slice_json
+    )
+}
+
+fn complexity_to_json(rep: &ComplexityReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let pts: Vec<String> = f
+                .scaling_points
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{{\"n\":{},\"steps\":{},\"compute_gas\":{},\"memory_gas\":{},\"alloc_gas\":{},\"branch_gas\":{},\"total_gas\":{}}}",
+                        p.n,
+                        p.steps,
+                        p.compute_gas,
+                        p.memory_gas,
+                        p.alloc_gas,
+                        p.branch_gas,
+                        p.total_gas
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"name\":{},\"signature\":{},\"cyclomatic_complexity\":{},\"max_loop_depth\":{},\"is_recursive\":{},\"heap_alloc_sites\":{},\"static_big_o\":{},\"empirical_big_o\":{},\"growth_ratio\":{:.2},\"scaling_points\":[{}]}}",
+                json_str(&f.name),
+                json_str(&f.signature),
+                f.cyclomatic_complexity,
+                f.max_loop_depth,
+                f.is_recursive,
+                f.heap_alloc_sites,
+                json_str(&f.static_big_o),
+                json_str(&f.empirical_big_o),
+                f.growth_ratio,
+                pts.join(",")
+            )
+        })
+        .collect();
+
+    let spokes_json: Vec<String> = rep
+        .spoke_metrics
+        .iter()
+        .map(|m| {
+            format!(
+                "{{\"spoke\":{},\"display_name\":{},\"total_lines\":{},\"logic_lines\":{},\"bytes\":{},\"tokens\":{}}}",
+                json_str(&m.spoke),
+                json_str(&m.display_name),
+                m.total_lines,
+                m.logic_lines,
+                m.bytes,
+                m.tokens
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"total_functions\":{},\"max_cyclomatic\":{},\"max_loop_depth\":{},\"dominant_big_o\":{},\"wasm_bytes\":{},\"module_gas\":{{\"total_steps\":{},\"compute_gas\":{},\"memory_gas\":{},\"alloc_gas\":{},\"branch_gas\":{},\"total_gas\":{}}},\"functions\":[{}],\"spoke_metrics\":[{}]}}",
+        rep.total_functions,
+        rep.max_cyclomatic,
+        rep.max_loop_depth,
+        json_str(&rep.dominant_big_o),
+        rep.wasm_bytes,
+        rep.module_gas.total_steps,
+        rep.module_gas.compute_gas,
+        rep.module_gas.memory_gas,
+        rep.module_gas.alloc_gas,
+        rep.module_gas.branch_gas,
+        rep.module_gas.total_gas,
+        fns_json.join(","),
+        spokes_json.join(",")
+    )
+}
+
+fn quickcheck_to_json(rep: &QuickCheckReport) -> String {
+    let fns_json: Vec<String> = rep
+        .functions
+        .iter()
+        .map(|f| {
+            let invs: Vec<String> = f.discovered_invariants.iter().map(|i| json_str(i)).collect();
+            let ce_json = if let Some(ce) = &f.counterexample {
+                let repros: Vec<String> = ce
+                    .repro_by_spoke
+                    .iter()
+                    .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                    .collect();
+                format!(
+                    "{{\"fn_name\":{},\"original_args\":{},\"minimized_args\":{},\"shrink_steps\":{},\"fault\":{},\"repro_by_spoke\":{{{}}}}}",
+                    json_str(&ce.fn_name),
+                    json_str(&ce.original_args),
+                    json_str(&ce.minimized_args),
+                    ce.shrink_steps,
+                    json_str(&ce.fault),
+                    repros.join(",")
+                )
+            } else {
+                "null".to_string()
+            };
+            format!(
+                "{{\"name\":{},\"signature\":{},\"trials_run\":{},\"passed_trials\":{},\"contract_safe\":{},\"optimizer_equivalent\":{},\"deterministic\":{},\"discovered_invariants\":[{}],\"counterexample\":{}}}",
+                json_str(&f.name),
+                json_str(&f.signature),
+                f.trials_run,
+                f.passed_trials,
+                f.contract_safe,
+                f.optimizer_equivalent,
+                f.deterministic,
+                invs.join(","),
+                ce_json
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"ok\":true,\"all_passed\":{},\"trials_per_fn\":{},\"total_functions\":{},\"total_trials\":{},\"optimizer_checks\":{},\"total_invariants\":{},\"elapsed_ms\":{},\"functions\":[{}]}}",
+        rep.all_passed,
+        rep.trials_per_fn,
+        rep.total_functions,
+        rep.total_trials,
+        rep.optimizer_checks,
+        rep.total_invariants,
+        rep.elapsed_ms,
+        fns_json.join(",")
     )
 }
 

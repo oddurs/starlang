@@ -455,6 +455,111 @@ fn perl_spoke_and_polyglot_time_travel_debugger_sync_and_slice_across_thirteen_l
 }
 
 #[test]
+fn asymptotic_complexity_profiler_and_polyglot_quickcheck_shrinker_verify_and_minimize_across_thirteen_languages()
+{
+    let sample = find_sample("ratelimit").unwrap();
+    let engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+
+    // 1. Asymptotic Big-O, Cyclomatic Complexity, Gas & 13-Spoke Code Density
+    let crep = engine.complexity();
+    assert_eq!(crep.dominant_big_o, "O(N)");
+    assert!(crep.max_cyclomatic >= 4);
+    assert_eq!(crep.max_loop_depth, 1);
+    assert!(crep.module_gas.total_gas > 50);
+    assert!(crep.wasm_bytes > 500);
+    assert_eq!(crep.spoke_metrics.len(), 13);
+
+    let eff_fn = crep
+        .functions
+        .iter()
+        .find(|f| f.name == "effective_capacity")
+        .unwrap();
+    assert_eq!(eff_fn.static_big_o, "O(1)");
+    assert_eq!(eff_fn.empirical_big_o, "O(1)");
+
+    let quota_fn = crep
+        .functions
+        .iter()
+        .find(|f| f.name == "evaluate_quota")
+        .unwrap();
+    assert_eq!(quota_fn.static_big_o, "O(N)");
+    assert_eq!(quota_fn.empirical_big_o, "O(N)");
+    assert_eq!(quota_fn.scaling_points.len(), 5);
+    assert!(
+        quota_fn.growth_ratio >= 1.6 && quota_fn.growth_ratio <= 2.3,
+        "Expected ~2.0x linear gas scaling for evaluate_quota, got {}",
+        quota_fn.growth_ratio
+    );
+
+    // 2. Property-based QuickCheck & Algebraic Conservation Law Discovery
+    let qrep = engine.quickcheck(Some(40));
+    assert!(qrep.all_passed, "{:?}", qrep);
+    assert!(qrep.total_trials >= 80);
+    assert!(qrep.optimizer_checks >= 80);
+    let quota_qc = qrep
+        .functions
+        .iter()
+        .find(|f| f.name == "evaluate_quota")
+        .unwrap();
+    assert!(
+        quota_qc
+            .discovered_invariants
+            .iter()
+            .any(|i| i.contains("Conservation Law: result.accepted + result.rejected == len(costs)")),
+        "Expected conservation law invariant on evaluate_quota, got {:?}",
+        quota_qc.discovered_invariants
+    );
+
+    // 3. Inject an assertion fault in Perl and verify multi-pass Delta-Debugging shrinking across 13 languages
+    let buggy_pl = engine.project(SpokeId::Perl).replace(
+        "my $cost = $costs->[$i];",
+        "my $cost = $costs->[$i];\n        star_assert($cost < 50);",
+    );
+    let buggy_eng = StarEngine::from_source(SpokeId::Perl, &buggy_pl).unwrap();
+    let bloated_args = vec![
+        starlang::eval::Value::List(vec![
+            starlang::eval::Value::Int(10),
+            starlang::eval::Value::Int(20),
+            starlang::eval::Value::Int(88),
+            starlang::eval::Value::Int(15),
+            starlang::eval::Value::Int(99),
+        ]),
+        starlang::eval::Value::Int(120),
+        starlang::eval::Value::EnumVariant {
+            enum_name: "TierPolicy".to_string(),
+            variant: "Burst".to_string(),
+        },
+    ];
+    let shrunk =
+        starlang::quickcheck::shrink_failing_call(buggy_eng.hub(), "evaluate_quota", &bloated_args)
+            .expect("Expected shrink_failing_call to reproduce & minimize fault");
+    assert!(
+        shrunk.shrink_steps >= 3,
+        "Expected >= 3 shrink steps, got {:?}",
+        shrunk
+    );
+    // 5-element list [10, 20, 88, 15, 99] should shrink to a single failing element [50] and capacity 0!
+    assert!(
+        shrunk.minimized_args.starts_with("([50], 0,"),
+        "Expected minimal counterexample ([50], 0, ...), got {}",
+        shrunk.minimized_args
+    );
+    for spoke in SpokeId::ALL {
+        let code = shrunk
+            .repro_by_spoke
+            .get(spoke.as_str())
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            code.contains("evaluate_quota"),
+            "Missing repro call for {:?}: {:?}",
+            spoke,
+            shrunk.repro_by_spoke
+        );
+    }
+}
+
+#[test]
 fn lua_spoke_and_zero_dep_wasm_backend_compile_sync_and_execute_in_v8_jit() {
     // 1. Seed from `backoff` (LuaJIT + LuaCATS preset) and verify symbolic safety obligations
     let sample = find_sample("backoff").unwrap();
@@ -1079,6 +1184,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(dbg_resp.contains("\"trace_ok\":true"), "debug trace failed: {}", dbg_resp);
     assert!(dbg_resp.contains("\"spoke_lines\":{"), "debug missing spoke_lines: {}", dbg_resp);
     assert!(dbg_resp.contains("\"slice\":{"), "debug missing slice: {}", dbg_resp);
+
+    // Verify /api/complexity and /api/quickcheck endpoints
+    let comp_resp = send_http("POST", "/api/complexity", "{}");
+    assert!(comp_resp.contains("\"ok\":true"), "complexity failed: {}", comp_resp);
+    assert!(comp_resp.contains("\"dominant_big_o\":"));
+    assert!(comp_resp.contains("\"spoke_metrics\":["));
+
+    let qc_resp = send_http("POST", "/api/quickcheck", "{\"trials\":\"16\"}");
+    assert!(qc_resp.contains("\"ok\":true"), "quickcheck failed: {}", qc_resp);
+    assert!(qc_resp.contains("\"all_passed\":true"), "quickcheck failed: {}", qc_resp);
+    assert!(qc_resp.contains("\"discovered_invariants\":["));
 
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");

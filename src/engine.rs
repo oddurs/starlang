@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
+use crate::complexity::{analyze_complexity, ComplexityReport};
 use crate::debugger::{record_time_travel_default, TimeTravelReport};
 use crate::eval::{eval_module, eval_tests_default, EvalResult, TestResult};
 use crate::hub::{Diagnostic, HubModule};
 use crate::lens::SpokeId;
 use crate::merge::{diff_modules, merge_concurrent_edits, MergeReport, SemanticDiffReport};
 use crate::mutate::{harden_tests, mutate_module, HardenReport, MutationReport};
+use crate::quickcheck::{run_quickcheck, run_quickcheck_default, QuickCheckReport};
 use crate::refactor::{list_symbols, optimize_module, rename_symbol, SymbolEntry};
 use crate::spokes::lens_for;
 use crate::trace::{trace_module_default, TraceReport};
@@ -121,6 +123,17 @@ impl StarEngine {
 
     pub fn time_travel(&self, slice_target: Option<&str>) -> TimeTravelReport {
         record_time_travel_default(self.hub(), slice_target)
+    }
+
+    pub fn complexity(&self) -> ComplexityReport {
+        analyze_complexity(self.hub())
+    }
+
+    pub fn quickcheck(&self, trials_per_fn: Option<usize>) -> QuickCheckReport {
+        match trials_per_fn {
+            Some(n) => run_quickcheck(self.hub(), n, 0x57A4_2026_1100),
+            None => run_quickcheck_default(self.hub()),
+        }
     }
 
     /// Compute the pure semantic Hub AST delta between the current Hub and `source` in `spoke`.
