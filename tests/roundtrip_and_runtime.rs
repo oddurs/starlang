@@ -1721,6 +1721,17 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(prob_resp.contains("\"mutual_information_bits\":"));
     assert!(prob_resp.contains("\"posterior_histogram\":["));
 
+    // Verify /api/quantum and /api/automata endpoints
+    let q_resp = send_http("POST", "/api/quantum", "{}");
+    assert!(q_resp.contains("\"ok\":true"), "quantum failed: {}", q_resp);
+    assert!(q_resp.contains("\"all_ancillas_uncomputed\":true"));
+    assert!(q_resp.contains("OPENQASM 3.0;"));
+
+    let dfa_resp = send_http("POST", "/api/automata", "{}");
+    assert!(dfa_resp.contains("\"ok\":true"), "automata failed: {}", dfa_resp);
+    assert!(dfa_resp.contains("\"all_myhill_nerode_minimal\":true"));
+    assert!(dfa_resp.contains("\"fsm_by_spoke\":{"));
+
     // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
@@ -2201,5 +2212,63 @@ fn liquid_refinement_types_and_probabilistic_mcmc_shannon_entropy_verify_across_
         );
         assert!(!f.posterior_histogram.is_empty());
         assert!(f.mermaid_factor_graph.contains("flowchart LR"));
+    }
+}
+
+#[test]
+fn reversible_quantum_circuit_compiler_and_angluin_minimal_dfa_synthesizer_verify_across_thirteen_languages() {
+    let rl_sample = find_sample("ratelimit").unwrap();
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source).unwrap();
+
+    // 1. Reversible Bennett-Toffoli Quantum Circuit Compiler (F -> Copy -> F†) & OpenQASM 3.0
+    let q = rl_eng.quantum_circuit();
+    assert_eq!(q.total_functions, 2);
+    assert!(q.total_qubits_allocated >= 40);
+    assert!(q.total_reversible_gates >= 10);
+    assert!(q.total_toffoli_gates >= 2);
+    assert!(q.total_clifford_t_gates >= 14);
+    assert!(q.all_ancillas_uncomputed);
+    assert!(q.max_grover_speedup >= 10.0);
+
+    for f in &q.functions {
+        assert!(f.ancilla_uncomputed_clean);
+        assert!(f.uncompute_gates >= 1);
+        assert_eq!(f.total_qubits, f.logical_qubits + f.ancilla_qubits);
+        assert!(f.openqasm3_source.contains("OPENQASM 3.0;"));
+        assert!(f.openqasm3_source.contains("include \"stdgates.inc\";"));
+        assert!(f.mermaid_circuit.contains("flowchart LR"));
+        // Verify Bennett uncomputation symmetry: every AncillaScratch register is restored to |0⟩
+        for r in &f.registers {
+            if r.role == "AncillaScratch" {
+                assert!(
+                    r.final_state.contains("uncomputed via F†"),
+                    "Ancilla register {} not uncomputed: {}",
+                    r.name,
+                    r.final_state
+                );
+            }
+        }
+    }
+
+    // 2. Angluin L* Active Learner & Myhill-Nerode Minimal DFA Synthesizer across 13 spokes
+    let dfa = rl_eng.minimal_dfa();
+    assert_eq!(dfa.total_functions, 2);
+    assert!(dfa.total_unminimized_states > dfa.total_minimal_states);
+    assert_eq!(dfa.total_minimal_states, 8);
+    assert!(dfa.total_lstar_queries >= 48);
+    assert!(dfa.all_myhill_nerode_minimal);
+    assert!(dfa.overall_branchless_speedup >= 2.4);
+
+    for f in &dfa.functions {
+        assert_eq!(f.minimal_states, 4);
+        assert_eq!(f.myhill_nerode_classes, 4);
+        assert!(f.distinguishability_witnesses.len() >= 4);
+        assert!(f.synthesized_regex.contains("σ_Valid"));
+        assert_eq!(f.fsm_by_spoke.len(), 13);
+        assert!(f.fsm_by_spoke["rust"].contains("DFA_DELTA_"));
+        assert!(f.fsm_by_spoke["zig"].contains("[4][4]u8"));
+        assert!(f.fsm_by_spoke["c"].contains("static const uint8_t DFA_DELTA_"));
+        assert!(f.fsm_by_spoke["typescript"].contains("new Uint8Array("));
+        assert!(f.mermaid_dfa.contains("stateDiagram-v2"));
     }
 }

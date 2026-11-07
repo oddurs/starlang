@@ -249,6 +249,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "quantum" => {
+            if let Err(e) = run_quantum_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        "automata" => {
+            if let Err(e) = run_automata_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -2859,6 +2871,158 @@ fn run_prob_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_quantum_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.quantum_circuit();
+    println!(
+        "=== Reversible Bennett-Toffoli Quantum Circuit Compiler, Uncomputation Verifier & OpenQASM 3.0 Synthesizer: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Qubits Allocated: {} | Reversible Gates: {} | Toffoli: {} | Clifford+T: {} | Garbage-Free Uncomputed: {} | Max Grover Speedup: {:.2}x ({}ms)\n",
+        rep.total_functions,
+        rep.total_qubits_allocated,
+        rep.total_reversible_gates,
+        rep.total_toffoli_gates,
+        rep.total_clifford_t_gates,
+        rep.all_ancillas_uncomputed,
+        rep.max_grover_speedup,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [Qubits: {} ({} logical + {} ancilla) | Gates: {} (F={}, F†={}) | T-count: {} | Grover: {:.2}x ({} iters)]",
+            f.signature,
+            f.total_qubits,
+            f.logical_qubits,
+            f.ancilla_qubits,
+            f.total_gates,
+            f.forward_gates,
+            f.uncompute_gates,
+            f.clifford_t_count,
+            f.grover_quadratic_speedup,
+            f.grover_optimal_iterations
+        );
+        for g in f.gates.iter().take(8) {
+            println!(
+                "  • [Step #{:<2} · {:<22}] {:<28} ctrl={} -> tgt={} (T={}) — {}",
+                g.step_idx,
+                g.stage,
+                g.gate_op,
+                g.control_qubits,
+                g.target_qubits,
+                g.t_gate_cost,
+                g.source_note
+            );
+        }
+        println!("  --- Synthesized OpenQASM 3.0 Source ---\n{}\n", f.openqasm3_source);
+    }
+
+    if !rep.all_ancillas_uncomputed {
+        return Err("one or more ancilla registers were not cleanly uncomputed".to_string());
+    }
+    Ok(())
+}
+
+fn run_automata_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    for a in args {
+        if !a.starts_with('-') && file_or_preset.is_none() {
+            file_or_preset = Some(a.as_str());
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.minimal_dfa();
+    println!(
+        "=== Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Table Vectorizer: {} ===",
+        label
+    );
+    println!(
+        "Functions: {} | Unminimized States: {} -> Minimal States: {} | L* Queries: {} | Branchless Speedup: {:.2}x ({}ms)\n",
+        rep.total_functions,
+        rep.total_unminimized_states,
+        rep.total_minimal_states,
+        rep.total_lstar_queries,
+        rep.overall_branchless_speedup,
+        rep.elapsed_ms
+    );
+
+    for f in &rep.functions {
+        println!(
+            "Function: {} [States: {} -> {} | L* Queries: {} | Branchless Speedup: {:.2}x]",
+            f.signature,
+            f.unminimized_states,
+            f.minimal_states,
+            f.observation_table_queries,
+            f.branchless_speedup
+        );
+        println!("  Kleene Regex: {}", f.synthesized_regex);
+        for w in &f.distinguishability_witnesses {
+            println!(
+                "  • {} ≢ {} via suffix e='{}': {} vs. {}",
+                w.state_a, w.state_b, w.distinguishing_suffix, w.outcome_a, w.outcome_b
+            );
+        }
+        println!();
+    }
+
+    if !rep.all_myhill_nerode_minimal {
+        return Err("minimal DFA synthesizer failed".to_string());
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -3063,13 +3227,15 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v2.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Circuit Prover, Relational SQL Optimizer, Liquid Refinement Types & Probabilistic MCMC/Entropy Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64 / Circom / SQL)
+        "starlang v2.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Circuit Prover, Relational SQL Optimizer, Liquid Refinement Types, Probabilistic MCMC/Entropy, Reversible Quantum Circuit Compiler & Minimal DFA Synthesizer Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm / AArch64 / x86_64 / Circom / SQL / OpenQASM 3)
 
 USAGE:
   cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
   cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
   cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- quantum [file|preset]                Compile Reversible Bennett-Toffoli Quantum Circuits (F->Copy->F†) & OpenQASM 3.0
+  cargo run -- automata [file|preset]               Run Angluin L* Active Learner, Myhill-Nerode Minimal DFA & 13-Spoke Lookup Tables
   cargo run -- refinement [file|preset]             Infer Liquid Refinement Types ({{ ν: T | φ(ν) }}), solve CHCs & emit 13-Spoke Refined Types
   cargo run -- prob [file|preset]                   Run Metropolis-Hastings MCMC sampler & compute Shannon Entropy H(X)/H(Y) & Mutual Info I(X;Y)
   cargo run -- zk [file|preset]                     Run Rank-1 Constraint System (R1CS) ZK Circuit Compiler, Witness Verifier & Circom Synth
@@ -3266,6 +3432,8 @@ fn run_cli_demo() -> Result<(), String> {
     let sql_rep = repair_eng.relational_sql();
     let ref_rep = repair_eng.liquid_refinements();
     let prob_rep = repair_eng.probabilistic_entropy();
+    let q_rep = repair_eng.quantum_circuit();
+    let dfa_rep = repair_eng.minimal_dfa();
     println!(
         "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}",
         drep.total_steps,
@@ -3274,7 +3442,7 @@ fn run_cli_demo() -> Result<(), String> {
         drep.final_stdout.trim()
     );
     println!(
-        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2} | Actors: {} stages, {} VC events, DRF={} | TLA+ BMC: {} states, {}/{} temporal properties | ZK R1CS: {} wires, {}/{} constraints SAT | Relational SQL: {} pushdown(s), {:.2}x columnar speedup | Liquid Types: {} bindings, {}/{} CHCs | Probabilistic QIF: {} MCMC samples, max I(X;Y)={:.2}b\n",
+        "Dominant Big-O: {} (Max Cyclomatic: {}, Gas: {}) | QuickCheck: {}/{} trials passed ({} algebraic invariants) | CEGIS Auto-Repair: {} ({} candidates) | PBE Synth: {} ({} pruned) | CFG: {} blocks, {} loop(s) | SSA: {} φ-nodes, {} defs | Hoare WP: {}/{} VCs proven | Concolic: {} paths ({}% branch cov) | Security Taint: {}/{} sinks guarded | E-Graph: {} classes, {} gas saved | Partial Eval: {} specialized call(s), steps {}->{} | Polyhedral SIMD: {}/{} vectorizable ({:.2}x SIMD4) | Termination/WCET: {}/{} loops proven, WCET(64)={}c | RegAlloc(K=8): {} vregs, {} spills, {} ARM64 / {} x86_64 insts | Escape/SROA: {}B saved/run ({}% heap elision) | Superscalar OoO Sim: {} μops, IPC {:.2}, {:.1}% branch acc, {:.1}% L1D hit | List Scheduler: {}c->{}c (-{} stall bubbles) | AutoDiff: {}/{} partials verified, `{}` | Stability: max κ={:.2}, L={:.2} | Actors: {} stages, {} VC events, DRF={} | TLA+ BMC: {} states, {}/{} temporal properties | ZK R1CS: {} wires, {}/{} constraints SAT | Relational SQL: {} pushdown(s), {:.2}x columnar speedup | Liquid Types: {} bindings, {}/{} CHCs | Probabilistic QIF: {} MCMC samples, max I(X;Y)={:.2}b | Quantum: {}q, {} gates, Grover {:.2}x | Minimal DFA: {}->{} states ({:.2}x branchless)\n",
         crep.dominant_big_o,
         crep.max_cyclomatic,
         crep.module_gas.total_gas,
@@ -3339,7 +3507,13 @@ fn run_cli_demo() -> Result<(), String> {
         ref_rep.discharged_horn_clauses,
         ref_rep.total_horn_clauses,
         prob_rep.total_mcmc_samples,
-        prob_rep.max_mutual_info_bits
+        prob_rep.max_mutual_info_bits,
+        q_rep.total_qubits_allocated,
+        q_rep.total_reversible_gates,
+        q_rep.max_grover_speedup,
+        dfa_rep.total_unminimized_states,
+        dfa_rep.total_minimal_states,
+        dfa_rep.overall_branchless_speedup
     );
     if !drep.ok
         || slice_len == 0
@@ -3367,8 +3541,10 @@ fn run_cli_demo() -> Result<(), String> {
         || sql_rep.query_lifted_functions == 0
         || !ref_rep.all_subtypes_verified
         || prob_rep.total_mcmc_samples == 0
+        || !q_rep.all_ancillas_uncomputed
+        || !dfa_rep.all_myhill_nerode_minimal
     {
-        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, Numerical Stability, Actor Concurrency, TLA+ Model Checker, ZK R1CS Prover, Relational SQL Optimizer, Liquid Refinement Prover, or Probabilistic Entropy Analyzer failed".to_string());
+        return Err("Time-travel debugger, QuickCheck, Auto-Repair, PBE Synth, CFG, SSA, Hoare WP, Concolic, Security Taint, E-Graph, Partial Eval, Polyhedral SIMD, Termination/WCET, RegAlloc, Escape Analysis, Superscalar CPU Sim, List Scheduler, AutoDiff, Numerical Stability, Actor Concurrency, TLA+ Model Checker, ZK R1CS Prover, Relational SQL Optimizer, Liquid Refinement Prover, Probabilistic Entropy Analyzer, Quantum Circuit Compiler, or Minimal DFA Synthesizer failed".to_string());
     }
 
     println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");

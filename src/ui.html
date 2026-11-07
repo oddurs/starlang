@@ -334,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer, #zk-drawer, #sql-drawer, #refinement-drawer, #prob-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer, #zk-drawer, #sql-drawer, #refinement-drawer, #prob-drawer, #quantum-drawer, #automata-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -436,14 +436,16 @@
         <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v2.3 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU, AutoDiff, Actors, TLA+, ZK R1CS, Relational SQL, Liquid Refinements & Probabilistic QIF Studio</h1>
-        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64, Circom ZK, SQL & Dependent Types</p>
+        <h1>★ StarLang v2.4 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU, AutoDiff, Actors, TLA+, ZK R1CS, Relational SQL, Liquid Types, MCMC Entropy, Reversible Quantum Circuits & Minimal DFA Studio</h1>
+        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64, Circom ZK, SQL, OpenQASM 3.0 & Minimal DFAs</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="wasm-btn" id="quantum-btn" title="Reversible Bennett-Toffoli Quantum Circuit Compiler (F -> Copy -> F† Uncomputation), Grover Amplitude Amplification Oracle & OpenQASM 3.0 Synthesizer">⚛ Quantum & OpenQASM 3</button>
+      <button class="opt-btn" id="automata-btn" title="Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Branchless Lookup Table Vectorizer">🤖 Minimal DFA & L*</button>
       <button class="verify-btn" id="refinement-btn" title="Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 Export & 13-Spoke Dependent / Branded Type Synthesizer">💎 Liquid Types & CHC</button>
       <button class="trace-btn" id="prob-btn" title="Probabilistic Programming, Metropolis-Hastings MCMC + Importance Sampling, Shannon Entropy H(X)/H(Y) & Mutual-Information QIF Leakage Quantifier">🎲 MCMC & Shannon Entropy</button>
       <button class="wasm-btn" id="zk-btn" title="Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Witness Verifier & Circom 2.0 Synthesizer">🔐 ZK R1CS & Circom</button>
@@ -678,6 +680,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="quantum-drawer">
+    <div class="run-header">
+      <span id="quantum-summary">⚛ Reversible Bennett-Toffoli Quantum Circuit Compiler (F ➔ CNOT Copy ➔ F† Uncomputation), Grover Phase Oracle & OpenQASM 3.0 Synthesizer...</span>
+      <button onclick="document.getElementById('quantum-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="quantum-cards"></div>
+  </section>
+
+  <section id="automata-drawer">
+    <div class="run-header">
+      <span id="automata-summary">🤖 Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Branchless Lookup Table Vectorizer...</span>
+      <button onclick="document.getElementById('automata-drawer').style.display='none'">Close</button>
+    </div>
+    <div class="run-cards" id="automata-cards"></div>
+  </section>
 
   <section id="refinement-drawer">
     <div class="run-header">
@@ -2512,6 +2530,79 @@
           `[Posterior Output Distribution Histogram]\n${hLines}\n\n` +
           `[Branch-Path Posterior Probabilities & Shannon Surprise]\n${bLines}\n\n` +
           `[Mermaid Bayesian Factor Graph]\n${fn.mermaid_factor_graph}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("quantum-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("quantum-drawer");
+      const summary = document.getElementById("quantum-summary");
+      const cards = document.getElementById("quantum-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Compiling Hub functions into Reversible Bennett-Toffoli Quantum Circuits (F ➔ Copy ➔ F† Uncomputation) & OpenQASM 3.0...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/quantum", { method: "POST", body: "{}" });
+      const data = await res.json();
+      const color = data.all_ancillas_uncomputed ? "#34d399" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">⚛ Reversible Quantum Circuit Compiler: ${data.total_qubits_allocated} qubits · ${data.total_reversible_gates} reversible gates (${data.total_toffoli_gates} Toffoli / ${data.total_clifford_t_gates} Clifford+T) · Garbage-Free Uncomputed=${data.all_ancillas_uncomputed} · Max Grover Speedup=${data.max_grover_speedup}x (${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const rLines = (fn.registers || [])
+          .map(r => `  • qreg #${r.reg_id} [${r.role.padEnd(14)}] ${r.name.padEnd(18)} (${r.bit_width}q): ${r.initial_state} ➔ ${r.final_state}`)
+          .join("\n");
+        const gLines = (fn.gates || [])
+          .map(g => `  [Step #${String(g.step_idx).padStart(2)} · ${g.stage.padEnd(22)}] ${g.gate_op.padEnd(28)} ctrl=${g.control_qubits} -> tgt=${g.target_qubits} (T=${g.t_gate_cost})\n    ↳ ${g.source_note}`)
+          .join("\n");
+        card.innerHTML = `<strong>⚛ ${fn.signature} (${fn.total_qubits} qubits · ${fn.total_gates} gates · T-count=${fn.clifford_t_count} · Grover ${fn.grover_quadratic_speedup}x)</strong><pre style="max-height:340px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Logical Qubits: ${fn.logical_qubits} | Ancilla Scratch Qubits: ${fn.ancilla_qubits} (Uncomputed Clean: ${fn.ancilla_uncomputed_clean})\n` +
+          `Forward Gates (F): ${fn.forward_gates} | Uncompute Gates (F†): ${fn.uncompute_gates} | Grover Optimal Iters: ${fn.grover_optimal_iterations}\n\n` +
+          `[Quantum Registers & Bennett Uncomputation Lifecycle]\n${rLines}\n\n` +
+          `[Reversible Bennett-Toffoli Gate Schedule]\n${gLines}\n\n` +
+          `[Synthesized OpenQASM 3.0 Source]\n${fn.openqasm3_source}\n\n` +
+          `[Mermaid Quantum Circuit Pipeline]\n${fn.mermaid_circuit}`;
+        cards.appendChild(card);
+      });
+    });
+
+    document.getElementById("automata-btn").addEventListener("click", async () => {
+      const drawer = document.getElementById("automata-drawer");
+      const summary = document.getElementById("automata-summary");
+      const cards = document.getElementById("automata-cards");
+      drawer.style.display = "block";
+      summary.textContent = "Running Angluin L* active observation-table learning & Myhill-Nerode equivalence-class DFA minimization...";
+      cards.innerHTML = "";
+
+      const res = await fetch("/api/automata", { method: "POST", body: "{}" });
+      const data = await res.json();
+      summary.innerHTML = `<span style="color:#34d399;">🤖 Angluin L* & Myhill-Nerode Minimal DFA Synthesizer: ${data.total_unminimized_states} raw states ➔ ${data.total_minimal_states} minimal states (${data.total_lstar_queries} L* queries · ${data.overall_branchless_speedup}x branchless table speedup, ${data.elapsed_ms}ms)</span>`;
+
+      (data.functions || []).forEach(fn => {
+        const card = document.createElement("div");
+        card.className = "run-card";
+        const sLines = (fn.states || [])
+          .map(s => {
+            const trs = Object.entries(s.transitions || {}).map(([k, v]) => `${k}->q${v}`).join(", ");
+            return `  • ${s.label.padEnd(20)} [access=${s.access_word.padEnd(10)} · ${s.output_class.padEnd(22)}] δ: { ${trs} }`;
+          })
+          .join("\n");
+        const wLines = (fn.distinguishability_witnesses || [])
+          .map(w => `  • ${w.state_a} ≢ ${w.state_b} via suffix e='${w.distinguishing_suffix}': ${w.outcome_a} vs. ${w.outcome_b}`)
+          .join("\n");
+        const spk = Object.entries(fn.fsm_by_spoke || {})
+          .filter(([k, _]) => ["rust", "zig", "c", "cpp", "java", "go", "python", "perl", "typescript", "star"].includes(k))
+          .map(([k, v]) => `[${k}]\n${v}`)
+          .join("\n\n");
+        card.innerHTML = `<strong>🤖 ${fn.signature} (${fn.unminimized_states} ➔ ${fn.minimal_states} Myhill-Nerode states · ${fn.branchless_speedup}x branchless speedup)</strong><pre style="max-height:340px;overflow:auto;"></pre>`;
+        card.querySelector("pre").textContent =
+          `Synthesized Kleene Regular Expression: ${fn.synthesized_regex}\n\n` +
+          `[Minimal DFA States & Transition Function δ(q, σ)]\n${sLines}\n\n` +
+          `[Myhill-Nerode Pairwise Distinguishability Witnesses]\n${wLines}\n\n` +
+          `[13-Spoke Branchless Lookup-Table FSM Lowering]\n${spk}\n\n` +
+          `[Mermaid Minimal State Diagram]\n${fn.mermaid_dfa}`;
         cards.appendChild(card);
       });
     });

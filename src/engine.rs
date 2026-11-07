@@ -26,6 +26,9 @@ use crate::mutate::{harden_tests, mutate_module, HardenReport, MutationReport};
 use crate::polyhedral::{
     analyze_polyhedral, prove_termination_and_wcet, PolyhedralReport, TerminationWcetReport,
 };
+use crate::quantum_automata::{
+    compile_quantum_circuit, synthesize_minimal_dfa, MinimalDfaReport, QuantumCircuitReport,
+};
 use crate::quickcheck::{run_quickcheck, run_quickcheck_default, QuickCheckReport};
 use crate::refactor::{list_symbols, optimize_module, rename_symbol, SymbolEntry};
 use crate::refinement_prob::{
@@ -374,6 +377,20 @@ impl StarEngine {
     /// Shannon Entropy `H(X)`, `H(Y)`, `H(X|Y)`, Mutual Information `I(X; Y)`, and Min-Entropy Leakage.
     pub fn probabilistic_entropy(&self) -> ProbabilisticEntropyReport {
         analyze_probabilistic_entropy(self.hub())
+    }
+
+    /// Compile Hub functions into Reversible Bennett-Toffoli Quantum Logic Circuits (`H`, `CNOT`, `CCX`, `CSWAP`,
+    /// `Cuccaro Adder`), verify garbage-free ancilla uncomputation (`F -> Copy -> F†`), compute Grover Oracle
+    /// quadratic speedup, and synthesize OpenQASM 3.0 quantum assembly.
+    pub fn quantum_circuit(&self) -> QuantumCircuitReport {
+        compile_quantum_circuit(self.hub())
+    }
+
+    /// Run Angluin's `L*` active automaton learning and Myhill-Nerode equivalence-class minimization
+    /// to synthesize the unique minimal Deterministic Finite Automaton (`DFA`), regular expression,
+    /// pairwise distinguishability witnesses, and 13-Spoke branchless lookup tables.
+    pub fn minimal_dfa(&self) -> MinimalDfaReport {
+        synthesize_minimal_dfa(self.hub())
     }
 
     /// Run Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesis.
