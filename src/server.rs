@@ -3,6 +3,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::debugger::TimeTravelReport;
 use crate::engine::{StarEngine, SyncSnapshot};
 use crate::hub::Diagnostic;
 use crate::json::{json_str, parse_flat_json_object};
@@ -22,9 +23,9 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v0.9 — 12-Spoke Bidirectional Compiler & WebAssembly Studio running at:");
+    println!("StarLang v1.0 — 13-Spoke Bidirectional Compiler, WebAssembly & Time-Travel Studio running at:");
     println!("  -> http://{}", addr);
-    println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, TypeScript, or Star S-Expr to sync all 12 spokes, compile native .wasm/.wat, 3-way AST merge, symbolic safety proofs & 13-engine verification.\n");
+    println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
     serve_listener(listener)
 }
@@ -349,6 +350,16 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
                     send_response(&mut stream, 200, "application/json", &payload)
                 }
             }
+        }
+        ("POST", "/api/debug") => {
+            let parsed = parse_flat_json_object(&body).unwrap_or_default();
+            let slice_target = parsed.get("slice").map(|s| s.as_str());
+            let rep = {
+                let eng = shared.lock().unwrap();
+                eng.time_travel(slice_target)
+            };
+            let payload = time_travel_to_json(&rep);
+            send_response(&mut stream, 200, "application/json", &payload)
         }
         ("POST", "/api/run") => {
             let report = {
@@ -678,6 +689,100 @@ fn diagnostic_to_json(d: &Diagnostic) -> String {
         json_str(&d.message),
         d.line,
         d.col
+    )
+}
+
+fn time_travel_to_json(rep: &TimeTravelReport) -> String {
+    let fault_json = rep
+        .fault
+        .as_deref()
+        .map(json_str)
+        .unwrap_or_else(|| "null".to_string());
+    let steps_json: Vec<String> = rep
+        .steps
+        .iter()
+        .map(|s| {
+            let deltas: Vec<String> = s
+                .deltas
+                .iter()
+                .map(|d| {
+                    let b = d
+                        .before
+                        .as_deref()
+                        .map(json_str)
+                        .unwrap_or_else(|| "null".to_string());
+                    format!(
+                        "{{\"name\":{},\"before\":{},\"after\":{}}}",
+                        json_str(&d.name),
+                        b,
+                        json_str(&d.after)
+                    )
+                })
+                .collect();
+            let locals: Vec<String> = s
+                .locals
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+                .collect();
+            let stack: Vec<String> = s.call_stack.iter().map(|f| json_str(f)).collect();
+            let lines: Vec<String> = s
+                .spoke_lines
+                .iter()
+                .map(|(k, v)| format!("{}:{}", json_str(k), v))
+                .collect();
+            let reads: Vec<String> = s.read_vars.iter().map(|r| json_str(r)).collect();
+            let written = s
+                .written_var
+                .as_deref()
+                .map(json_str)
+                .unwrap_or_else(|| "null".to_string());
+            let ctrl = s
+                .control_parent_step
+                .map(|idx| idx.to_string())
+                .unwrap_or_else(|| "null".to_string());
+            format!(
+                "{{\"step_index\":{},\"stmt_id\":{},\"func\":{},\"depth\":{},\"kind\":{},\"summary\":{},\"deltas\":[{}],\"locals\":{{{}}},\"call_stack\":[{}],\"stdout_so_far\":{},\"spoke_lines\":{{{}}},\"read_vars\":[{}],\"written_var\":{},\"control_parent_step\":{}}}",
+                s.step_index,
+                s.stmt_id,
+                json_str(&s.func),
+                s.depth,
+                json_str(&s.kind),
+                json_str(&s.summary),
+                deltas.join(","),
+                locals.join(","),
+                stack.join(","),
+                json_str(&s.stdout_so_far),
+                lines.join(","),
+                reads.join(","),
+                written,
+                ctrl
+            )
+        })
+        .collect();
+
+    let slice_json = if let Some(sl) = &rep.slice {
+        let s_steps: Vec<String> = sl.slice_steps.iter().map(|i| i.to_string()).collect();
+        let expl: Vec<String> = sl.explanation.iter().map(|e| json_str(e)).collect();
+        format!(
+            "{{\"target\":{},\"anchor_step\":{},\"slice_steps\":[{}],\"explanation\":[{}]}}",
+            json_str(&sl.target),
+            sl.anchor_step,
+            s_steps.join(","),
+            expl.join(",")
+        )
+    } else {
+        "null".to_string()
+    };
+
+    format!(
+        "{{\"ok\":true,\"trace_ok\":{},\"fault\":{},\"total_steps\":{},\"max_depth\":{},\"final_stdout\":{},\"steps\":[{}],\"slice\":{}}}",
+        rep.ok,
+        fault_json,
+        rep.total_steps,
+        rep.max_depth,
+        json_str(&rep.final_stdout),
+        steps_json.join(","),
+        slice_json
     )
 }
 

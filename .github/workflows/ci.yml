@@ -46,6 +46,8 @@ jobs:
         run: cargo test
       - name: Run zero-dependency WebAssembly 1.0 compiler & V8 JIT runner
         run: cargo run --quiet -- wasm > /dev/null
+      - name: Run polyglot time-travel debugger & backward causal slicer
+        run: cargo run --quiet -- debug > /dev/null
       - name: Run 3-way cross-language semantic AST merger check
         run: cargo run --quiet -- merge > /dev/null
       - name: Run Hub symbolic safety & dead-branch verifier

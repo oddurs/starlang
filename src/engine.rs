@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::debugger::{record_time_travel_default, TimeTravelReport};
 use crate::eval::{eval_module, eval_tests_default, EvalResult, TestResult};
 use crate::hub::{Diagnostic, HubModule};
 use crate::lens::SpokeId;
@@ -116,6 +117,10 @@ impl StarEngine {
 
     pub fn run_wasm(&self) -> WasmRunReport {
         run_wasm_jit(self.hub())
+    }
+
+    pub fn time_travel(&self, slice_target: Option<&str>) -> TimeTravelReport {
+        record_time_travel_default(self.hub(), slice_target)
     }
 
     /// Compute the pure semantic Hub AST delta between the current Hub and `source` in `spoke`.

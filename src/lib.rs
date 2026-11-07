@@ -1,3 +1,4 @@
+pub mod debugger;
 pub mod engine;
 pub mod eval;
 pub mod fuzzer;

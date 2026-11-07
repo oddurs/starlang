@@ -73,8 +73,8 @@ pub struct MultiRunReport {
 /// Execute the Hub Native VM, Wasm (V8 JIT), Rust (`rustc`), Zig (`zig run -lc`),
 /// C11 (`clang -std=c11`), C++ (`clang++` with cached STL PCH), Swift (`swiftc`),
 /// Java (`javac` + `java`), Go (`go run`), Python (`python3`), Ruby (`ruby`),
-/// LuaJIT (`luajit`), and TypeScript (`node`) concurrently using `std::thread::scope`,
-/// verifying byte-for-byte identical stdout across all 13 execution engines.
+/// LuaJIT (`luajit`), Perl 5 (`perl`), and TypeScript (`node`) concurrently using
+/// `std::thread::scope`, verifying byte-for-byte identical stdout across all 14 engines.
 pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let wall_start = Instant::now();
     let run_id = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -96,6 +96,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
     let py_src = engine.project(SpokeId::Python);
     let ruby_src = engine.project(SpokeId::Ruby);
     let lua_src = engine.project(SpokeId::Lua);
+    let perl_src = engine.project(SpokeId::Perl);
     let ts_src = engine.project(SpokeId::TypeScript);
 
     let (
@@ -111,6 +112,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
         py_res,
         rb_res,
         lua_res,
+        perl_res,
         ts_res,
     ) = thread::scope(|s| {
         let h_hub = s.spawn(|| run_hub_vm(&hub_clone));
@@ -125,6 +127,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
         let h_py = s.spawn(|| run_python(&dir, &py_src));
         let h_rb = s.spawn(|| run_ruby(&dir, &ruby_src));
         let h_lua = s.spawn(|| run_lua(&dir, &lua_src));
+        let h_perl = s.spawn(|| run_perl(&dir, &perl_src));
         let h_ts = s.spawn(|| run_typescript(&dir, &ts_src));
         (
             h_hub.join().unwrap(),
@@ -139,6 +142,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
             h_py.join().unwrap(),
             h_rb.join().unwrap(),
             h_lua.join().unwrap(),
+            h_perl.join().unwrap(),
             h_ts.join().unwrap(),
         )
     });
@@ -147,7 +151,7 @@ pub fn run_all_spokes(engine: &StarEngine) -> MultiRunReport {
 
     let results = vec![
         hub_res, wasm_res, rs_res, zig_res, c_res, cpp_res, swift_res, java_res, go_res, py_res,
-        rb_res, lua_res, ts_res,
+        rb_res, lua_res, perl_res, ts_res,
     ];
     let all_succeeded = results.iter().all(|r| r.ok);
     let outputs_match = all_succeeded
@@ -620,6 +624,36 @@ fn run_lua(dir: &PathBuf, src: &str) -> RuntimeOutput {
             ok: false,
             stdout: String::new(),
             stderr: format!("failed to invoke luajit: {}", e),
+            duration_ms: start.elapsed().as_millis(),
+        },
+    }
+}
+
+fn run_perl(dir: &PathBuf, src: &str) -> RuntimeOutput {
+    let pl_path = dir.join("prog.pl");
+    let start = Instant::now();
+    if let Err(e) = fs::write(&pl_path, src) {
+        return RuntimeOutput {
+            language: "Perl 5 (perl)",
+            ok: false,
+            stdout: String::new(),
+            stderr: e.to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        };
+    }
+    match Command::new("perl").arg(&pl_path).output() {
+        Ok(out) => RuntimeOutput {
+            language: "Perl 5 (perl)",
+            ok: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+            duration_ms: start.elapsed().as_millis(),
+        },
+        Err(e) => RuntimeOutput {
+            language: "Perl 5 (perl)",
+            ok: false,
+            stdout: String::new(),
+            stderr: format!("failed to invoke perl: {}", e),
             duration_ms: start.elapsed().as_millis(),
         },
     }

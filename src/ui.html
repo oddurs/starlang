@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StarLang v0.9 — 12-Spoke Bidirectional Compiler & WebAssembly Studio</title>
+  <title>StarLang v1.0 — 13-Spoke Bidirectional Compiler, WebAssembly & Time-Travel Studio</title>
   <style>
     :root {
       --bg: #090d16;
@@ -121,6 +121,13 @@
       font-weight: 600;
     }
     button.wasm-btn:hover { background: #0f172a; }
+    button.debug-btn {
+      background: #3f3f46;
+      border-color: #f472b6;
+      color: #fdf2f8;
+      font-weight: 600;
+    }
+    button.debug-btn:hover { background: #52525b; }
     .hub-banner {
       padding: 7px 18px;
       background: #0d1322;
@@ -327,7 +334,7 @@
       font-size: 11.5px;
     }
     .pane.has-error .diag-bar { display: block; }
-    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer {
+    #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer {
       display: none;
       border-top: 1px solid var(--border);
       background: var(--panel);
@@ -398,50 +405,53 @@
 <body>
   <header>
     <div class="brand">
-      <svg class="star-svg" viewBox="0 0 176 68">
-        <line id="edge-rust" class="edge" x1="88" y1="34" x2="24" y2="5" />
-        <line id="edge-zig" class="edge" x1="88" y1="34" x2="24" y2="16" />
-        <line id="edge-c" class="edge" x1="88" y1="34" x2="24" y2="27" />
-        <line id="edge-cpp" class="edge" x1="88" y1="34" x2="24" y2="39" />
-        <line id="edge-swift" class="edge" x1="88" y1="34" x2="24" y2="51" />
-        <line id="edge-java" class="edge" x1="88" y1="34" x2="24" y2="63" />
-        <line id="edge-go" class="edge" x1="88" y1="34" x2="150" y2="5" />
-        <line id="edge-python" class="edge" x1="88" y1="34" x2="150" y2="16" />
-        <line id="edge-ruby" class="edge" x1="88" y1="34" x2="150" y2="27" />
-        <line id="edge-lua" class="edge" x1="88" y1="34" x2="150" y2="39" />
-        <line id="edge-typescript" class="edge" x1="88" y1="34" x2="150" y2="51" />
-        <line id="edge-star" class="edge" x1="88" y1="34" x2="150" y2="63" />
-        <circle class="node-hub" cx="88" cy="34" r="11" />
-        <text x="88" y="37" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
+      <svg class="star-svg" viewBox="0 0 176 74">
+        <line id="edge-rust" class="edge" x1="88" y1="37" x2="24" y2="5" />
+        <line id="edge-zig" class="edge" x1="88" y1="37" x2="24" y2="16" />
+        <line id="edge-c" class="edge" x1="88" y1="37" x2="24" y2="27" />
+        <line id="edge-cpp" class="edge" x1="88" y1="37" x2="24" y2="38" />
+        <line id="edge-swift" class="edge" x1="88" y1="37" x2="24" y2="49" />
+        <line id="edge-java" class="edge" x1="88" y1="37" x2="24" y2="60" />
+        <line id="edge-go" class="edge" x1="88" y1="37" x2="150" y2="5" />
+        <line id="edge-python" class="edge" x1="88" y1="37" x2="150" y2="15" />
+        <line id="edge-ruby" class="edge" x1="88" y1="37" x2="150" y2="25" />
+        <line id="edge-lua" class="edge" x1="88" y1="37" x2="150" y2="35" />
+        <line id="edge-perl" class="edge" x1="88" y1="37" x2="150" y2="46" />
+        <line id="edge-typescript" class="edge" x1="88" y1="37" x2="150" y2="57" />
+        <line id="edge-star" class="edge" x1="88" y1="37" x2="150" y2="68" />
+        <circle class="node-hub" cx="88" cy="37" r="11" />
+        <text x="88" y="40" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
         <text class="node-lbl" x="4" y="8">RS</text>
         <text class="node-lbl" x="1" y="19">ZIG</text>
         <text class="node-lbl" x="1" y="30">C11</text>
-        <text class="node-lbl" x="1" y="42">CPP</text>
-        <text class="node-lbl" x="4" y="54">SW</text>
-        <text class="node-lbl" x="4" y="65">JV</text>
+        <text class="node-lbl" x="1" y="41">CPP</text>
+        <text class="node-lbl" x="4" y="52">SW</text>
+        <text class="node-lbl" x="4" y="63">JV</text>
         <text class="node-lbl" x="153" y="8">GO</text>
-        <text class="node-lbl" x="153" y="19">PY</text>
-        <text class="node-lbl" x="153" y="30">RB</text>
-        <text class="node-lbl" x="153" y="42">LUA</text>
-        <text class="node-lbl" x="153" y="54">TS</text>
-        <text class="node-lbl" x="153" y="65">IR</text>
+        <text class="node-lbl" x="153" y="18">PY</text>
+        <text class="node-lbl" x="153" y="28">RB</text>
+        <text class="node-lbl" x="153" y="38">LUA</text>
+        <text class="node-lbl" x="153" y="49">PL</text>
+        <text class="node-lbl" x="153" y="60">TS</text>
+        <text class="node-lbl" x="153" y="71">IR</text>
       </svg>
       <div>
-        <h1>★ StarLang v0.9 — 12-Spoke Bidirectional Compiler & WebAssembly Studio</h1>
-        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ TypeScript ⇄ Star IR ➔ Native .wasm/.wat & 13-Engine Verification</p>
+        <h1>★ StarLang v1.0 — 13-Spoke Bidirectional Compiler, WebAssembly & Time-Travel Studio</h1>
+        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm & 14-Engine Verification</p>
       </div>
     </div>
     <div class="controls">
       <select id="sample-select"></select>
       <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
       <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
+      <button class="debug-btn" id="debug-btn" title="Scrub forward & backward through execution steps across all 13 languages simultaneously & compute dynamic backward slices">⏱ Time-Travel</button>
       <button class="wasm-btn" id="wasm-btn" title="Compile Central Hub AST directly to W3C WebAssembly 1.0 binary (.wasm) + .wat & execute in V8 / Browser Wasm VM">📦 Compile Wasm</button>
-      <button class="merge-btn" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 12 languages">🔀 3-Way Merge</button>
+      <button class="merge-btn" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 13 languages">🔀 3-Way Merge</button>
       <button class="verify-btn" id="verify-btn" title="Prove div-by-zero, bounds & assertions via interval abstract interpretation + concolic witnesses">🛡 Symbolic Verify</button>
       <button class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph & hotspots">🔍 Trace & Coverage</button>
       <button class="mut-btn" id="mut-btn" title="Run sub-ms Hub AST mutation testing & auto-synthesize missing boundary unit tests">🧬 Mutation Test</button>
-      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 12 languages">⚡ Optimize Hub</button>
-      <button class="run-btn" id="run-btn">▶ Run All 13 Engines (VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + rb + luajit + node)</button>
+      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 13 languages">⚡ Optimize Hub</button>
+      <button class="run-btn" id="run-btn">▶ Run All 14 Engines (VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + rb + luajit + perl + node)</button>
     </div>
   </header>
 
@@ -467,6 +477,7 @@
       <span class="toggle-pill on" data-spoke="python">Python</span>
       <span class="toggle-pill on" data-spoke="ruby">Ruby</span>
       <span class="toggle-pill on" data-spoke="lua">Lua</span>
+      <span class="toggle-pill on" data-spoke="perl">Perl</span>
       <span class="toggle-pill on" data-spoke="typescript">TypeScript</span>
       <span class="toggle-pill on" data-spoke="star">Star IR</span>
     </div>
@@ -606,6 +617,18 @@
       <div class="diag-bar" id="diag-lua"></div>
     </section>
 
+    <section class="pane" id="pane-perl">
+      <div class="pane-header">
+        <span>Modern Perl 5.34 (<code>.pl</code>)</span>
+        <div class="badges-right">
+          <span class="delta-badge" id="delta-perl"></span>
+          <span class="status" id="status-perl">Synced</span>
+        </div>
+      </div>
+      <textarea id="ed-perl" spellcheck="false"></textarea>
+      <div class="diag-bar" id="diag-perl"></div>
+    </section>
+
     <section class="pane" id="pane-typescript">
       <div class="pane-header">
         <span>TypeScript (<code>.ts</code>)</span>
@@ -630,6 +653,22 @@
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <section id="debug-drawer">
+    <div class="run-header">
+      <span id="debug-summary">⏱ Polyglot Time-Travel Debugger & Dynamic Backward Slicer across all 13 languages...</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <button id="debug-prev-btn">⏮ Prev</button>
+        <input type="range" id="debug-slider" min="0" max="0" value="0" style="width:180px;" />
+        <span id="debug-step-lbl" style="font-family:monospace;font-size:12px;">Step 0/0</span>
+        <button id="debug-next-btn">⏭ Next</button>
+        <input type="text" id="debug-slice-input" placeholder="var or step:N" style="width:130px;" />
+        <button class="debug-btn" id="debug-slice-btn">🎯 Slice</button>
+        <button onclick="document.getElementById('debug-drawer').style.display='none'">Close</button>
+      </div>
+    </div>
+    <div class="run-cards" id="debug-cards"></div>
+  </section>
 
   <section id="wasm-drawer">
     <div class="run-header">
@@ -706,8 +745,9 @@
   </section>
 
   <script>
-    const SPOKES = ["rust", "zig", "c", "cpp", "swift", "java", "go", "python", "ruby", "lua", "typescript", "star"];
+    const SPOKES = ["rust", "zig", "c", "cpp", "swift", "java", "go", "python", "ruby", "lua", "perl", "typescript", "star"];
     let lastWasmBase64 = null;
+    let lastDebugReport = null;
     let debounceTimer = null;
     const prevTexts = {};
 
@@ -1270,6 +1310,101 @@
     document.getElementById("trace-btn").addEventListener("click", triggerTrace);
     document.getElementById("cov-pill").addEventListener("click", triggerTrace);
 
+    function renderDebugStep(idx) {
+      if (!lastDebugReport || !lastDebugReport.steps || lastDebugReport.steps.length === 0) return;
+      const steps = lastDebugReport.steps;
+      const clamped = Math.max(0, Math.min(steps.length - 1, idx));
+      const slider = document.getElementById("debug-slider");
+      slider.value = clamped;
+      document.getElementById("debug-step-lbl").textContent = `Step ${clamped + 1}/${steps.length}`;
+      const st = steps[clamped];
+      const cards = document.getElementById("debug-cards");
+      cards.innerHTML = "";
+
+      // Update 13-spoke header badges with active line number at this step
+      SPOKES.forEach(sp => {
+        const delta = document.getElementById(`delta-${sp}`);
+        const ln = st.spoke_lines && st.spoke_lines[sp];
+        if (delta && ln) {
+          delta.style.display = "inline-block";
+          delta.textContent = `⏱ L${ln}`;
+        }
+      });
+
+      const stepCard = document.createElement("div");
+      stepCard.className = "run-card";
+      const linePills = Object.entries(st.spoke_lines || {})
+        .map(([k, v]) => `${k}:L${v}`)
+        .join("  ");
+      const deltaLines = (st.deltas || [])
+        .map(d => d.before !== null ? `Δ ${d.name}: ${d.before} → ${d.after}` : `+ ${d.name} = ${d.after}`)
+        .join("\n") || "(no variable mutation on this step)";
+      stepCard.innerHTML = `<strong>⏱ Step #${st.step_index} · ${st.func}() [${st.kind}]</strong><pre></pre>`;
+      stepCard.querySelector("pre").textContent =
+        `${st.summary}\n\n${deltaLines}\n\n[13-Spoke Active Lines]\n${linePills}`;
+      cards.appendChild(stepCard);
+
+      const envCard = document.createElement("div");
+      envCard.className = "run-card";
+      const localsText = Object.entries(st.locals || {})
+        .map(([k, v]) => `${k} = ${v}`)
+        .join("\n") || "(empty frame)";
+      envCard.innerHTML = `<strong>📦 Frame Locals & Call Stack (${(st.call_stack || []).join(" → ")})</strong><pre></pre>`;
+      envCard.querySelector("pre").textContent =
+        `${localsText}\n\n[stdout up to step #${st.step_index}]\n${(st.stdout_so_far || "").trim() || "(none)"}`;
+      cards.appendChild(envCard);
+
+      const slice = lastDebugReport.slice;
+      const sliceCard = document.createElement("div");
+      sliceCard.className = "run-card";
+      if (slice) {
+        sliceCard.innerHTML = `<strong>🎯 Backward Causal Slice for '${slice.target}' (${(slice.slice_steps || []).length} steps)</strong><pre></pre>`;
+        sliceCard.querySelector("pre").textContent = (slice.explanation || []).join("\n");
+      } else {
+        sliceCard.innerHTML = `<strong>🎯 Backward Causal Slice</strong><pre>(enter a variable name and click Slice)</pre>`;
+      }
+      cards.appendChild(sliceCard);
+    }
+
+    async function triggerDebug(sliceTarget) {
+      const drawer = document.getElementById("debug-drawer");
+      const summary = document.getElementById("debug-summary");
+      drawer.style.display = "block";
+      summary.textContent = "Recording Hub VM time-travel trace & 13-spoke statement line map...";
+
+      const res = await fetch("/api/debug", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slice: sliceTarget || "" })
+      });
+      const data = await res.json();
+      lastDebugReport = data;
+      const color = data.trace_ok ? "#f472b6" : "#f87171";
+      summary.innerHTML = `<span style="color:${color};">⏱ Time-Travel Trace: ${data.total_steps} steps recorded (max depth ${data.max_depth}) · Scrub slider to highlight all 13 languages simultaneously</span>`;
+      const slider = document.getElementById("debug-slider");
+      slider.max = Math.max(0, (data.steps || []).length - 1);
+      const startIdx = data.slice ? data.slice.anchor_step : Math.max(0, (data.steps || []).length - 1);
+      renderDebugStep(startIdx);
+    }
+
+    document.getElementById("debug-btn").addEventListener("click", () => {
+      triggerDebug(document.getElementById("debug-slice-input").value.trim());
+    });
+    document.getElementById("debug-slice-btn").addEventListener("click", () => {
+      triggerDebug(document.getElementById("debug-slice-input").value.trim());
+    });
+    document.getElementById("debug-slider").addEventListener("input", e => {
+      renderDebugStep(parseInt(e.target.value, 10) || 0);
+    });
+    document.getElementById("debug-prev-btn").addEventListener("click", () => {
+      const cur = parseInt(document.getElementById("debug-slider").value, 10) || 0;
+      renderDebugStep(cur - 1);
+    });
+    document.getElementById("debug-next-btn").addEventListener("click", () => {
+      const cur = parseInt(document.getElementById("debug-slider").value, 10) || 0;
+      renderDebugStep(cur + 1);
+    });
+
     document.getElementById("undo-btn").addEventListener("click", async () => {
       const res = await fetch("/api/undo", { method: "POST", body: "{}" });
       const data = await res.json();
@@ -1298,13 +1433,13 @@
       const summary = document.getElementById("run-summary");
       const cards = document.getElementById("run-cards");
       drawer.style.display = "block";
-      summary.textContent = "Executing Hub VM + Wasm (V8 JIT) + rustc + zig + clang -std=c11 + clang++ (PCH) + swiftc + javac + go + python3 + ruby + luajit + node in parallel...";
+      summary.textContent = "Executing Hub VM + Wasm (V8 JIT) + rustc + zig + clang -std=c11 + clang++ (PCH) + swiftc + javac + go + python3 + ruby + luajit + perl + node in parallel...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/run", { method: "POST", body: "{}" });
       const data = await res.json();
       if (data.outputs_match) {
-        summary.innerHTML = `<span style="color:#34d399;">✓ 13/13 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
+        summary.innerHTML = `<span style="color:#34d399;">✓ 14/14 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
       } else {
         summary.innerHTML = `<span style="color:#f87171;">Runtime Check Completed (${data.wall_time_ms}ms — inspect outputs below)</span>`;
       }

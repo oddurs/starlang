@@ -87,6 +87,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        "debug" => {
+            if let Err(e) = run_debug_cli(&args[1..]) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         "mutate" => {
             if let Err(e) = run_mutate_cli(&args[1..]) {
                 eprintln!("Error: {}", e);
@@ -701,6 +707,93 @@ fn run_wasm_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_debug_cli(args: &[String]) -> Result<(), String> {
+    let mut file_or_preset: Option<&str> = None;
+    let mut slice_target: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--slice" | "-s" => {
+                let s = args
+                    .get(i + 1)
+                    .ok_or_else(|| "expected variable or step:N after --slice".to_string())?;
+                slice_target = Some(s.as_str());
+                i += 2;
+            }
+            other if !other.starts_with('-') && file_or_preset.is_none() => {
+                file_or_preset = Some(other);
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    let (eng, label) = if let Some(p) = file_or_preset {
+        if let Some(sample) = find_sample(p) {
+            let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+                .map_err(|d| d.to_string())?;
+            (
+                e,
+                format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+            )
+        } else {
+            let (e, spoke) = load_engine_from_path(p)?;
+            (e, format!("{} ({})", p, spoke.display_name()))
+        }
+    } else {
+        let sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+        let e = StarEngine::from_source(sample.initial_spoke, sample.source)
+            .map_err(|d| d.to_string())?;
+        (
+            e,
+            format!("preset '{}' ({})", sample.id, sample.initial_spoke.display_name()),
+        )
+    };
+
+    let rep = eng.time_travel(slice_target);
+    println!("=== Polyglot Time-Travel Debugger & 13-Spoke Line Mapper: {} ===", label);
+    println!(
+        "Recorded Steps: {} | Max Call Depth: {} | Status: {} | stdout: {}",
+        rep.total_steps,
+        rep.max_depth,
+        if rep.ok { "OK" } else { "FAULT" },
+        rep.final_stdout.trim()
+    );
+
+    println!("\nExecution Timeline (first 12 steps across 13 languages):");
+    for st in rep.steps.iter().take(12) {
+        let rs = st.spoke_lines.get("rust").copied().unwrap_or(0);
+        let zig = st.spoke_lines.get("zig").copied().unwrap_or(0);
+        let c = st.spoke_lines.get("c").copied().unwrap_or(0);
+        let py = st.spoke_lines.get("python").copied().unwrap_or(0);
+        let lua = st.spoke_lines.get("lua").copied().unwrap_or(0);
+        let pl = st.spoke_lines.get("perl").copied().unwrap_or(0);
+        println!(
+            "  [Step {:>2}] {:<18} :: {:<34} | rs:L{:<3} zig:L{:<3} c:L{:<3} py:L{:<3} lua:L{:<3} pl:L{:<3}",
+            st.step_index, st.func, st.summary, rs, zig, c, py, lua, pl
+        );
+    }
+
+    if let Some(sl) = &rep.slice {
+        println!(
+            "\nDynamic Backward Causal Slice for '{}' (anchor=Step {}, {} causal steps):",
+            sl.target,
+            sl.anchor_step,
+            sl.slice_steps.len()
+        );
+        for line in &sl.explanation {
+            println!("  <- {}", line);
+        }
+    }
+
+    if let Some(err) = rep.fault {
+        return Err(err);
+    }
+    Ok(())
+}
+
 fn run_mutate_cli(args: &[String]) -> Result<(), String> {
     let mut file_path: Option<&str> = None;
     let mut harden = false;
@@ -811,11 +904,11 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 
     let report = run_fuzz_suite(seed, count);
     println!(
-        "★ Property-Based 12-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
+        "★ Property-Based 13-Spoke Lens Fuzzer (seed=0x{:x}, programs={}):",
         report.seed, report.programs_tested
     );
     println!(
-        "  • 12-spoke GetPut + cold Put round-trips: {}",
+        "  • 13-spoke GetPut + cold Put round-trips: {}",
         report.spoke_roundtrips
     );
     println!(
@@ -894,7 +987,7 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Outputs match across all 13 engines: {}",
+        "\nParallel wall time: {}ms | Outputs match across all 14 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
@@ -905,13 +998,14 @@ fn run_file_all_compilers(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "starlang v0.9 — 12-Spoke Bidirectional Compiler & WebAssembly Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> TypeScript <-> Star IR -> Wasm)
+        "starlang v1.0 — 13-Spoke Bidirectional Compiler, WebAssembly & Time-Travel Studio (Rust <-> Zig 0.16 <-> C11 <-> C++ <-> Swift 6 <-> Java 21 <-> Go <-> Python <-> Ruby <-> LuaJIT <-> Perl 5 <-> TypeScript <-> Star IR -> Wasm)
 
 USAGE:
-  cargo run                                         Start the 12-pane live web studio on http://127.0.0.1:7878
+  cargo run                                         Start the 13-pane live web studio on http://127.0.0.1:7878
   cargo run -- serve --port 8080                    Start the live web studio on a custom port
-  cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .ts, .star files
-  cargo run -- convert <file> [--to lua]            Transpile a file into one or all other spokes
+  cargo run -- watch [dir] [stem]                   Live-sync .rs, .zig, .c, .cpp, .swift, .java, .go, .py, .rb, .lua, .pl, .ts, .star files
+  cargo run -- convert <file> [--to perl]           Transpile a file into one or all other spokes
+  cargo run -- debug [file|preset] [--slice var]    Record time-travel trace across all 13 languages & compute backward causal slice
   cargo run -- wasm [file] [--wat] [--out a.wasm]   Compile Hub AST to W3C WebAssembly 1.0 (.wasm + .wat) & run in V8 JIT
   cargo run -- diff <left_file> <right_file>        Compute pure semantic Hub AST delta across any two languages
   cargo run -- merge [base left right] [--to X]     3-way concurrent cross-language Hub AST + metadata merger
@@ -921,11 +1015,11 @@ USAGE:
   cargo run -- test <file>                          Execute polyglot unit tests instantly in the Hub VM
   cargo run -- trace [file]                         Report Hub AST statement coverage %, hotspots & call trace
   cargo run -- mutate [file] [--harden] [--to X]    Run Hub AST mutation testing & auto-harden boundary tests
-  cargo run -- fuzz [count] [--seed N]              Run property-based 12-spoke GetPut & VM equivalence fuzzer
+  cargo run -- fuzz [count] [--seed N]              Run property-based 13-spoke GetPut & VM equivalence fuzzer
   cargo run -- refactor <file> <sym> <new> [--to X] Scope-aware cross-language symbol rename
   cargo run -- optimize <file> [--to X]             Constant-fold & prune dead branches via the Hub
-  cargo run -- run <file>                           Verify across Hub VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + ruby + luajit + node
-  cargo run -- demo                                 Run an end-to-end 12-spoke sync, Wasm JIT, 3-way merge, verify, mutate, fuzz & 13-engine demo"
+  cargo run -- run <file>                           Verify across Hub VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + ruby + luajit + perl + node
+  cargo run -- demo                                 Run an end-to-end 13-spoke sync, Wasm JIT, time-travel debug, 3-way merge, verify, mutate, fuzz & 14-engine demo"
     );
 }
 
@@ -975,7 +1069,7 @@ fn run_cli_demo() -> Result<(), String> {
     let (snap, renamed_sites) = engine.rename_symbol("Severity::Critical", "Emergency")?;
     let passed_after = snap.test_results.iter().filter(|t| t.passed).count();
     println!(
-        "Renamed {} AST sites across all 11 languages | Coverage: {}% | Tests: {}/{} passed | Live Hub VM: {}\n",
+        "Renamed {} AST sites across all 13 languages | Coverage: {}% | Tests: {}/{} passed | Live Hub VM: {}\n",
         renamed_sites,
         snap.coverage_pct,
         passed_after,
@@ -983,7 +1077,7 @@ fn run_cli_demo() -> Result<(), String> {
         snap.live_eval.stdout.trim()
     );
 
-    println!("=== 4. Hub AST Mutation Testing & Auto-Test Hardening Across All 11 Languages ===");
+    println!("=== 4. Hub AST Mutation Testing & Auto-Test Hardening Across All 13 Languages ===");
     let (hardened_snap, hrep) = engine.harden_tests();
     let hardened_passed = hardened_snap
         .test_results
@@ -1046,7 +1140,24 @@ fn run_cli_demo() -> Result<(), String> {
         return Err(format!("Wasm JIT failed on backoff: {:?}", bo_jit.error));
     }
 
-    println!("=== 7. Differential Execution Across All 13 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + node) ===");
+    println!("=== 7. Polyglot Time-Travel Debugger & Backward Causal Slicer (`ratelimit` Perl 5.34 preset) ===");
+    let rl_sample = find_sample("ratelimit").ok_or("missing ratelimit sample")?;
+    let rl_eng = StarEngine::from_source(rl_sample.initial_spoke, rl_sample.source)
+        .map_err(|d| d.to_string())?;
+    let drep = rl_eng.time_travel(Some("avg_cost"));
+    let slice_len = drep.slice.as_ref().map(|s| s.slice_steps.len()).unwrap_or(0);
+    println!(
+        "Recorded {} steps (max depth {}) across 13 languages | Backward slice for 'avg_cost': {} causal steps | stdout: {}\n",
+        drep.total_steps,
+        drep.max_depth,
+        slice_len,
+        drep.final_stdout.trim()
+    );
+    if !drep.ok || slice_len == 0 {
+        return Err("Time-travel debugger check failed on ratelimit".to_string());
+    }
+
+    println!("=== 8. Differential Execution Across All 14 Engines (Hub VM + Wasm V8 JIT + rustc + zig + clang -std=c11 + clang++ PCH + swiftc + javac + go + python3 + ruby + luajit + perl + node) ===");
     let report = run_all_spokes(&engine);
     for r in &report.results {
         println!(
@@ -1061,14 +1172,14 @@ fn run_cli_demo() -> Result<(), String> {
         }
     }
     println!(
-        "\nParallel wall time: {}ms | Byte-for-byte match across all 13 engines: {}",
+        "\nParallel wall time: {}ms | Byte-for-byte match across all 14 engines: {}",
         report.wall_time_ms, report.outputs_match
     );
     if !report.outputs_match {
         return Err("runtime outputs diverged".to_string());
     }
 
-    println!("\n=== 8. Property-Based 12-Spoke Lens Fuzzer (25 Synthesized Programs × 12 Spokes) ===");
+    println!("\n=== 9. Property-Based 13-Spoke Lens Fuzzer (25 Synthesized Programs × 13 Spokes) ===");
     let fuzz = run_fuzz_suite(0x57A4_2026_0500, 25);
     println!(
         "Verified {} GetPut round-trips & {} test suites in {}ms — Failures: {}",

@@ -197,10 +197,10 @@ fn cpp_swift_java_go_and_ruby_edits_on_enums_and_metadata_sync_across_all_nine_s
     assert_eq!(snap3.live_eval.stdout.trim(), "checked=3 score=15");
 
     let report = run_all_spokes(&engine);
-    assert_eq!(report.results.len(), 13);
+    assert_eq!(report.results.len(), 14);
     assert!(
         report.outputs_match,
-        "13-engine outputs diverged: {:?}",
+        "14-engine outputs diverged: {:?}",
         report.results
     );
     assert_eq!(report.results[0].stdout.trim(), "checked=3 score=15");
@@ -373,9 +373,85 @@ fn property_based_lens_fuzzer_verifies_fifty_random_programs_across_eleven_spoke
         report.failures.join("\n\n")
     );
     assert_eq!(report.programs_tested, 50);
-    assert_eq!(report.spoke_roundtrips, 50 * 12);
+    assert_eq!(report.spoke_roundtrips, 50 * 13);
     assert_eq!(report.assertions_passed, 50);
     assert_eq!(report.optimizer_checks, 50);
+}
+
+#[test]
+fn perl_spoke_and_polyglot_time_travel_debugger_sync_and_slice_across_thirteen_languages() {
+    // 1. Seed from `ratelimit` (Modern Perl 5.34 preset) and verify symbolic safety obligations
+    let sample = find_sample("ratelimit").unwrap();
+    let mut engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
+    let ver = engine.verify();
+    assert_eq!(ver.total_obligations, 3, "{:?}", ver);
+    assert_eq!(ver.proven_safe, 3, "{:?}", ver);
+    assert_eq!(ver.refuted, 0, "{:?}", ver);
+    assert!(ver.all_safe());
+
+    // 2. Edit Perl 5.34 view and verify all 13 views stay synced + Rust borrow metadata on `scores`
+    let pl_edited = engine
+        .project(SpokeId::Perl)
+        .replace("evaluate_quota($traffic, 40,", "evaluate_quota($traffic, 60,");
+    let snap = engine.apply_edit(SpokeId::Perl, &pl_edited).unwrap();
+    assert!(snap.views["rust"].contains("evaluate_quota(traffic.clone(), 60,"));
+    assert!(snap.views["lua"].contains("evaluate_quota(traffic, 60,"));
+    assert_eq!(
+        snap.live_eval.stdout.trim(),
+        "accepted: 5 rejected: 0 avg_cost: 24"
+    );
+
+    let scores = find_sample("scores").unwrap();
+    let mut sc_eng = StarEngine::from_source(scores.initial_spoke, scores.source).unwrap();
+    let pl_scores = sc_eng.project(SpokeId::Perl);
+    assert!(pl_scores.contains("# @param $scores List[Int]"));
+    let pl_scores_edited =
+        pl_scores.replace("clamp_scores($raw, 100)", "clamp_scores($raw, 85)");
+    let sc_snap = sc_eng.apply_edit(SpokeId::Perl, &pl_scores_edited).unwrap();
+    assert!(sc_snap.views["rust"].contains("scores: &[i64]"));
+    assert!(sc_snap.views["rust"].contains("clamp_scores(&raw, 85)"));
+
+    // 3. Record Time-Travel trace and verify every step maps to a valid 1-based line in all 13 spokes
+    let drep = engine.time_travel(Some("avg_cost"));
+    assert!(drep.ok, "Time-travel trace failed: {:?}", drep.fault);
+    assert!(drep.total_steps >= 20, "Expected >= 20 steps, got {}", drep.total_steps);
+    assert!(drep.max_depth >= 3);
+    assert_eq!(
+        drep.final_stdout.trim(),
+        "accepted: 5 rejected: 0 avg_cost: 24"
+    );
+
+    for step in &drep.steps {
+        for spoke in SpokeId::ALL {
+            let line = step.spoke_lines.get(spoke.as_str()).copied().unwrap_or(0);
+            assert!(
+                line >= 1,
+                "Step #{} (stmt #{}, {}) missing line mapping for {:?}: {:?}",
+                step.step_index,
+                step.stmt_id,
+                step.summary,
+                spoke,
+                step.spoke_lines
+            );
+        }
+    }
+
+    // 4. Verify Dynamic Backward Causal Slice for `avg_cost`
+    let slice = drep.slice.expect("Expected backward slice for avg_cost");
+    assert!(slice.target.ends_with("avg_cost"), "{}", slice.target);
+    assert!(
+        slice.slice_steps.len() >= 6,
+        "Expected causal backward slice of >= 6 steps, got {:?}",
+        slice
+    );
+    assert!(
+        slice
+            .explanation
+            .iter()
+            .any(|line| line.contains("spent =") && line.contains("pl:L")),
+        "Backward slice should include `spent` accumulation with Perl line numbers: {:?}",
+        slice.explanation
+    );
 }
 
 #[test]
@@ -857,7 +933,7 @@ fn all_samples_compile_and_produce_identical_output_across_eleven_engines() {
     for sample in SAMPLES {
         let engine = StarEngine::from_source(sample.initial_spoke, sample.source).unwrap();
         let report = run_all_spokes(&engine);
-        assert_eq!(report.results.len(), 13);
+        assert_eq!(report.results.len(), 14);
 
         for r in &report.results {
             assert!(
@@ -878,6 +954,7 @@ fn all_samples_compile_and_produce_identical_output_across_eleven_engines() {
                     "Python (python3)" => engine.project(SpokeId::Python),
                     "Ruby (ruby)" => engine.project(SpokeId::Ruby),
                     "LuaJIT (luajit)" => engine.project(SpokeId::Lua),
+                    "Perl 5 (perl)" => engine.project(SpokeId::Perl),
                     "TypeScript (node)" => engine.project(SpokeId::TypeScript),
                     _ => engine.project(SpokeId::Star),
                 }
@@ -996,7 +1073,14 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(wasm_resp.contains("\"wat\":"));
     assert!(wasm_resp.contains("\"wasm_b64\":"));
 
-    // Execute across all 13 engines via /api/run
+    // Verify /api/debug endpoint records time-travel steps, 13-spoke lines & backward slice
+    let dbg_resp = send_http("POST", "/api/debug", "{\"slice\":\"total\"}");
+    assert!(dbg_resp.contains("\"ok\":true"), "debug failed: {}", dbg_resp);
+    assert!(dbg_resp.contains("\"trace_ok\":true"), "debug trace failed: {}", dbg_resp);
+    assert!(dbg_resp.contains("\"spoke_lines\":{"), "debug missing spoke_lines: {}", dbg_resp);
+    assert!(dbg_resp.contains("\"slice\":{"), "debug missing slice: {}", dbg_resp);
+
+    // Execute across all 14 engines via /api/run
     let run_resp = send_http("POST", "/api/run", "{}");
     assert!(run_resp.contains("\"outputs_match\":true"), "run failed: {}", run_resp);
     assert!(run_resp.contains("Hub VM (native)"));
@@ -1008,5 +1092,6 @@ fn web_studio_http_api_syncs_merges_verifies_traces_mutates_hardens_and_runs_ele
     assert!(run_resp.contains("Java (javac)"));
     assert!(run_resp.contains("Ruby (ruby)"));
     assert!(run_resp.contains("LuaJIT (luajit)"));
+    assert!(run_resp.contains("Perl 5 (perl)"));
     assert!(run_resp.contains("calibrated_sum: 261"));
 }
