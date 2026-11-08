@@ -318,7 +318,7 @@ where
     }
 }
 
-fn shrink_value_candidates(val: &Value) -> Vec<Value> {
+pub(crate) fn shrink_value_candidates(val: &Value) -> Vec<Value> {
     let mut out = Vec::new();
     match val {
         Value::Int(v) => {
@@ -724,7 +724,7 @@ fn value_to_hub_expr(val: &Value) -> Expr {
     }
 }
 
-fn format_repro_across_spokes(
+pub(crate) fn format_repro_across_spokes(
     hub: &HubModule,
     fn_name: &str,
     args: &[Value],

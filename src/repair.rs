@@ -6,10 +6,13 @@ use crate::debugger::{compute_stmt_spoke_lines, record_time_travel_default};
 use crate::eval::{eval_fn_with_values, eval_tests_default, Value};
 use crate::hub::{
     AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, MatchPat, NodeId,
-    Stmt,
+    Stmt, UnaryOp,
 };
 use crate::lens::SpokeId;
-use crate::quickcheck::{run_quickcheck, shrink_failing_call, MinimizedCounterexample};
+use crate::quickcheck::{
+    format_repro_across_spokes, run_quickcheck, shrink_failing_call, shrink_value_candidates,
+    MinimizedCounterexample,
+};
 use crate::spokes::lens_for;
 use crate::typecheck::check_module;
 use crate::verify::verify_module;
@@ -135,11 +138,14 @@ pub fn repair_module(hub: &HubModule) -> RepairReport {
             continue;
         }
 
+        let mut patched_hub = cand.patched_hub;
+        crate::hub::normalize_module(&mut patched_hub);
+
         let spoke_lines = stmt_spoke_lines
             .get(&cand.stmt_id)
             .cloned()
             .unwrap_or_default();
-        let diffs_by_spoke = compute_spoke_patch_diffs(&numbered, &cand.patched_hub);
+        let diffs_by_spoke = compute_spoke_patch_diffs(&numbered, &patched_hub);
 
         let patch = SynthesizedPatch {
             stmt_id: cand.stmt_id,
@@ -164,7 +170,7 @@ pub fn repair_module(hub: &HubModule) -> RepairReport {
             elapsed_ms: start.elapsed().as_millis(),
             faults,
             patch: Some(patch),
-            repaired_hub: cand.patched_hub,
+            repaired_hub: patched_hub,
         };
     }
 
@@ -350,26 +356,21 @@ fn shrink_bisim_counterexample(
     for _ in 0..32 {
         let mut improved = false;
         for idx in 0..current.len() {
-            if let Value::Int(v) = current[idx] {
-                for cand in [0, v / 2, if v > 0 { v - 1 } else { v.saturating_add(1) }] {
-                    if cand == v {
-                        continue;
-                    }
-                    let mut next = current.clone();
-                    next[idx] = Value::Int(cand);
-                    let r1 = eval_fn_with_values(left_hub, fn_name, next.clone(), 20_000);
-                    let r2 = eval_fn_with_values(right_hub, fn_name, next.clone(), 20_000);
-                    let same = match (&r1, &r2) {
-                        (Ok((v1, s1, _)), Ok((v2, s2, _))) => v1 == v2 && s1 == s2,
-                        (Err(_), Err(_)) => true,
-                        _ => false,
-                    };
-                    if !same {
-                        current = next;
-                        shrink_steps += 1;
-                        improved = true;
-                        break;
-                    }
+            for cand_val in shrink_value_candidates(&current[idx]) {
+                let mut next = current.clone();
+                next[idx] = cand_val;
+                let r1 = eval_fn_with_values(left_hub, fn_name, next.clone(), 20_000);
+                let r2 = eval_fn_with_values(right_hub, fn_name, next.clone(), 20_000);
+                let same = match (&r1, &r2) {
+                    (Ok((v1, s1, _)), Ok((v2, s2, _))) => v1 == v2 && s1 == s2,
+                    (Err(_), Err(_)) => true,
+                    _ => false,
+                };
+                if !same {
+                    current = next;
+                    shrink_steps += 1;
+                    improved = true;
+                    break;
                 }
             }
         }
@@ -396,7 +397,7 @@ fn shrink_bisim_counterexample(
         minimized_args: fmt_tuple(&current),
         shrink_steps,
         fault: format!("left => {} != right => {}", r1, r2),
-        repro_by_spoke: BTreeMap::new(),
+        repro_by_spoke: format_repro_across_spokes(left_hub, fn_name, &current),
     }
 }
 
@@ -574,8 +575,20 @@ fn normalize_stmts_alpha(
 
 fn normalize_expr_alpha(e: &Expr, var_map: &HashMap<String, String>) -> String {
     match e {
-        Expr::Int(v) => v.to_string(),
-        Expr::Float(v) => format!("{}", v),
+        Expr::Int(v) => {
+            if *v < 0 && *v > i64::MIN {
+                format!("({:?} {})", UnaryOp::Neg, -*v)
+            } else {
+                v.to_string()
+            }
+        }
+        Expr::Float(v) => {
+            if *v < 0.0 {
+                format!("({:?} {})", UnaryOp::Neg, -*v)
+            } else {
+                format!("{}", v)
+            }
+        }
         Expr::Bool(b) => b.to_string(),
         Expr::Str(s) => format!("{:?}", s),
         Expr::Var(name) => var_map
@@ -615,10 +628,11 @@ fn normalize_expr_alpha(e: &Expr, var_map: &HashMap<String, String>) -> String {
             format!("(list [{}])", p.join(","))
         }
         Expr::StructInit { name, fields } => {
-            let p: Vec<String> = fields
+            let mut p: Vec<String> = fields
                 .iter()
                 .map(|(fname, fval)| format!("{}:{}", fname, normalize_expr_alpha(fval, var_map)))
                 .collect();
+            p.sort();
             format!("(struct {} {{{}}})", name, p.join(","))
         }
         Expr::Intrinsic(intr) => match intr.as_ref() {
@@ -1025,7 +1039,26 @@ fn mutate_single_stmt_for_repair(stmt: &Stmt) -> Vec<(String, String, String, St
                     },
                 ));
             }
-            // 2. Expression-level repair on RHS
+            // 2. Expression-level repair on RHS (and index target if present)
+            if let AssignTarget::Index { base, index } = target {
+                for (kind, b_str, a_str, new_idx) in mutate_expr_for_repair(index) {
+                    out.push((
+                        kind,
+                        format!("{}[{}] = ...", base, b_str),
+                        format!("{}[{}] = ...", base, a_str),
+                        Stmt::Assign {
+                            id: *id,
+                            target: AssignTarget::Index {
+                                base: base.clone(),
+                                index: new_idx,
+                            },
+                            op: *op,
+                            value: value.clone(),
+                            meta: meta.clone(),
+                        },
+                    ));
+                }
+            }
             for (kind, b_str, a_str, new_val) in mutate_expr_for_repair(value) {
                 out.push((
                     kind,

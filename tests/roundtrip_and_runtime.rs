@@ -3467,5 +3467,141 @@ def test_banner() -> None:
         "99\n42",
         "Time-travel debugger diverged from HubVm on UTF-8 len or lexical block shadowing"
     );
+
+    // 9. Pass 13: Symbolic Verifier float narrowing & obligations, Bisimulation α-equivalence
+    //    & 13-spoke counterexample repros, PBE Synth empty-list round-trip, and Set vs AddAssign disambiguation
+    let float_verify_star = r#"(fn float_window ((param d Float)) -> Float
+  (let local_div (min (max d 1.0) 2.0))
+  (if (and (> d 0.0) (< d 1.0))
+    (then (return (/ (max d 2.0) local_div)))
+    (else (return (/ 1.0 local_div)))))
+"#;
+    let fv_eng = StarEngine::from_source(SpokeId::Star, float_verify_star).unwrap();
+    let fv_rep = fv_eng.verify();
+    assert_eq!(
+        fv_rep.warnings, 0,
+        "Expected 0 bogus integer div-by-zero warnings on float expressions, got: {:?}",
+        fv_rep.obligations
+    );
+    assert!(
+        fv_rep.unreachable_branches.is_empty(),
+        "Float comparison `d > 0.0 && d < 1.0` must not trigger integer ±1 unreachable branch: {:?}",
+        fv_rep.unreachable_branches
+    );
+
+    // Bisimulation α-equivalence on reordered struct fields + 13-spoke repro on behavioral divergence
+    let eq_left_star = r#"(struct Pair (field a Int) (field b Int))
+(fn make_pair ((param x Int)) -> Pair
+  (return (make Pair (a x) (b (neg 5)))))
+(fn sum_gt ((param xs (List Int))) -> Int
+  (let-mut acc 0)
+  (for-each item xs
+    (if (> item 0)
+      (then (add! acc item))))
+  (return acc))
+"#;
+    let eq_right_star = r#"(struct Pair (field a Int) (field b Int))
+(fn make_pair ((param y Int)) -> Pair
+  (return (make Pair (b -5) (a y))))
+(fn sum_gt ((param xs (List Int))) -> Int
+  (let-mut acc 0)
+  (for-each item xs
+    (if (>= item 0)
+      (then (sub! acc item))))
+  (return acc))
+"#;
+    let eq_l = StarEngine::from_source(SpokeId::Star, eq_left_star).unwrap();
+    let eq_r = StarEngine::from_source(SpokeId::Star, eq_right_star).unwrap();
+    let eq_rep = starlang::repair::check_module_equivalence(eq_l.hub(), eq_r.hub(), 24);
+    let pair_eq = eq_rep
+        .functions
+        .iter()
+        .find(|f| f.name == "make_pair")
+        .unwrap();
+    assert!(
+        pair_eq.alpha_equivalent && pair_eq.equivalent,
+        "Expected make_pair with reordered struct fields and -5 vs (neg 5) to be α-equivalent"
+    );
+    let sum_eq = eq_rep
+        .functions
+        .iter()
+        .find(|f| f.name == "sum_gt")
+        .unwrap();
+    assert!(!sum_eq.equivalent);
+    let cex = sum_eq.distinguishing_counterexample.as_ref().unwrap();
+    assert_eq!(
+        cex.repro_by_spoke.len(),
+        SpokeId::ALL.len(),
+        "Bisimulation counterexample must populate repro_by_spoke for all 13 spokes"
+    );
+
+    // PBE Synthesizer with empty-list I/O example round-tripping across all 13 spokes
+    let synth_spec = starlang::synth::SynthSpec {
+        fn_name: "sum_positives".to_string(),
+        params: vec![("xs".to_string(), starlang::hub::Type::List(Box::new(starlang::hub::Type::Int)))],
+        ret_ty: starlang::hub::Type::Int,
+        examples: vec![
+            starlang::synth::IoExample {
+                args: vec![starlang::eval::Value::List(vec![])],
+                expected: starlang::eval::Value::Int(0),
+            },
+            starlang::synth::IoExample {
+                args: vec![starlang::eval::Value::List(vec![
+                    starlang::eval::Value::Int(-2),
+                    starlang::eval::Value::Int(3),
+                    starlang::eval::Value::Int(5),
+                ])],
+                expected: starlang::eval::Value::Int(8),
+            },
+        ],
+    };
+    let synth_rep = starlang::synth::synthesize_from_examples(&synth_spec);
+    assert!(synth_rep.ok, "Expected PBE synthesis to succeed");
+    let synth_star = &synth_rep.views_by_spoke["star"];
+    let synth_eng = StarEngine::from_source(SpokeId::Star, synth_star).unwrap();
+    for spoke in SpokeId::ALL {
+        let code = synth_eng.project(spoke);
+        let reparsed = lens_for(spoke)
+            .put(&code, synth_eng.hub())
+            .unwrap_or_else(|e| panic!("Synth spoke {:?} failed Put: {}\n{}", spoke, e, code));
+        assert_eq!(&reparsed, synth_eng.hub(), "Synth empty-list GetPut drift on {:?}", spoke);
+    }
+
+    // Set (`s = s + "a"`, `xs[0] = xs[0] + 1`) vs AddAssign (`s += "b"`, `xs[0] += 2`) round-trip & 14-engine parity
+    let set_vs_add_assign_star = r#"(fn main () -> Void
+  (let-mut s "x")
+  (set! s (+ s "a"))
+  (add! s "b")
+  (let-mut xs (list 10 20))
+  (set! (index xs 0) (+ (index xs 0) 1))
+  (add! (index xs 0) 2)
+  (print s (index xs 0)))
+"#;
+    let sva_eng = StarEngine::from_source(SpokeId::Star, set_vs_add_assign_star).unwrap();
+    for spoke in SpokeId::ALL {
+        let code = sva_eng.project(spoke);
+        let reparsed = lens_for(spoke)
+            .put(&code, sva_eng.hub())
+            .unwrap_or_else(|e| panic!("Set vs AddAssign {:?} failed Put: {}\n{}", spoke, e, code));
+        assert_eq!(
+            &reparsed,
+            sva_eng.hub(),
+            "Set vs AddAssign GetPut drift on {:?}:\n{}",
+            spoke,
+            code
+        );
+    }
+    let sva_runs = starlang::runner::run_all_spokes(&sva_eng);
+    assert_eq!(sva_runs.results.len(), 14);
+    for r in &sva_runs.results {
+        assert!(
+            r.ok && r.stdout.trim() == "xab 13",
+            "Engine {} failed or diverged on Set vs AddAssign: ok={} stdout={:?} stderr={:?}",
+            r.language,
+            r.ok,
+            r.stdout,
+            r.stderr
+        );
+    }
 }
 

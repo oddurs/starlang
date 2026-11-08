@@ -336,13 +336,29 @@ impl JavaEmitter {
                 AssignTarget::Index { base, index } => {
                     let idx_s = format!("(int) ({})", self.fmt_expr(index));
                     match op {
-                        AssignOp::Set => out.push_str(&format!(
-                            "{}{}.set({}, {});\n",
-                            pad,
-                            base,
-                            idx_s,
-                            self.fmt_expr(value)
-                        )),
+                        AssignOp::Set => {
+                            let collides = match value {
+                                Expr::Binary {
+                                    op: BinOp::Add | BinOp::Sub,
+                                    left,
+                                    ..
+                                } => matches!(
+                                    left.as_ref(),
+                                    Expr::Index { base: lb, index: li }
+                                        if **lb == Expr::Var(base.clone()) && li.as_ref() == index
+                                ),
+                                _ => false,
+                            };
+                            let suffix = if collides { " // @star-set" } else { "" };
+                            out.push_str(&format!(
+                                "{}{}.set({}, {});{}\n",
+                                pad,
+                                base,
+                                idx_s,
+                                self.fmt_expr(value),
+                                suffix
+                            ));
+                        }
                         AssignOp::AddAssign => out.push_str(&format!(
                             "{}{}.set({}, {}.get({}) + ({}));\n",
                             pad,
@@ -1670,32 +1686,45 @@ impl JavaParser {
                 let val_expr = self.parse_expr()?;
                 self.expect(&JavaTokKind::RParen, "')'")?;
                 self.expect(&JavaTokKind::Semi, "';'")?;
-                let (op, actual_val) = match &val_expr {
-                    Expr::Binary {
-                        op: bin_op @ (BinOp::Add | BinOp::Sub),
-                        left,
-                        right,
-                    } => {
-                        if let Expr::Index {
-                            base: gbase,
-                            index: gidx,
-                        } = left.as_ref()
-                        {
-                            if **gbase == Expr::Var(base_name.clone()) && **gidx == idx_expr {
-                                let aop = if *bin_op == BinOp::Add {
-                                    AssignOp::AddAssign
+                let force_set = if matches!(
+                    self.peek_kind(),
+                    Some(JavaTokKind::Comment(c)) if c.trim() == "@star-set"
+                ) {
+                    self.pos += 1;
+                    true
+                } else {
+                    false
+                };
+                let (op, actual_val) = if force_set {
+                    (AssignOp::Set, val_expr)
+                } else {
+                    match &val_expr {
+                        Expr::Binary {
+                            op: bin_op @ (BinOp::Add | BinOp::Sub),
+                            left,
+                            right,
+                        } => {
+                            if let Expr::Index {
+                                base: gbase,
+                                index: gidx,
+                            } = left.as_ref()
+                            {
+                                if **gbase == Expr::Var(base_name.clone()) && **gidx == idx_expr {
+                                    let aop = if *bin_op == BinOp::Add {
+                                        AssignOp::AddAssign
+                                    } else {
+                                        AssignOp::SubAssign
+                                    };
+                                    (aop, (**right).clone())
                                 } else {
-                                    AssignOp::SubAssign
-                                };
-                                (aop, (**right).clone())
+                                    (AssignOp::Set, val_expr)
+                                }
                             } else {
                                 (AssignOp::Set, val_expr)
                             }
-                        } else {
-                            (AssignOp::Set, val_expr)
                         }
+                        _ => (AssignOp::Set, val_expr),
                     }
-                    _ => (AssignOp::Set, val_expr),
                 };
                 return Ok(Some(Stmt::Assign {
                     id: 0,

@@ -763,9 +763,22 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
                         let val_s = self.fmt_expr(value);
                         match op {
                             AssignOp::Set => {
+                                let collides = match value {
+                                    Expr::Binary {
+                                        op: BinOp::Add | BinOp::Sub,
+                                        left,
+                                        ..
+                                    } => matches!(
+                                        left.as_ref(),
+                                        Expr::Index { base: lb, index: li }
+                                            if **lb == Expr::Var(base.clone()) && li.as_ref() == index
+                                    ),
+                                    _ => false,
+                                };
+                                let suffix = if collides { " // @star-set" } else { "" };
                                 out.push_str(&format!(
-                                    "{}{}.set({}, {});\n",
-                                    pad, base, idx_s, val_s
+                                    "{}{}.set({}, {});{}\n",
+                                    pad, base, idx_s, val_s, suffix
                                 ));
                             }
                             AssignOp::AddAssign if is_str => {
@@ -803,12 +816,21 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
                                 AssignOp::AddAssign => "+=",
                                 AssignOp::SubAssign => "-=",
                             };
+                            let collides = *op == AssignOp::Set
+                                && is_str
+                                && matches!(
+                                    value,
+                                    Expr::Binary { op: BinOp::Add, left, .. }
+                                        if **left == Expr::Var(v.clone())
+                                );
+                            let suffix = if collides { " // @star-set" } else { "" };
                             out.push_str(&format!(
-                                "{}{} {} {};\n",
+                                "{}{} {} {};{}\n",
                                 pad,
                                 v,
                                 op_s,
-                                self.fmt_expr(value)
+                                self.fmt_expr(value),
+                                suffix
                             ));
                         }
                     }
@@ -829,13 +851,26 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
                                 AssignOp::AddAssign => "+=",
                                 AssignOp::SubAssign => "-=",
                             };
+                            let collides = *op == AssignOp::Set
+                                && is_str
+                                && matches!(
+                                    value,
+                                    Expr::Binary { op: BinOp::Add, left, .. }
+                                        if matches!(
+                                            left.as_ref(),
+                                            Expr::FieldAccess { base: lb, field: lf }
+                                                if **lb == Expr::Var(base.clone()) && lf == field
+                                        )
+                                );
+                            let suffix = if collides { " // @star-set" } else { "" };
                             out.push_str(&format!(
-                                "{}{}.{} {} {};\n",
+                                "{}{}.{} {} {};{}\n",
                                 pad,
                                 base,
                                 field,
                                 op_s,
-                                self.fmt_expr(value)
+                                self.fmt_expr(value),
+                                suffix
                             ));
                         }
                     }
@@ -2394,18 +2429,28 @@ impl<'a> ZigParser<'a> {
                 matches!(self.peek_kind(), Some(ZTokKind::Ident(s)) if s == "starStrConcat");
             let rhs = self.parse_expr()?;
             self.expect(&ZTokKind::Semi, "';' after assignment")?;
-            let (final_op, final_rhs) = if op == AssignOp::Set && starts_with_str_concat {
-                match rhs {
-                    Expr::Binary {
-                        op: BinOp::Add,
-                        left,
-                        right,
-                    } if *left == lhs => (AssignOp::AddAssign, *right),
-                    other => (op, other),
-                }
+            let force_set = if matches!(
+                self.peek_kind(),
+                Some(ZTokKind::Comment(c)) if c.trim() == "@star-set"
+            ) {
+                self.pos += 1;
+                true
             } else {
-                (op, rhs)
+                false
             };
+            let (final_op, final_rhs) =
+                if op == AssignOp::Set && starts_with_str_concat && !force_set {
+                    match rhs {
+                        Expr::Binary {
+                            op: BinOp::Add,
+                            left,
+                            right,
+                        } if *left == lhs => (AssignOp::AddAssign, *right),
+                        other => (op, other),
+                    }
+                } else {
+                    (op, rhs)
+                };
             let target = match lhs {
                 Expr::Var(v) => AssignTarget::Var(v),
                 Expr::FieldAccess { base, field } => match *base {
@@ -2424,6 +2469,15 @@ impl<'a> ZigParser<'a> {
         }
 
         self.expect(&ZTokKind::Semi, "';' after expression")?;
+        let force_set = if matches!(
+            self.peek_kind(),
+            Some(ZTokKind::Comment(c)) if c.trim() == "@star-set"
+        ) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        };
 
         // Check `std.debug.assert(cond)` or `<base>.set(idx, val)`
         if let Some(cond) = extract_zig_assert_cond(lhs.clone()) {
@@ -2433,7 +2487,7 @@ impl<'a> ZigParser<'a> {
                 meta: Metadata::new(),
             }));
         }
-        if let Some(assign_stmt) = extract_starlist_set_stmt(&lhs) {
+        if let Some(assign_stmt) = extract_starlist_set_stmt(&lhs, force_set) {
             return Ok(Some(assign_stmt));
         }
 
@@ -3127,35 +3181,37 @@ fn extract_zig_assert_cond(expr: Expr) -> Option<Expr> {
     None
 }
 
-fn extract_starlist_set_stmt(expr: &Expr) -> Option<Stmt> {
+fn extract_starlist_set_stmt(expr: &Expr, force_set: bool) -> Option<Stmt> {
     if let Expr::Call { func, args } = expr {
         if func == "__starlist_set" && args.len() == 3 {
             if let Expr::Var(base_var) = &args[0] {
                 let idx = &args[1];
                 let val = &args[2];
                 // Detect `<base>.set(idx, <base>.get(idx) + v)` / `- v`!
-                if let Expr::Binary { op, left, right } = val {
-                    if matches!(op, BinOp::Add | BinOp::Sub) {
-                        if let Expr::Index {
-                            base: gbase,
-                            index: gidx,
-                        } = left.as_ref()
-                        {
-                            if **gbase == Expr::Var(base_var.clone()) && gidx.as_ref() == idx {
-                                return Some(Stmt::Assign {
-                                    id: 0,
-                                    target: AssignTarget::Index {
-                                        base: base_var.clone(),
-                                        index: idx.clone(),
-                                    },
-                                    op: if *op == BinOp::Add {
-                                        AssignOp::AddAssign
-                                    } else {
-                                        AssignOp::SubAssign
-                                    },
-                                    value: (**right).clone(),
-                                    meta: Metadata::new(),
-                                });
+                if !force_set {
+                    if let Expr::Binary { op, left, right } = val {
+                        if matches!(op, BinOp::Add | BinOp::Sub) {
+                            if let Expr::Index {
+                                base: gbase,
+                                index: gidx,
+                            } = left.as_ref()
+                            {
+                                if **gbase == Expr::Var(base_var.clone()) && gidx.as_ref() == idx {
+                                    return Some(Stmt::Assign {
+                                        id: 0,
+                                        target: AssignTarget::Index {
+                                            base: base_var.clone(),
+                                            index: idx.clone(),
+                                        },
+                                        op: if *op == BinOp::Add {
+                                            AssignOp::AddAssign
+                                        } else {
+                                            AssignOp::SubAssign
+                                        },
+                                        value: (**right).clone(),
+                                        meta: Metadata::new(),
+                                    });
+                                }
                             }
                         }
                     }

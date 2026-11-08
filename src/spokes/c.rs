@@ -961,12 +961,46 @@ impl CFmtCtx {
                         self.fmt_expr(value)
                     ));
                 } else {
+                    let collides_str_concat = *op == AssignOp::Set
+                        && (self.target_ty(target) == Some(Type::Str)
+                            || self.expr_ty(value) == Some(Type::Str))
+                        && match value {
+                            Expr::Binary {
+                                op: BinOp::Add,
+                                left,
+                                ..
+                            } => match (left.as_ref(), target) {
+                                (Expr::Var(lv), AssignTarget::Var(tv)) => lv == tv,
+                                (
+                                    Expr::FieldAccess { base, field },
+                                    AssignTarget::Field {
+                                        base: tb,
+                                        field: tf,
+                                    },
+                                ) => **base == Expr::Var(tb.clone()) && field == tf,
+                                (
+                                    Expr::Index { base, index },
+                                    AssignTarget::Index {
+                                        base: tb,
+                                        index: ti,
+                                    },
+                                ) => **base == Expr::Var(tb.clone()) && index.as_ref() == ti,
+                                _ => false,
+                            },
+                            _ => false,
+                        };
+                    let suffix = if collides_str_concat {
+                        " // @star-set"
+                    } else {
+                        ""
+                    };
                     out.push_str(&format!(
-                        "{}{} {} {};\n",
+                        "{}{} {} {};{}\n",
                         pad,
                         tgt,
                         op_str,
-                        self.fmt_expr(value)
+                        self.fmt_expr(value),
+                        suffix
                     ));
                 }
             }
@@ -2418,18 +2452,28 @@ impl CParser {
                 matches!(self.peek_kind(), Some(CTokKind::Ident(s)) if s == "star_str_concat");
             let rhs = self.parse_expr()?;
             self.expect(&CTokKind::Semi, "';' after assignment")?;
-            let (final_op, final_rhs) = if op == AssignOp::Set && starts_with_str_concat {
-                match rhs {
-                    Expr::Binary {
-                        op: BinOp::Add,
-                        left,
-                        right,
-                    } if *left == lhs => (AssignOp::AddAssign, *right),
-                    other => (op, other),
-                }
+            let force_set = if matches!(
+                self.peek_kind(),
+                Some(CTokKind::Comment(c)) if c.trim() == "@star-set"
+            ) {
+                self.pos += 1;
+                true
             } else {
-                (op, rhs)
+                false
             };
+            let (final_op, final_rhs) =
+                if op == AssignOp::Set && starts_with_str_concat && !force_set {
+                    match rhs {
+                        Expr::Binary {
+                            op: BinOp::Add,
+                            left,
+                            right,
+                        } if *left == lhs => (AssignOp::AddAssign, *right),
+                        other => (op, other),
+                    }
+                } else {
+                    (op, rhs)
+                };
             let target = match lhs {
                 Expr::Var(v) => AssignTarget::Var(v),
                 Expr::FieldAccess { base, field } => match *base {

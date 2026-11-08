@@ -277,6 +277,7 @@ struct SymState {
     ints: BTreeMap<String, IntDomain>,
     lens: BTreeMap<String, IntDomain>,
     bools: BTreeMap<String, BoolDomain>,
+    floats: BTreeSet<String>,
     /// Variables initialized as `let n = xs.len()`: narrowing `n` also narrows `lens[xs]`.
     len_aliases: BTreeMap<String, String>,
     /// Relational facts `(idx_var, list_var)` representing `idx_var < len(list_var)`.
@@ -284,19 +285,44 @@ struct SymState {
 }
 
 impl SymState {
-    fn from_fn(f: &FnDecl) -> Self {
+    fn from_fn(f: &FnDecl, hub: &HubModule) -> Self {
         let mut ints = BTreeMap::new();
         let mut lens = BTreeMap::new();
         let mut bools = BTreeMap::new();
+        let mut floats = BTreeSet::new();
+        for item in &hub.items {
+            match item {
+                Item::Function(func) if func.ret_ty == Type::Float => {
+                    floats.insert(format!("__fn::{}", func.name));
+                }
+                Item::Struct(st) => {
+                    for field in &st.fields {
+                        if field.ty == Type::Float {
+                            floats.insert(format!("__field::{}", field.name));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         for p in &f.params {
             match &p.ty {
                 Type::Int => {
                     ints.insert(p.name.clone(), IntDomain::top());
                 }
+                Type::Float => {
+                    floats.insert(p.name.clone());
+                }
                 Type::Bool => {
                     bools.insert(p.name.clone(), BoolDomain::top());
                 }
-                Type::List(_) | Type::Str => {
+                Type::List(inner) => {
+                    lens.insert(p.name.clone(), IntDomain::non_negative());
+                    if **inner == Type::Float {
+                        floats.insert(format!("__list_float::{}", p.name));
+                    }
+                }
+                Type::Str => {
                     lens.insert(p.name.clone(), IntDomain::non_negative());
                 }
                 _ => {}
@@ -306,6 +332,7 @@ impl SymState {
             ints,
             lens,
             bools,
+            floats,
             len_aliases: BTreeMap::new(),
             strict_lt_len: BTreeSet::new(),
         }
@@ -407,10 +434,13 @@ impl SymState {
             .cloned()
             .collect();
 
+        let floats: BTreeSet<String> = self.floats.union(&other.floats).cloned().collect();
+
         Self {
             ints,
             lens,
             bools,
+            floats,
             len_aliases,
             strict_lt_len,
         }
@@ -453,10 +483,13 @@ impl SymState {
             .cloned()
             .collect();
 
+        let floats: BTreeSet<String> = self.floats.union(&next.floats).cloned().collect();
+
         Self {
             ints,
             lens,
             bools,
+            floats,
             len_aliases,
             strict_lt_len,
         }
@@ -477,7 +510,7 @@ pub fn verify_module(hub: &HubModule) -> VerifyReport {
 
     for item in &hub.items {
         if let Item::Function(f) = item {
-            let init = SymState::from_fn(f);
+            let init = SymState::from_fn(f, hub);
             let _ = verifier.analyze_block(&f.name, f, &f.body, init, true);
         }
     }
@@ -540,9 +573,18 @@ impl<'a> ModuleVerifier<'a> {
     ) -> Option<SymState> {
         match stmt {
             Stmt::Comment { .. } => Some(state),
-            Stmt::Let { name, value, .. } => {
+            Stmt::Let {
+                name, ty, value, ..
+            } => {
                 if emit_checks {
                     self.check_expr_obligations(fn_name, fn_decl, value, &state);
+                }
+                if *ty == Some(Type::Float) || expr_is_float(value, &state) {
+                    state.floats.insert(name.clone());
+                    return Some(state);
+                }
+                if *ty == Some(Type::List(Box::new(Type::Float))) {
+                    state.floats.insert(format!("__list_float::{}", name));
                 }
                 if let Expr::Intrinsic(intr) = value {
                     if let Intrinsic::Len(Expr::Var(list_var)) = intr.as_ref() {
@@ -554,6 +596,13 @@ impl<'a> ModuleVerifier<'a> {
                     }
                 }
                 if let Expr::List(items) = value {
+                    if items
+                        .first()
+                        .map(|e| expr_is_float(e, &state))
+                        .unwrap_or(false)
+                    {
+                        state.floats.insert(format!("__list_float::{}", name));
+                    }
                     state
                         .lens
                         .insert(name.clone(), IntDomain::constant(items.len() as i64));
@@ -820,7 +869,19 @@ impl<'a> ModuleVerifier<'a> {
                 }
                 let enter_each = |s: &SymState| -> SymState {
                     let mut inner = s.clone();
-                    inner.set_int(var, IntDomain::top());
+                    let is_float_elem = match iter {
+                        Expr::Var(lv) => s.floats.contains(&format!("__list_float::{}", lv)),
+                        Expr::List(items) => items
+                            .first()
+                            .map(|e| expr_is_float(e, s))
+                            .unwrap_or(false),
+                        _ => false,
+                    };
+                    if is_float_elem {
+                        inner.floats.insert(var.clone());
+                    } else {
+                        inner.set_int(var, IntDomain::top());
+                    }
                     if let Expr::Var(lv) = iter {
                         let _ = inner.narrow_len(lv, IntDomain::range(1, INF));
                     }
@@ -933,7 +994,7 @@ impl<'a> ModuleVerifier<'a> {
                 self.check_expr_obligations(fn_name, fn_decl, right, state);
 
                 if matches!(op, BinOp::Div | BinOp::IntDiv | BinOp::Mod)
-                    && !expr_is_float(right, fn_decl)
+                    && !expr_is_float(right, state)
                 {
                     self.check_div_by_zero(fn_name, fn_decl, expr, right, state);
                 }
@@ -1602,6 +1663,23 @@ fn refine_comparison(
         }
     }
 
+    // Handle float comparisons without applying unsound integer ±1 interval narrowing
+    if expr_is_float(left, state) || expr_is_float(right, state) {
+        if let (Some(a), Some(b)) = (eval_const_float(left), eval_const_float(right)) {
+            let ok = match op {
+                BinOp::Eq => a == b,
+                BinOp::Ne => a != b,
+                BinOp::Lt => a < b,
+                BinOp::Le => a <= b,
+                BinOp::Gt => a > b,
+                BinOp::Ge => a >= b,
+                _ => true,
+            };
+            return if ok { Some(state.clone()) } else { None };
+        }
+        return Some(state.clone());
+    }
+
     // Only apply integer interval check when operands can be integer-typed
     if matches!(
         left,
@@ -1706,15 +1784,44 @@ fn refine_comparison(
     Some(next)
 }
 
-fn expr_is_float(expr: &Expr, f: &FnDecl) -> bool {
+fn eval_const_float(expr: &Expr) -> Option<f64> {
+    match expr {
+        Expr::Float(v) => Some(*v),
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: inner,
+        } => eval_const_float(inner).map(|v| -v),
+        _ => None,
+    }
+}
+
+fn expr_is_float(expr: &Expr, state: &SymState) -> bool {
     match expr {
         Expr::Float(_) => true,
-        Expr::Var(v) => f
-            .params
-            .iter()
-            .any(|p| p.name == *v && p.ty == Type::Float),
-        Expr::Unary { expr: inner, .. } => expr_is_float(inner, f),
-        Expr::Binary { left, right, .. } => expr_is_float(left, f) || expr_is_float(right, f),
+        Expr::Var(v) => state.floats.contains(v),
+        Expr::Unary { expr: inner, .. } => expr_is_float(inner, state),
+        Expr::Binary {
+            op: BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod,
+            left,
+            right,
+        } => expr_is_float(left, state) || expr_is_float(right, state),
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Abs(a) => expr_is_float(a, state),
+            Intrinsic::Min(a, b) | Intrinsic::Max(a, b) => {
+                expr_is_float(a, state) || expr_is_float(b, state)
+            }
+            _ => false,
+        },
+        Expr::Call { func, .. } => state.floats.contains(&format!("__fn::{}", func)),
+        Expr::FieldAccess { field, .. } => state.floats.contains(&format!("__field::{}", field)),
+        Expr::Index { base, .. } => match base.as_ref() {
+            Expr::Var(v) => state.floats.contains(&format!("__list_float::{}", v)),
+            Expr::List(items) => items
+                .first()
+                .map(|e| expr_is_float(e, state))
+                .unwrap_or(false),
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -1724,7 +1831,13 @@ fn collect_boundary_ints(hub: &HubModule) -> Vec<i64> {
     fn visit_stmts(stmts: &[Stmt], out: &mut BTreeSet<i64>) {
         for s in stmts {
             match s {
-                Stmt::Let { value, .. } | Stmt::Assign { value, .. } => visit_expr(value, out),
+                Stmt::Let { value, .. } => visit_expr(value, out),
+                Stmt::Assign { target, value, .. } => {
+                    if let AssignTarget::Index { index, .. } = target {
+                        visit_expr(index, out);
+                    }
+                    visit_expr(value, out);
+                }
                 Stmt::If {
                     cond,
                     then_body,
@@ -1800,6 +1913,28 @@ fn collect_boundary_ints(hub: &HubModule) -> Vec<i64> {
                     visit_expr(v, out);
                 }
             }
+            Expr::Intrinsic(intr) => match intr.as_ref() {
+                Intrinsic::Len(x)
+                | Intrinsic::Abs(x)
+                | Intrinsic::Upper(x)
+                | Intrinsic::Lower(x)
+                | Intrinsic::ToStr(x) => visit_expr(x, out),
+                Intrinsic::Min(a, b)
+                | Intrinsic::Max(a, b)
+                | Intrinsic::Push { list: a, value: b }
+                | Intrinsic::Contains {
+                    haystack: a,
+                    needle: b,
+                } => {
+                    visit_expr(a, out);
+                    visit_expr(b, out);
+                }
+                Intrinsic::Print(args) => {
+                    for a in args {
+                        visit_expr(a, out);
+                    }
+                }
+            },
             _ => {}
         }
     }

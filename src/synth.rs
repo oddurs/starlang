@@ -403,10 +403,41 @@ pub fn synthesize_from_examples(spec: &SynthSpec) -> SynthReport {
 
     // Also add a `main()` calling the first example so standalone spokes print a live preview
     if let Some(first_ex) = spec.examples.first() {
+        let mut main_body = Vec::new();
+        let mut call_args = Vec::with_capacity(first_ex.args.len());
+        for (a_idx, arg) in first_ex.args.iter().enumerate() {
+            if matches!(arg, Value::List(items) if items.is_empty()) {
+                let param_ty = spec
+                    .params
+                    .get(a_idx)
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or_else(|| Type::List(Box::new(Type::Int)));
+                let vname = format!("_ex_arg_{}", a_idx);
+                main_body.push(Stmt::Let {
+                    id: 0,
+                    name: vname.clone(),
+                    mutable: false,
+                    ty: Some(param_ty),
+                    value: Expr::List(Vec::new()),
+                    meta: Metadata::new(),
+                });
+                call_args.push(Expr::Var(vname));
+            } else {
+                call_args.push(val_to_expr(arg));
+            }
+        }
         let call_expr = Expr::Call {
             func: spec.fn_name.clone(),
-            args: first_ex.args.iter().map(val_to_expr).collect(),
+            args: call_args,
         };
+        main_body.push(Stmt::Expr {
+            id: 51,
+            expr: Expr::Intrinsic(Box::new(Intrinsic::Print(vec![
+                Expr::Str(format!("{}:", spec.fn_name)),
+                call_expr,
+            ]))),
+            meta: Metadata::new(),
+        });
         synth_hub.items.insert(
             1,
             Item::Function(FnDecl {
@@ -414,14 +445,7 @@ pub fn synthesize_from_examples(spec: &SynthSpec) -> SynthReport {
                 name: "main".to_string(),
                 params: Vec::new(),
                 ret_ty: Type::Void,
-                body: vec![Stmt::Expr {
-                    id: 51,
-                    expr: Expr::Intrinsic(Box::new(Intrinsic::Print(vec![
-                        Expr::Str(format!("{}:", spec.fn_name)),
-                        call_expr,
-                    ]))),
-                    meta: Metadata::new(),
-                }],
+                body: main_body,
                 comments: Vec::new(),
                 meta: Metadata::new(),
             }),
@@ -528,7 +552,7 @@ fn synthesize_scalar_program(
                 let sig_vec: Vec<Value> = v1
                     .iter()
                     .map(|val| match val {
-                        Value::Int(n) => Value::Int(if is_abs { n.saturating_abs() } else { n.saturating_neg() }),
+                        Value::Int(n) => Value::Int(if is_abs { n.wrapping_abs() } else { n.wrapping_neg() }),
                         _ => Value::Int(0),
                     })
                     .collect();
@@ -579,11 +603,11 @@ fn synthesize_scalar_program(
                         .zip(v2.iter())
                         .map(|(a, b)| match (a, b) {
                             (Value::Int(x), Value::Int(y)) => Value::Int(match op_kind {
-                                "add" => x.saturating_add(*y),
-                                "mul" => x.saturating_mul(*y),
+                                "add" => x.wrapping_add(*y),
+                                "mul" => x.wrapping_mul(*y),
                                 "min" => (*x).min(*y),
                                 "max" => (*x).max(*y),
-                                _ => x.saturating_sub(*y),
+                                _ => x.wrapping_sub(*y),
                             }),
                             _ => Value::Int(0),
                         })
@@ -926,16 +950,52 @@ fn check_body_on_examples(body: &[Stmt], spec: &SynthSpec) -> bool {
 }
 
 fn build_synth_unit_test(spec: &SynthSpec) -> TestDecl {
-    let mut body = Vec::with_capacity(spec.examples.len());
+    let mut body = Vec::with_capacity(spec.examples.len() * 2);
     for (idx, ex) in spec.examples.iter().enumerate() {
+        let mut call_args = Vec::with_capacity(ex.args.len());
+        for (a_idx, arg) in ex.args.iter().enumerate() {
+            if matches!(arg, Value::List(items) if items.is_empty()) {
+                let param_ty = spec
+                    .params
+                    .get(a_idx)
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or_else(|| Type::List(Box::new(Type::Int)));
+                let vname = format!("_ex_{}_arg_{}", idx, a_idx);
+                body.push(Stmt::Let {
+                    id: 0,
+                    name: vname.clone(),
+                    mutable: false,
+                    ty: Some(param_ty),
+                    value: Expr::List(Vec::new()),
+                    meta: Metadata::new(),
+                });
+                call_args.push(Expr::Var(vname));
+            } else {
+                call_args.push(val_to_expr(arg));
+            }
+        }
         let call = Expr::Call {
             func: spec.fn_name.clone(),
-            args: ex.args.iter().map(val_to_expr).collect(),
+            args: call_args,
+        };
+        let expected_expr = if matches!(&ex.expected, Value::List(items) if items.is_empty()) {
+            let vname = format!("_ex_{}_exp", idx);
+            body.push(Stmt::Let {
+                id: 0,
+                name: vname.clone(),
+                mutable: false,
+                ty: Some(spec.ret_ty.clone()),
+                value: Expr::List(Vec::new()),
+                meta: Metadata::new(),
+            });
+            Expr::Var(vname)
+        } else {
+            val_to_expr(&ex.expected)
         };
         body.push(Stmt::AssertEq {
             id: (30 + idx) as u64,
             left: call,
-            right: val_to_expr(&ex.expected),
+            right: expected_expr,
             meta: Metadata::new(),
         });
     }
@@ -986,6 +1046,17 @@ fn val_to_expr(v: &Value) -> Expr {
         Value::Bool(b) => Expr::Bool(*b),
         Value::Str(s) => Expr::Str(s.clone()),
         Value::List(items) => Expr::List(items.iter().map(val_to_expr).collect()),
+        Value::EnumVariant { enum_name, variant } => Expr::EnumVariant {
+            enum_name: enum_name.clone(),
+            variant: variant.clone(),
+        },
+        Value::Struct { name, fields } => Expr::StructInit {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(k, fv)| (k.clone(), val_to_expr(fv)))
+                .collect(),
+        },
         _ => Expr::Int(0),
     }
 }
