@@ -168,7 +168,7 @@ struct L1DataCacheSim {
 impl L1DataCacheSim {
     fn new() -> Self {
         Self {
-            sets: vec![Vec::with_capacity(8); 64],
+            sets: (0..64).map(|_| Vec::with_capacity(8)).collect(),
             last_line_by_stream: BTreeMap::new(),
             prefetch_queue: BTreeSet::new(),
         }
@@ -419,7 +419,7 @@ fn sim_stmts_microarch(
             Stmt::Let { value, .. } => {
                 acc.alu_uops += trip_multiplier;
                 acc.in_order_compute_cycles += trip_multiplier;
-                acc.ooo_compute_cycles += (trip_multiplier + 2) / 3;
+                acc.ooo_compute_cycles += trip_multiplier.div_ceil(3);
                 sim_expr_microarch(
                     fn_name,
                     value,
@@ -433,7 +433,7 @@ fn sim_stmts_microarch(
             Stmt::Assign { target, value, .. } => {
                 acc.alu_uops += trip_multiplier;
                 acc.in_order_compute_cycles += trip_multiplier;
-                acc.ooo_compute_cycles += (trip_multiplier + 2) / 3;
+                acc.ooo_compute_cycles += trip_multiplier.div_ceil(3);
                 if matches!(
                     target,
                     AssignTarget::Index { .. } | AssignTarget::Field { .. }
@@ -863,7 +863,7 @@ fn sim_expr_microarch(
                 _ => {
                     acc.alu_uops += trips;
                     acc.in_order_compute_cycles += trips;
-                    acc.ooo_compute_cycles += (trips + 3) / 4;
+                    acc.ooo_compute_cycles += trips.div_ceil(4);
                 }
             }
         }

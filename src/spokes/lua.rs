@@ -629,6 +629,7 @@ impl<'a> LuaFormatter<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn fmt_if_chain(
         &mut self,
         cond: &Expr,

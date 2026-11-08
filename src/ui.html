@@ -2375,6 +2375,7 @@
       });
       dockDrawersEl.classList.add("collapsed");
       document.querySelectorAll("#tool-strip button").forEach(b => b.classList.remove("active-tool"));
+      SPOKES.forEach(s => updateSpokeGutter(s, null));
     }
 
     function openExclusiveDrawer(drawerId, btnId) {
@@ -2689,6 +2690,7 @@
           status.textContent = skipSpoke ? "Projected (Hub → get)" : "Synced";
           if (skipSpoke) edge.setAttribute("class", "edge proj");
         }
+        updateSpokeGutter(s, null);
       });
     }
 
@@ -2748,7 +2750,7 @@
             document.getElementById(`pane-${s}`).classList.add("hidden");
             activeSpokeOrder = activeSpokeOrder.filter(x => x !== s);
           } else if (!isCurrentlyOn) {
-            const limit = currentLayoutMode === "focus" ? 1 : (currentLayoutMode === "pair" ? 2 : 3);
+            const limit = currentLayoutMode === "focus" ? 1 : (currentLayoutMode === "pair" ? 2 : (currentLayoutMode === "quad" ? 4 : 3));
             activeSpokeOrder = [s, ...activeSpokeOrder.filter(x => x !== s)];
             if (activeSpokeOrder.length > limit) {
               activeSpokeOrder = activeSpokeOrder.slice(0, limit);
@@ -3130,6 +3132,7 @@
           delta.style.display = "inline-block";
           delta.textContent = `⏱ L${ln}`;
         }
+        updateSpokeGutter(sp, ln || null);
       });
 
       const stepCard = document.createElement("div");
@@ -4272,12 +4275,23 @@
       if (data.ok) applySnapshot(data.snapshot, null);
     });
 
+    const samplesById = {};
+
     document.getElementById("sample-select").addEventListener("change", async e => {
       flashMessage("", false);
+      const id = e.target.value;
+      const sampleMeta = samplesById[id];
+      if (sampleMeta && sampleMeta.initial_spoke && currentLayoutMode !== "all") {
+        const initSpoke = sampleMeta.initial_spoke;
+        if (!activeSpokeOrder.slice(0, currentLayoutMode === "focus" ? 1 : (currentLayoutMode === "pair" ? 2 : (currentLayoutMode === "quad" ? 4 : 3))).includes(initSpoke)) {
+          activeSpokeOrder = [initSpoke, ...activeSpokeOrder.filter(x => x !== initSpoke)];
+          applyLayoutMode(currentLayoutMode);
+        }
+      }
       const res = await fetch("/api/sample", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: e.target.value })
+        body: JSON.stringify({ id })
       });
       const data = await res.json();
       if (data.ok) applySnapshot(data.snapshot, null);
@@ -4320,26 +4334,6 @@
     document.getElementById("vm-preview").addEventListener("click", () => {
       document.getElementById("debug-btn").click();
     });
-
-    // Hook into applySnapshot and renderDebugStep to keep line gutters & active line highlights synced
-    const _origApplySnapshot = applySnapshot;
-    applySnapshot = function(snap, skipSpoke) {
-      _origApplySnapshot(snap, skipSpoke);
-      SPOKES.forEach(s => updateSpokeGutter(s, null));
-    };
-
-    const _origRenderDebugStep = renderDebugStep;
-    renderDebugStep = function(idx) {
-      _origRenderDebugStep(idx);
-      if (lastDebugReport && lastDebugReport.steps && lastDebugReport.steps.length > 0) {
-        const clamped = Math.max(0, Math.min(lastDebugReport.steps.length - 1, idx));
-        const st = lastDebugReport.steps[clamped];
-        SPOKES.forEach(sp => {
-          const ln = st.spoke_lines && st.spoke_lines[sp];
-          updateSpokeGutter(sp, ln || null);
-        });
-      }
-    };
 
     /* =========================================================================
        COMMAND PALETTE (⌘K) & DESIGN SYSTEM MODAL CONTROLLERS
@@ -4392,7 +4386,13 @@
       cmdItems.slice(0, 24).forEach((it, idx) => {
         const row = document.createElement("div");
         row.className = "cmd-item" + (idx === cmdSelectedIdx ? " selected" : "");
-        row.innerHTML = `<span>${it.label}</span><span class="cmd-item-cat">${it.cat}</span>`;
+        const lblSpan = document.createElement("span");
+        lblSpan.textContent = it.label;
+        const catSpan = document.createElement("span");
+        catSpan.className = "cmd-item-cat";
+        catSpan.textContent = it.cat;
+        row.appendChild(lblSpan);
+        row.appendChild(catSpan);
         row.addEventListener("click", () => {
           cmdModal.classList.remove("open");
           it.action();
@@ -4436,10 +4436,12 @@
           e.preventDefault();
           cmdSelectedIdx = (cmdSelectedIdx + 1) % visibleCount;
           [...cmdList.children].forEach((c, i) => c.classList.toggle("selected", i === cmdSelectedIdx));
+          if (cmdList.children[cmdSelectedIdx]) cmdList.children[cmdSelectedIdx].scrollIntoView({ block: "nearest" });
         } else if (e.key === "ArrowUp" && visibleCount > 0) {
           e.preventDefault();
           cmdSelectedIdx = (cmdSelectedIdx - 1 + visibleCount) % visibleCount;
           [...cmdList.children].forEach((c, i) => c.classList.toggle("selected", i === cmdSelectedIdx));
+          if (cmdList.children[cmdSelectedIdx]) cmdList.children[cmdSelectedIdx].scrollIntoView({ block: "nearest" });
         } else if (e.key === "Enter" && cmdItems[cmdSelectedIdx]) {
           e.preventDefault();
           const chosen = cmdItems[cmdSelectedIdx];
@@ -4470,6 +4472,7 @@
       const data = await res.json();
       const sel = document.getElementById("sample-select");
       (data.samples || []).forEach(s => {
+        samplesById[s.id] = s;
         const opt = document.createElement("option");
         opt.value = s.id;
         opt.textContent = `${s.title} — ${s.description}`;

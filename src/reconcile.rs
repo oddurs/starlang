@@ -117,12 +117,11 @@ pub fn reconcile_modules(
         })
         .collect();
     for (s_ord, m_slot) in struct_matches.iter_mut().enumerate() {
-        if m_slot.is_none() && s_ord < prev_structs.len() && !matched_prev_structs[s_ord] {
-            if parsed_structs[s_ord].fields.len() == prev_structs[s_ord].fields.len() {
+        if m_slot.is_none() && s_ord < prev_structs.len() && !matched_prev_structs[s_ord]
+            && parsed_structs[s_ord].fields.len() == prev_structs[s_ord].fields.len() {
                 matched_prev_structs[s_ord] = true;
                 *m_slot = Some(s_ord);
             }
-        }
     }
 
     let parsed_enums: Vec<&EnumDecl> = parsed
@@ -134,12 +133,11 @@ pub fn reconcile_modules(
         })
         .collect();
     for (e_ord, m_slot) in enum_matches.iter_mut().enumerate() {
-        if m_slot.is_none() && e_ord < prev_enums.len() && !matched_prev_enums[e_ord] {
-            if parsed_enums[e_ord].variants.len() == prev_enums[e_ord].variants.len() {
+        if m_slot.is_none() && e_ord < prev_enums.len() && !matched_prev_enums[e_ord]
+            && parsed_enums[e_ord].variants.len() == prev_enums[e_ord].variants.len() {
                 matched_prev_enums[e_ord] = true;
                 *m_slot = Some(e_ord);
             }
-        }
     }
 
     let parsed_fns: Vec<&FnDecl> = parsed
@@ -151,12 +149,11 @@ pub fn reconcile_modules(
         })
         .collect();
     for (f_ord, m_slot) in fn_matches.iter_mut().enumerate() {
-        if m_slot.is_none() && f_ord < prev_fns.len() && !matched_prev_fns[f_ord] {
-            if parsed_fns[f_ord].params.len() == prev_fns[f_ord].params.len() {
+        if m_slot.is_none() && f_ord < prev_fns.len() && !matched_prev_fns[f_ord]
+            && parsed_fns[f_ord].params.len() == prev_fns[f_ord].params.len() {
                 matched_prev_fns[f_ord] = true;
                 *m_slot = Some(f_ord);
             }
-        }
     }
 
     for (t_ord, m_slot) in test_matches.iter_mut().enumerate() {
@@ -252,9 +249,9 @@ fn merge_meta(new_meta: &Metadata, prev_meta: Option<&Metadata>, edited_spoke: S
 
     let mut merged = Metadata::new();
     for (k, v) in prev {
-        if !k.starts_with(owned_prefix) && k != "explicit_mut" {
-            merged.insert(k.clone(), v.clone());
-        } else if k == "explicit_mut" && matches!(edited_spoke, SpokeId::Python | SpokeId::Go) {
+        if (!k.starts_with(owned_prefix) && k != "explicit_mut")
+            || (k == "explicit_mut" && matches!(edited_spoke, SpokeId::Python | SpokeId::Go))
+        {
             merged.insert(k.clone(), v.clone());
         }
     }

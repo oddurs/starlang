@@ -587,23 +587,20 @@ impl<'a> RenameWalkCtx<'a> {
                 Stmt::Match { expr, arms, .. } => {
                     self.walk_expr(expr, env);
                     for arm in arms {
-                        match &mut arm.pat {
-                            MatchPat::EnumVariant { enum_name, variant } => match self.target {
-                                RenameTarget::TypeName(old) if enum_name == old => {
-                                    *enum_name = self.new_name.to_string();
-                                    *self.count += 1;
-                                }
-                                RenameTarget::Variant {
-                                    enum_name: te,
-                                    variant: tv,
-                                } if enum_name == te && variant == tv => {
-                                    *variant = self.new_name.to_string();
-                                    *self.count += 1;
-                                }
-                                _ => {}
-                            },
+                        if let MatchPat::EnumVariant { enum_name, variant } = &mut arm.pat { match self.target {
+                            RenameTarget::TypeName(old) if enum_name == old => {
+                                *enum_name = self.new_name.to_string();
+                                *self.count += 1;
+                            }
+                            RenameTarget::Variant {
+                                enum_name: te,
+                                variant: tv,
+                            } if enum_name == te && variant == tv => {
+                                *variant = self.new_name.to_string();
+                                *self.count += 1;
+                            }
                             _ => {}
-                        }
+                        } }
                         let mut arm_env = env.clone();
                         self.walk_block(&mut arm.body, &mut arm_env);
                     }

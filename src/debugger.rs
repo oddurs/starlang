@@ -453,7 +453,7 @@ impl<'a> Recorder<'a> {
             .get(name)
             .ok_or_else(|| format!("unknown function '{}'", name))?;
         let mut env: BTreeMap<String, Value> = BTreeMap::new();
-        for (param, (_, val)) in f.params.iter().zip(args.into_iter()) {
+        for (param, (_, val)) in f.params.iter().zip(args) {
             env.insert(param.name.clone(), val);
         }
 
@@ -489,6 +489,7 @@ impl<'a> Recorder<'a> {
         Ok(DebugFlow::Next)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record_step(
         &mut self,
         stmt_id: NodeId,
@@ -988,6 +989,7 @@ impl<'a> Recorder<'a> {
         }
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn eval_expr(
         &mut self,
         fn_name: &str,
@@ -1151,7 +1153,7 @@ impl<'a> Recorder<'a> {
                     match (h, n) {
                         (Value::Str(hs), Value::Str(ns)) => Ok(Value::Bool(hs.contains(&ns))),
                         (Value::List(items), needle_val) => {
-                            Ok(Value::Bool(items.iter().any(|x| *x == needle_val)))
+                            Ok(Value::Bool(items.contains(&needle_val)))
                         }
                         _ => Err("contains type mismatch".to_string()),
                     }

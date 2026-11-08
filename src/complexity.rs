@@ -1145,7 +1145,7 @@ pub(crate) fn default_value_for_type(ty: &Type, hub: &HubModule, seed: usize) ->
     match ty {
         Type::Int => Value::Int(10 + (seed as i64) * 5),
         Type::Float => Value::Float(10.0 + (seed as f64) * 2.5),
-        Type::Bool => Value::Bool(seed % 2 == 0),
+        Type::Bool => Value::Bool(seed.is_multiple_of(2)),
         Type::Str => Value::Str(format!("item_{}", seed)),
         Type::Void => Value::Void,
         Type::List(inner) => Value::List(vec![

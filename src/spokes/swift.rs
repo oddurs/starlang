@@ -455,9 +455,7 @@ impl SwiftEmitter {
             }
             Expr::Unary { op, expr: inner } => {
                 let inner_s = if matches!(inner.as_ref(), Expr::Binary { .. } | Expr::Unary { .. })
-                {
-                    format!("({})", self.fmt_expr(inner))
-                } else if matches!(inner.as_ref(), Expr::Int(v) if *v < 0)
+                    || matches!(inner.as_ref(), Expr::Int(v) if *v < 0)
                     || matches!(inner.as_ref(), Expr::Float(v) if *v < 0.0)
                 {
                     format!("({})", self.fmt_expr(inner))

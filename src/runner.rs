@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -190,7 +190,7 @@ fn run_wasm_engine(hub: &crate::hub::HubModule) -> RuntimeOutput {
     }
 }
 
-fn run_rust(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_rust(dir: &Path, src: &str) -> RuntimeOutput {
     let rs_path = dir.join("prog.rs");
     let bin_path = dir.join("prog_rs");
     let start = Instant::now();
@@ -245,7 +245,7 @@ fn run_rust(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_zig(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_zig(dir: &Path, src: &str) -> RuntimeOutput {
     let zig_path = dir.join("prog.zig");
     let start = Instant::now();
     if let Err(e) = fs::write(&zig_path, src) {
@@ -281,7 +281,7 @@ fn run_zig(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_c(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_c(dir: &Path, src: &str) -> RuntimeOutput {
     let c_path = dir.join("prog.c");
     let bin_path = dir.join("prog_c");
     let start = Instant::now();
@@ -338,7 +338,7 @@ fn run_c(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_cpp(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_cpp(dir: &Path, src: &str) -> RuntimeOutput {
     // Ensure STL PCH is warmed once per process, then start timer for C++ compilation + execution
     let pch = ensure_cpp_pch();
     let cpp_path = dir.join("prog.cpp");
@@ -395,7 +395,7 @@ fn run_cpp(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_swift(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_swift(dir: &Path, src: &str) -> RuntimeOutput {
     let swift_path = dir.join("prog.swift");
     let bin_path = dir.join("prog_swift");
     let start = Instant::now();
@@ -449,7 +449,7 @@ fn run_swift(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_java(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_java(dir: &Path, src: &str) -> RuntimeOutput {
     let java_path = dir.join("prog.java");
     let start = Instant::now();
     if let Err(e) = fs::write(&java_path, src) {
@@ -509,7 +509,7 @@ fn run_java(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_go(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_go(dir: &Path, src: &str) -> RuntimeOutput {
     let go_path = dir.join("prog.go");
     let start = Instant::now();
     if let Err(e) = fs::write(&go_path, src) {
@@ -539,7 +539,7 @@ fn run_go(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_python(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_python(dir: &Path, src: &str) -> RuntimeOutput {
     let py_path = dir.join("prog.py");
     let start = Instant::now();
     if let Err(e) = fs::write(&py_path, src) {
@@ -569,7 +569,7 @@ fn run_python(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_ruby(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_ruby(dir: &Path, src: &str) -> RuntimeOutput {
     let rb_path = dir.join("prog.rb");
     let start = Instant::now();
     if let Err(e) = fs::write(&rb_path, src) {
@@ -599,7 +599,7 @@ fn run_ruby(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_lua(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_lua(dir: &Path, src: &str) -> RuntimeOutput {
     let lua_path = dir.join("prog.lua");
     let start = Instant::now();
     if let Err(e) = fs::write(&lua_path, src) {
@@ -629,7 +629,7 @@ fn run_lua(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_perl(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_perl(dir: &Path, src: &str) -> RuntimeOutput {
     let pl_path = dir.join("prog.pl");
     let start = Instant::now();
     if let Err(e) = fs::write(&pl_path, src) {
@@ -659,7 +659,7 @@ fn run_perl(dir: &PathBuf, src: &str) -> RuntimeOutput {
     }
 }
 
-fn run_typescript(dir: &PathBuf, src: &str) -> RuntimeOutput {
+fn run_typescript(dir: &Path, src: &str) -> RuntimeOutput {
     let ts_path = dir.join("prog.ts");
     let start = Instant::now();
     if let Err(e) = fs::write(&ts_path, src) {

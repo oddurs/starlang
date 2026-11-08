@@ -520,7 +520,7 @@ fn allocate_fn_registers(
         });
     }
 
-    let stack_frame_bytes = ((next_spill_offset + 15) / 16) * 16;
+    let stack_frame_bytes = next_spill_offset.div_ceil(16) * 16;
     let mermaid_graph = build_interference_mermaid(&f.name, &intervals, &edges);
     let aarch64_asm = emit_aarch64_assembly(&f.name, &insts, &intervals, stack_frame_bytes);
     let x86_64_asm = emit_x86_64_assembly(&f.name, &insts, &intervals, stack_frame_bytes);
@@ -1694,11 +1694,10 @@ pub fn analyze_escape_and_lifetimes(hub: &HubModule) -> EscapeAnalysisReport {
     }
 
     let eliminated = stack_promoted_sites + rvo_eliminated_sites;
-    let heap_reduction_pct = if total_alloc_sites == 0 {
-        100
-    } else {
-        ((eliminated * 100) / total_alloc_sites).min(100) as u8
-    };
+    let heap_reduction_pct = (eliminated * 100)
+        .checked_div(total_alloc_sites)
+        .map(|v| v.min(100) as u8)
+        .unwrap_or(100);
 
     EscapeAnalysisReport {
         total_functions: functions.len(),

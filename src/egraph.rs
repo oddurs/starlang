@@ -2180,7 +2180,7 @@ pub fn partial_eval_module(hub: &HubModule) -> PartialEvalReport {
         let mut inserted = false;
         for item in new_items {
             if !inserted && matches!(&item, Item::Function(f) if f.name == "main") {
-                for (_, sf) in &synthesized_fns {
+                for sf in synthesized_fns.values() {
                     with_specs.push(Item::Function(sf.clone()));
                 }
                 inserted = true;
@@ -2188,7 +2188,7 @@ pub fn partial_eval_module(hub: &HubModule) -> PartialEvalReport {
             with_specs.push(item);
         }
         if !inserted {
-            for (_, sf) in &synthesized_fns {
+            for sf in synthesized_fns.values() {
                 with_specs.push(Item::Function(sf.clone()));
             }
         }
@@ -2286,14 +2286,15 @@ fn collect_modified_vars(stmts: &[Stmt], out: &mut BTreeSet<String>) {
                 out.insert(var.clone());
                 collect_modified_vars(body, out);
             }
-            Stmt::Expr { expr, .. } => {
-                if let Expr::Intrinsic(intr) = expr {
-                    if let Intrinsic::Push {
-                        list: Expr::Var(v), ..
-                    } = intr.as_ref()
-                    {
-                        out.insert(v.clone());
-                    }
+            Stmt::Expr {
+                expr: Expr::Intrinsic(intr),
+                ..
+            } => {
+                if let Intrinsic::Push {
+                    list: Expr::Var(v), ..
+                } = intr.as_ref()
+                {
+                    out.insert(v.clone());
                 }
             }
             _ => {}
@@ -2326,11 +2327,10 @@ fn contains_break_continue_or_return(stmts: &[Stmt]) -> bool {
             }
             Stmt::While { body, .. }
             | Stmt::ForEach { body, .. }
-            | Stmt::ForRange { body, .. } => {
-                if contains_break_continue_or_return(body) {
+            | Stmt::ForRange { body, .. }
+                if contains_break_continue_or_return(body) => {
                     return true;
                 }
-            }
             _ => {}
         }
     }

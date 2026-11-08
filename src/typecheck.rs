@@ -120,15 +120,14 @@ impl HubChecker {
     fn validate_type_exists(&mut self, ty: &Type, node_id: NodeId, ctx: &str) {
         match ty {
             Type::List(inner) => self.validate_type_exists(inner, node_id, ctx),
-            Type::Named(name) => {
-                if !self.structs.contains_key(name) && !self.enums.contains_key(name) {
+            Type::Named(name)
+                if !self.structs.contains_key(name) && !self.enums.contains_key(name) => {
                     self.diags.push(SemanticDiagnostic {
                         node_id,
                         context: ctx.to_string(),
                         message: format!("unknown struct or enum type '{}'", name),
                     });
                 }
-            }
             _ => {}
         }
     }

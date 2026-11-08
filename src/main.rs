@@ -377,7 +377,7 @@ fn parse_target_spoke(args: &[String]) -> Result<Option<SpokeId>, String> {
 
 fn run_convert(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang convert <file> [--to rust|zig|c|cpp|swift|java|go|python|ruby|ts|star]"
+        "usage: starlang convert <file> [--to rust|zig|c|cpp|swift|java|go|python|ruby|lua|perl|ts|star]"
             .to_string()
     })?;
     let (eng, src_spoke) = load_engine_from_path(input)?;
@@ -3515,7 +3515,7 @@ fn run_fuzz_cli(args: &[String]) -> Result<(), String> {
 fn run_refactor(args: &[String]) -> Result<(), String> {
     if args.len() < 3 {
         return Err(
-            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|zig|c|cpp|swift|java|go|python|ruby|ts|star]"
+            "usage: starlang refactor <file> <symbol> <new_name> [--to rust|zig|c|cpp|swift|java|go|python|ruby|lua|perl|ts|star]"
                 .to_string(),
         );
     }
@@ -3533,7 +3533,7 @@ fn run_refactor(args: &[String]) -> Result<(), String> {
 
 fn run_optimize(args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or_else(|| {
-        "usage: starlang optimize <file> [--to rust|zig|c|cpp|swift|java|go|python|ruby|ts|star]"
+        "usage: starlang optimize <file> [--to rust|zig|c|cpp|swift|java|go|python|ruby|lua|perl|ts|star]"
             .to_string()
     })?;
     let (mut eng, src_spoke) = load_engine_from_path(input)?;

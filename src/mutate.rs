@@ -295,11 +295,9 @@ fn mutate_with_survivor_hubs(hub: &HubModule) -> (MutationReport, Vec<CandidateM
 
     let total_mutants = outcomes.len();
     let survived = total_mutants - killed_count;
-    let score_pct = if total_mutants == 0 {
-        100
-    } else {
-        ((killed_count * 100) / total_mutants) as u8
-    };
+    let score_pct = (killed_count * 100)
+        .checked_div(total_mutants)
+        .unwrap_or(100) as u8;
 
     let report = MutationReport {
         total_mutants,

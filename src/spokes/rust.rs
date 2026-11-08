@@ -45,8 +45,10 @@ impl LanguageLens for RustLens {
     }
 }
 
+type RustFnSig = (Vec<(Type, Option<String>)>, Type);
+
 struct RustFmtCtx {
-    fn_sigs: HashMap<String, (Vec<(Type, Option<String>)>, Type)>,
+    fn_sigs: HashMap<String, RustFnSig>,
     fn_ret_types: HashMap<String, Type>,
     struct_fields: HashMap<String, HashMap<String, Type>>,
     enum_names: HashSet<String>,
@@ -193,9 +195,8 @@ impl RustFmtCtx {
             }
         }
 
-        let vis = if f.name == "main" {
-            ""
-        } else if f.meta.get("rust.pub").map(|v| v.as_str()) == Some("false") {
+        let vis = if f.name == "main" || f.meta.get("rust.pub").map(|v| v.as_str()) == Some("false")
+        {
             ""
         } else {
             "pub "
@@ -485,7 +486,7 @@ impl RustFmtCtx {
                 if matches!(self.local_env.get(name), Some(Type::Str)) {
                     return format!("{}.to_string()", name);
                 }
-                return format!("{}.to_vec()", name);
+                format!("{}.to_vec()", name)
             }
             Expr::Var(name) => {
                 if let Some(ty) = self.local_env.get(name) {

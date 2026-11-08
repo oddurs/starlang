@@ -1345,12 +1345,10 @@ impl TsParser {
             let _ = self.expect_ident()?;
         } else {
             let _ = self.expect_ident()?;
-            if !self.eat(&TsTokKind::PlusPlus) {
-                if self.eat(&TsTokKind::PlusEq) {
-                    let _ = self.parse_expr()?;
-                } else if self.eat(&TsTokKind::Eq) {
-                    let _ = self.parse_expr()?;
-                }
+            if !self.eat(&TsTokKind::PlusPlus)
+                && (self.eat(&TsTokKind::PlusEq) || self.eat(&TsTokKind::Eq))
+            {
+                let _ = self.parse_expr()?;
             }
         }
         self.expect(&TsTokKind::RParen, "')' after for header")?;

@@ -770,7 +770,7 @@ impl<'a, 'b> HubVm<'a, 'b> {
                 match (h, n) {
                     (Value::Str(hs), Value::Str(ns)) => Ok(Value::Bool(hs.contains(&ns))),
                     (Value::List(items), target) => {
-                        Ok(Value::Bool(items.iter().any(|x| *x == target)))
+                        Ok(Value::Bool(items.contains(&target)))
                     }
                     _ => Err("contains() expects (Str, Str) or (List<T>, T)".to_string()),
                 }

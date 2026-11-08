@@ -40,7 +40,7 @@ pub fn serve_web_studio(port: u16) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| format!("failed to bind http://{}: {}", addr, e))?;
 
-    println!("StarLang v2.2 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc, Escape Analysis, Superscalar OoO CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Prover & Relational SQL Optimizer Studio running at:");
+    println!("StarLang v2.6 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare WP, Concolic, Taint, E-Graph, Futamura PEval, Polyhedral SIMD, WCET, Chaitin-Briggs RegAlloc, Escape Analysis, Superscalar OoO CPU/Cache/Branch Sim, List Scheduler, Forward/Reverse AutoDiff, Lipschitz Stability, Lamport Vector-Clock Actor Verifier, TLA+ Model Checker, ZK R1CS Prover, Relational SQL Optimizer, Liquid Refinement Types, Probabilistic MCMC/Entropy, Reversible Quantum Circuit Compiler, Minimal DFA Synthesizer, HLS SystemVerilog RTL Compiler, SIMT GPU Kernel Synthesizer, FHE Ring-LWE Blinded Circuit Compiler & Reynolds Separation Logic Studio running at:");
     println!("  -> http://{}", addr);
     println!("Edit Rust, Zig, C11, C++, Swift, Java, Go, Python, Ruby, LuaJIT, Perl 5, TypeScript, or Star S-Expr to sync all 13 spokes, compile native .wasm/.wat, time-travel debug, profile Big-O & gas, run QuickCheck shrinking, synthesize automated program repairs, 3-way AST merge, symbolic safety proofs & 14-engine verification.\n");
 
@@ -53,13 +53,11 @@ pub fn serve_listener(listener: TcpListener) -> Result<(), String> {
         .map_err(|d| d.to_string())?;
     let shared = Arc::new(Mutex::new(engine));
 
-    for stream in listener.incoming() {
-        if let Ok(stream) = stream {
-            let shared_clone = Arc::clone(&shared);
-            thread::spawn(move || {
-                let _ = handle_client(stream, shared_clone);
-            });
-        }
+    for stream in listener.incoming().flatten() {
+        let shared_clone = Arc::clone(&shared);
+        thread::spawn(move || {
+            let _ = handle_client(stream, shared_clone);
+        });
     }
     Ok(())
 }

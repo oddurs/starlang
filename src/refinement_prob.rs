@@ -162,7 +162,7 @@ fn infer_fn_liquid_refinements(f: &FnDecl) -> FunctionRefinementReport {
     );
 
     let mut bindings: Vec<RefinedBindingEntry> = Vec::new();
-    let mut env_bounds: BTreeMap<String, (Option<i64>, Option<i64>, Vec<String>)> = BTreeMap::new();
+    let mut env_bounds: EnvBoundsMap = BTreeMap::new();
 
     // 1. Seed parameter refinements from domain types and usage guards
     for p in &f.params {
@@ -310,9 +310,11 @@ fn infer_fn_liquid_refinements(f: &FnDecl) -> FunctionRefinementReport {
     }
 }
 
+type EnvBoundsMap = BTreeMap<String, (Option<i64>, Option<i64>, Vec<String>)>;
+
 fn infer_stmts_refinements(
     stmts: &[Stmt],
-    env_bounds: &mut BTreeMap<String, (Option<i64>, Option<i64>, Vec<String>)>,
+    env_bounds: &mut EnvBoundsMap,
     bindings: &mut Vec<RefinedBindingEntry>,
     horn_clauses: &mut Vec<HornClauseObligation>,
     fixpoint_iterations: &mut usize,
@@ -549,7 +551,7 @@ fn infer_stmts_refinements(
 
 fn check_expr_safety_horns(
     expr: &Expr,
-    env_bounds: &BTreeMap<String, (Option<i64>, Option<i64>, Vec<String>)>,
+    env_bounds: &EnvBoundsMap,
     horn_clauses: &mut Vec<HornClauseObligation>,
     path_guard: &str,
 ) {
@@ -630,7 +632,7 @@ fn check_expr_safety_horns(
 
 fn refine_expr(
     expr: &Expr,
-    env_bounds: &BTreeMap<String, (Option<i64>, Option<i64>, Vec<String>)>,
+    env_bounds: &EnvBoundsMap,
 ) -> (Option<i64>, Option<i64>, Vec<String>) {
     match expr {
         Expr::Int(n) => {
@@ -770,9 +772,7 @@ fn build_smtlib2_horn_script(
             "; [CHC #{} · {}] {}",
             c.clause_id, c.kind, c.horn_implication
         ));
-        lines.push(format!(
-            "(assert (forall ((nu Int)) (=> (>= nu 0) (>= nu 0))))"
-        ));
+        lines.push("(assert (forall ((nu Int)) (=> (>= nu 0) (>= nu 0))))".to_string());
     }
     lines.push("(check-sat)".to_string());
     lines.join("\n")
@@ -1209,13 +1209,7 @@ fn build_histogram(sorted: &[i64], total: usize) -> Vec<HistogramBucket> {
         };
         let count = sorted
             .iter()
-            .filter(|&&v| {
-                if b + 1 == bins {
-                    v >= lo && v <= hi
-                } else {
-                    v >= lo && v <= hi
-                }
-            })
+            .filter(|&&v| v >= lo && v <= hi)
             .count();
         let prob = (count as f64) / (total.max(1) as f64);
         let bar_len = ((prob * 20.0).round() as usize).max(if count > 0 { 1 } else { 0 });

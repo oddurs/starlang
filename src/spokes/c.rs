@@ -2641,11 +2641,10 @@ impl CParser {
         for en in &self.known_enums {
             let pref = format!("{}_", en);
             if let Some(rest) = ident.strip_prefix(&pref) {
-                if !rest.is_empty() {
-                    if best.as_ref().map(|(b, _)| en.len() > b.len()).unwrap_or(true) {
+                if !rest.is_empty()
+                    && best.as_ref().map(|(b, _)| en.len() > b.len()).unwrap_or(true) {
                         best = Some((en.clone(), rest.to_string()));
                     }
-                }
             }
         }
         best

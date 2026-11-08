@@ -616,10 +616,10 @@ fn gen_value_for_type(
             }
         }
         Type::Float => Value::Float((rng.range_i64(0, 400) as f64) / 2.0),
-        Type::Bool => Value::Bool(rng.next_u64() % 2 == 0),
+        Type::Bool => Value::Bool(rng.next_u64().is_multiple_of(2)),
         Type::Str => {
             if let Some(Value::Str(s)) = seed_val {
-                if trial_idx % 2 == 0 {
+                if trial_idx.is_multiple_of(2) {
                     return Value::Str(s.clone());
                 }
             }

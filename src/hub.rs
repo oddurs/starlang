@@ -778,11 +778,7 @@ fn normalize_block(
                 if mutated.contains(name) {
                     *mutable = true;
                     meta.remove("explicit_mut");
-                } else if meta.get("explicit_mut").map(|s| s.as_str()) == Some("true") {
-                    *mutable = true;
-                } else {
-                    *mutable = false;
-                }
+                } else { *mutable = meta.get("explicit_mut").map(|s| s.as_str()) == Some("true"); }
 
                 if ty.is_none() {
                     if let Expr::List(items) = value {

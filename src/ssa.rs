@@ -1060,15 +1060,14 @@ pub fn infer_hoare_contracts(hub: &HubModule) -> HoareContractReport {
                     Type::List(_) => {
                         requires.push(format!("len({}) >= 0", p.name));
                     }
-                    Type::Int => {
-                        if p.name.contains("cap")
+                    Type::Int
+                        if (p.name.contains("cap")
                             || p.name.contains("budget")
                             || p.name.contains("limit")
-                            || p.name.contains("window")
-                        {
+                            || p.name.contains("window"))
+                        => {
                             requires.push(format!("{} >= 0", p.name));
                         }
-                    }
                     _ => {}
                 }
             }

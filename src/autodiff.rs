@@ -1239,6 +1239,7 @@ fn audit_fn_stability(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scan_stmts_stability(
     fn_name: &str,
     stmts: &[Stmt],
@@ -1369,6 +1370,7 @@ fn scan_stmts_stability(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
 fn scan_expr_stability(
     fn_name: &str,
     expr: &Expr,

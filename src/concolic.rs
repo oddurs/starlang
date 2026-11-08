@@ -240,11 +240,10 @@ pub fn explore_concolic_paths(hub: &HubModule) -> ConcolicReport {
         }
 
         let cov_slots = hit_slots.len().min(all_branch_slots);
-        let pct = if all_branch_slots == 0 {
-            100
-        } else {
-            ((cov_slots * 100) / all_branch_slots).min(100) as u8
-        };
+        let pct = (cov_slots * 100)
+            .checked_div(all_branch_slots)
+            .map(|v| v.min(100) as u8)
+            .unwrap_or(100);
 
         total_paths += paths.len();
         total_branches += all_branch_slots;
@@ -284,11 +283,10 @@ pub fn explore_concolic_paths(hub: &HubModule) -> ConcolicReport {
         );
     }
 
-    let branch_coverage_pct = if total_branches == 0 {
-        100
-    } else {
-        ((covered_branches * 100) / total_branches).min(100) as u8
-    };
+    let branch_coverage_pct = (covered_branches * 100)
+        .checked_div(total_branches)
+        .map(|v| v.min(100) as u8)
+        .unwrap_or(100);
 
     ConcolicReport {
         total_functions: functions.len(),

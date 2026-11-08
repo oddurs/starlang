@@ -1322,9 +1322,7 @@ fn eval_int_domain(expr: &Expr, state: &SymState) -> IntDomain {
             Intrinsic::Len(_) => IntDomain::non_negative(),
             Intrinsic::Abs(e) => {
                 let d = eval_int_domain(e, state);
-                if d.is_empty() {
-                    d
-                } else if d.lo >= 0 {
+                if d.is_empty() || d.lo >= 0 {
                     d
                 } else if d.hi <= 0 {
                     IntDomain::range(-d.hi, -d.lo)

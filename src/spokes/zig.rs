@@ -117,10 +117,7 @@ impl ZigFormatter {
     }
 
     fn type_has_list(ty: &Type) -> bool {
-        match ty {
-            Type::List(_) => true,
-            _ => false,
-        }
+        matches!(ty, Type::List(_))
     }
 
     fn type_needs_deep_eql(&self, ty: &Type) -> bool {
@@ -306,11 +303,10 @@ impl ZigFormatter {
                     BinOp::Add if lty == Some(Type::Str) => {
                         u.need_str_concat = true;
                     }
-                    BinOp::Eq | BinOp::Ne => {
-                        if lty.as_ref().map(|t| self.type_needs_deep_eql(t)).unwrap_or(false) {
+                    BinOp::Eq | BinOp::Ne
+                        if lty.as_ref().map(|t| self.type_needs_deep_eql(t)).unwrap_or(false) => {
                             u.need_eql = true;
                         }
-                    }
                     _ => {}
                 }
             }
@@ -955,6 +951,7 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn fmt_if_chain(
         &mut self,
         cond: &Expr,
@@ -1412,11 +1409,10 @@ fn stmts_mutate_var(stmts: &[Stmt], target_var: &str) -> bool {
                     return true;
                 }
             }
-            Stmt::Expr { expr, .. } => {
-                if expr_mutates_var(expr, target_var) {
+            Stmt::Expr { expr, .. }
+                if expr_mutates_var(expr, target_var) => {
                     return true;
                 }
-            }
             _ => {}
         }
     }
@@ -2686,8 +2682,8 @@ impl<'a> ZigParser<'a> {
                         continue;
                     }
                     // `std.testing.expect(...)` or `std.debug.assert(...)`
-                    if base_name == "std" {
-                        if self.eat(&ZTokKind::Dot) {
+                    if base_name == "std"
+                        && self.eat(&ZTokKind::Dot) {
                             let leaf = self.expect_ident("std member")?;
                             if self.eat(&ZTokKind::LParen) {
                                 let args = self.parse_arg_list()?;
@@ -2698,7 +2694,6 @@ impl<'a> ZigParser<'a> {
                                 continue;
                             }
                         }
-                    }
                 }
 
                 if self.eat(&ZTokKind::LParen) {

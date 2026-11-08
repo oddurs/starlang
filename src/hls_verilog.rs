@@ -530,21 +530,21 @@ fn extract_cdfg_ops_from_stmts(
                     extract_cdfg_ops_from_stmts(&arm.body, in_loop, out, reg_signals);
                 }
             }
-            Stmt::Return { value, .. } => {
-                if let Some(v) = value {
-                    let (fu, delay_ns, cycle_cost) = classify_expr_fu(v);
-                    let rhs = expr_to_verilog_rhs(v);
-                    out.push(RawCdfgOp {
-                        label: "RET_LATCH".to_string(),
-                        fu,
-                        delay_ns,
-                        cycle_cost,
-                        rtl_assign: format!("result_o <= {};", rhs),
-                        source_expr: format!("return {}", format_expr_compact(v)),
-                        depends_on_prev: !out.is_empty(),
-                        is_loop_carried: in_loop,
-                    });
-                }
+            Stmt::Return {
+                value: Some(v), ..
+            } => {
+                let (fu, delay_ns, cycle_cost) = classify_expr_fu(v);
+                let rhs = expr_to_verilog_rhs(v);
+                out.push(RawCdfgOp {
+                    label: "RET_LATCH".to_string(),
+                    fu,
+                    delay_ns,
+                    cycle_cost,
+                    rtl_assign: format!("result_o <= {};", rhs),
+                    source_expr: format!("return {}", format_expr_compact(v)),
+                    depends_on_prev: !out.is_empty(),
+                    is_loop_carried: in_loop,
+                });
             }
             Stmt::Expr { expr, .. } => {
                 let (fu, delay_ns, cycle_cost) = classify_expr_fu(expr);

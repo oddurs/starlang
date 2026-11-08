@@ -902,11 +902,13 @@ fn parse_rbs_fields_annot(
     Ok(map)
 }
 
+type RbsParsedSig = (HashMap<String, Type>, Vec<Type>, Type);
+
 fn parse_rbs_fn_sig(
     annot: &str,
     line: usize,
     col: usize,
-) -> Result<(HashMap<String, Type>, Vec<Type>, Type), Diagnostic> {
+) -> Result<RbsParsedSig, Diagnostic> {
     let mut by_name = HashMap::new();
     let mut positional = Vec::new();
     let s = annot.trim();
@@ -1334,7 +1336,7 @@ impl RubyParser {
     fn at_block_terminator(&self, terminators: &[&str]) -> bool {
         match self.peek_kind() {
             None => true,
-            Some(RbTokKind::Ident(s)) => terminators.iter().any(|t| *t == s.as_str()),
+            Some(RbTokKind::Ident(s)) => terminators.contains(&s.as_str()),
             _ => false,
         }
     }

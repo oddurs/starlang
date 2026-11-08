@@ -553,9 +553,7 @@ fn build_mermaid_quantum_circuit(
     lines.push(
         "  F --> Copy[\"Stage 2: CNOT Fanout\\n|out⟩ ⊕= |f(x)⟩\"]".to_string(),
     );
-    lines.push(format!(
-        "  Copy --> Uncomp[\"Stage 3: Bennett Uncompute F†\\nRestores ancillas to |0⟩\"]"
-    ));
+    lines.push("  Copy --> Uncomp[\"Stage 3: Bennett Uncompute F†\\nRestores ancillas to |0⟩\"]".to_string());
     lines.push(format!(
         "  Uncomp --> Grover[\"Stage 4: Grover Oracle\\n2|s⟩⟨s| - I on `{}`\"]",
         f.name

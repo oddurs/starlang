@@ -1087,15 +1087,13 @@ fn prescan_java_types(
                                 // Field declaration at sub_depth == 1 ends with `;`: `<Type> <fname>;`
                                 JavaTokKind::Semi if sub_depth == 1 && j >= 2 => {
                                     if let JavaTokKind::Ident(fname) = &tokens[j - 1].kind {
-                                        if !matches!(
+                                        if (!matches!(
                                             tokens[j - 2].kind,
                                             JavaTokKind::RParen | JavaTokKind::Ident(_)
-                                        ) || matches!(tokens[j - 2].kind, JavaTokKind::Ident(_) | JavaTokKind::Gt)
-                                        {
-                                            if fname != "return" && fname != "false" && fname != "true" {
+                                        ) || matches!(tokens[j - 2].kind, JavaTokKind::Ident(_) | JavaTokKind::Gt))
+                                            && fname != "return" && fname != "false" && fname != "true" {
                                                 fields.push(fname.clone());
                                             }
-                                        }
                                     }
                                 }
                                 _ => {}
@@ -1524,8 +1522,8 @@ impl JavaParser {
                 Some(JavaTokKind::Ident(_))
             );
         }
-        if tname == "List" || tname == "ArrayList" {
-            if matches!(self.tokens.get(idx + 1).map(|t| &t.kind), Some(JavaTokKind::Lt)) {
+        if (tname == "List" || tname == "ArrayList")
+            && matches!(self.tokens.get(idx + 1).map(|t| &t.kind), Some(JavaTokKind::Lt)) {
                 let mut depth = 1usize;
                 let mut k = idx + 2;
                 while k < self.tokens.len() && depth > 0 {
@@ -1541,7 +1539,6 @@ impl JavaParser {
                     Some(JavaTokKind::Ident(_))
                 );
             }
-        }
         // `<TypeIdent> <varName> =`
         matches!(
             self.tokens.get(idx + 1).map(|t| &t.kind),

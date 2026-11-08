@@ -491,11 +491,11 @@ fn synthesize_scalar_program(
                 ));
             }
             let key = format!("{:?}", sig_vec);
-            if seen_vecs.contains_key(&key) {
-                *pruned += 1;
-            } else {
-                seen_vecs.insert(key, pool.len());
+            if let std::collections::hash_map::Entry::Vacant(e) = seen_vecs.entry(key) {
+                e.insert(pool.len());
                 pool.push((expr, label, sig_vec));
+            } else {
+                *pruned += 1;
             }
         }
     }
@@ -542,11 +542,13 @@ fn synthesize_scalar_program(
                     ));
                 }
                 let key = format!("{:?}", sig_vec);
-                if seen_vecs.contains_key(&key) {
+                if let std::collections::hash_map::Entry::Vacant(e) = seen_vecs.entry(key) {
+                    if depth < 3 {
+                        e.insert(pool.len() + next_items.len());
+                        next_items.push((cand_e, cand_l, sig_vec));
+                    }
+                } else {
                     *pruned += 1;
-                } else if depth < 3 {
-                    seen_vecs.insert(key, pool.len() + next_items.len());
-                    next_items.push((cand_e, cand_l, sig_vec));
                 }
             }
         }
@@ -635,12 +637,14 @@ fn synthesize_scalar_program(
                         ));
                     }
                     let key = format!("{:?}", sig_vec);
-                    if seen_vecs.contains_key(&key) {
+                    if let std::collections::hash_map::Entry::Vacant(e) = seen_vecs.entry(key) {
+                        if depth < 3 && next_items.len() < 160 {
+                            let (cand_e, cand_l) = build_cand();
+                            e.insert(pool.len() + next_items.len());
+                            next_items.push((cand_e, cand_l, sig_vec));
+                        }
+                    } else {
                         *pruned += 1;
-                    } else if depth < 3 && next_items.len() < 160 {
-                        let (cand_e, cand_l) = build_cand();
-                        seen_vecs.insert(key, pool.len() + next_items.len());
-                        next_items.push((cand_e, cand_l, sig_vec));
                     }
                 }
             }
@@ -759,7 +763,8 @@ fn synthesize_list_fold_program(
         (Expr::Int(1), "1".to_string()),
     ];
 
-    let preds: Vec<(Option<(BinOp, Expr, String)>, String)> = {
+    type FoldPred = (Option<(BinOp, Expr, String)>, String);
+    let preds: Vec<FoldPred> = {
         let mut v = vec![(None, "true".to_string())];
         for (b_expr, b_lbl) in &bounds {
             for (op, sym) in [

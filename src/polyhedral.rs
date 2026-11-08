@@ -997,7 +997,7 @@ fn ipet_stmts_cycles(
                         max_arm = (aw_c0, aw_c1, arm_path);
                     }
                     let cur_min = ab_c0 + ab_c1 * 64;
-                    if min_arm.map_or(true, |(m0, m1)| cur_min < m0 + m1 * 64) {
+                    if min_arm.is_none_or(|(m0, m1)| cur_min < m0 + m1 * 64) {
                         min_arm = Some((ab_c0, ab_c1));
                     }
                 }

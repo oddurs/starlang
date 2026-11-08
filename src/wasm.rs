@@ -37,7 +37,7 @@ pub struct WasmRunReport {
 /// to the Web Studio for instant in-browser `WebAssembly.instantiate` execution.
 pub fn encode_base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(((bytes.len() + 2) / 3) * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     let mut i = 0usize;
     while i + 3 <= bytes.len() {
         let b0 = bytes[i] as u32;
@@ -2052,6 +2052,7 @@ impl<'a> WasmCompiler<'a> {
         Ok(())
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn emit_match_arms(
         &mut self,
         scrut_local: u32,

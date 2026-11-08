@@ -1517,8 +1517,8 @@ impl CppParser {
             ) {
                 body.pop();
             }
-        } else if ret_ty != Type::Void {
-            if matches!(
+        } else if ret_ty != Type::Void
+            && matches!(
                 body.last(),
                 Some(Stmt::Expr {
                     expr: Expr::Call { func, args },
@@ -1527,7 +1527,6 @@ impl CppParser {
             ) {
                 body.pop();
             }
-        }
 
         Ok(FnDecl {
             id: 0,

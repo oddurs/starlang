@@ -195,6 +195,7 @@ impl R1csBuilder {
     }
 
     /// Add R1CS constraint `A * B = C` and check satisfaction in F_p.
+    #[allow(clippy::too_many_arguments)]
     fn add_constraint(
         &mut self,
         gate_kind: &str,

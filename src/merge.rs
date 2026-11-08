@@ -479,6 +479,7 @@ fn merge_item_3way(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn merge_scalar_3way<T: Clone + PartialEq>(
     base: &T,
     left: &T,
@@ -537,6 +538,7 @@ fn merge_scalar_3way<T: Clone + PartialEq>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn merge_meta_3way(
     base: &Metadata,
     left: &Metadata,
@@ -2000,7 +2002,7 @@ fn try_recurse_compound_only(
         && same_stmt_family(base, right)
     {
         let before_len = changes.len();
-        let _ = merge_compound_for_log(
+        merge_compound_for_log(
             base,
             left,
             right,

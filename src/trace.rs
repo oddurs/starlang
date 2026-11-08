@@ -77,11 +77,9 @@ pub fn trace_module(hub: &HubModule, max_steps: usize) -> TraceReport {
         }
     }
 
-    let coverage_pct = if total_stmts == 0 {
-        100
-    } else {
-        ((covered_stmts * 100) / total_stmts) as u8
-    };
+    let coverage_pct = (covered_stmts * 100)
+        .checked_div(total_stmts)
+        .unwrap_or(100) as u8;
 
     let mut hotspots: Vec<FnHotspot> = collector
         .call_counts
