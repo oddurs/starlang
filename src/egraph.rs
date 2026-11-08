@@ -795,6 +795,26 @@ impl EGraph {
                     (EBinOp::Mod, ConstDatum::Int(a), ConstDatum::Int(b)) if b != 0 => {
                         Some(ENode::Int(a.wrapping_rem(b)))
                     }
+                    (EBinOp::Add, ConstDatum::Float(a), ConstDatum::Float(b)) => {
+                        let r = a + b;
+                        r.is_finite()
+                            .then(|| ENode::FloatBits((if r == 0.0 { 0.0 } else { r }).to_bits()))
+                    }
+                    (EBinOp::Sub, ConstDatum::Float(a), ConstDatum::Float(b)) => {
+                        let r = a - b;
+                        r.is_finite()
+                            .then(|| ENode::FloatBits((if r == 0.0 { 0.0 } else { r }).to_bits()))
+                    }
+                    (EBinOp::Mul, ConstDatum::Float(a), ConstDatum::Float(b)) => {
+                        let r = a * b;
+                        r.is_finite()
+                            .then(|| ENode::FloatBits((if r == 0.0 { 0.0 } else { r }).to_bits()))
+                    }
+                    (EBinOp::Div, ConstDatum::Float(a), ConstDatum::Float(b)) if b != 0.0 => {
+                        let r = a / b;
+                        r.is_finite()
+                            .then(|| ENode::FloatBits((if r == 0.0 { 0.0 } else { r }).to_bits()))
+                    }
                     (EBinOp::Add, ConstDatum::Str(a), ConstDatum::Str(b)) => {
                         Some(ENode::Str(format!("{}{}", a, b)))
                     }
@@ -814,6 +834,24 @@ impl EGraph {
                         Some(ENode::Bool(a > b))
                     }
                     (EBinOp::Ge, ConstDatum::Int(a), ConstDatum::Int(b)) => {
+                        Some(ENode::Bool(a >= b))
+                    }
+                    (EBinOp::Eq, ConstDatum::Float(a), ConstDatum::Float(b)) => {
+                        Some(ENode::Bool(a == b))
+                    }
+                    (EBinOp::Ne, ConstDatum::Float(a), ConstDatum::Float(b)) => {
+                        Some(ENode::Bool(a != b))
+                    }
+                    (EBinOp::Lt, ConstDatum::Float(a), ConstDatum::Float(b)) => {
+                        Some(ENode::Bool(a < b))
+                    }
+                    (EBinOp::Le, ConstDatum::Float(a), ConstDatum::Float(b)) => {
+                        Some(ENode::Bool(a <= b))
+                    }
+                    (EBinOp::Gt, ConstDatum::Float(a), ConstDatum::Float(b)) => {
+                        Some(ENode::Bool(a > b))
+                    }
+                    (EBinOp::Ge, ConstDatum::Float(a), ConstDatum::Float(b)) => {
                         Some(ENode::Bool(a >= b))
                     }
                     (EBinOp::Eq, ConstDatum::Bool(a), ConstDatum::Bool(b)) => {
@@ -871,9 +909,9 @@ impl EGraph {
             },
             ENode::ToStr(a) => match self.const_of(*a)? {
                 ConstDatum::Int(v) => Some(ENode::Str(v.to_string())),
+                ConstDatum::Float(f) => Some(ENode::Str(crate::eval::Value::Float(f).display_str())),
                 ConstDatum::Bool(b) => Some(ENode::Str(b.to_string())),
                 ConstDatum::Str(s) => Some(ENode::Str(s)),
-                _ => None,
             },
             ENode::Len(a) => {
                 let root = self.find(*a);
@@ -985,10 +1023,14 @@ impl EGraph {
                                         pending_merges.push((cid, comm, "comm-add"));
                                     }
 
-                                    if matches!(r_const, Some(ConstDatum::Int(0))) {
+                                    if matches!(r_const, Some(ConstDatum::Int(0)))
+                                        || matches!(r_const, Some(ConstDatum::Float(f)) if f == 0.0)
+                                    {
                                         pending_merges.push((cid, l, "add-zero"));
                                     }
-                                    if matches!(l_const, Some(ConstDatum::Int(0))) {
+                                    if matches!(l_const, Some(ConstDatum::Int(0)))
+                                        || matches!(l_const, Some(ConstDatum::Float(f)) if f == 0.0)
+                                    {
                                         pending_merges.push((cid, r, "add-zero"));
                                     }
                                     if l == r
@@ -1144,7 +1186,9 @@ impl EGraph {
                                     }
                                 }
                                 EBinOp::Sub => {
-                                    if matches!(r_const, Some(ConstDatum::Int(0))) {
+                                    if matches!(r_const, Some(ConstDatum::Int(0)))
+                                        || matches!(r_const, Some(ConstDatum::Float(f)) if f == 0.0)
+                                    {
                                         pending_merges.push((cid, l, "sub-zero"));
                                     }
                                     if l == r
@@ -1262,18 +1306,29 @@ impl EGraph {
                                     });
                                     pending_merges.push((cid, comm, "comm-mul"));
 
-                                    if matches!(r_const, Some(ConstDatum::Int(1))) {
+                                    if matches!(r_const, Some(ConstDatum::Int(1)))
+                                        || matches!(r_const, Some(ConstDatum::Float(f)) if f == 1.0)
+                                    {
                                         pending_merges.push((cid, l, "mul-one"));
                                     }
-                                    if matches!(l_const, Some(ConstDatum::Int(1))) {
+                                    if matches!(l_const, Some(ConstDatum::Int(1)))
+                                        || matches!(l_const, Some(ConstDatum::Float(f)) if f == 1.0)
+                                    {
                                         pending_merges.push((cid, r, "mul-one"));
                                     }
-                                    if (matches!(r_const, Some(ConstDatum::Int(0)))
-                                        && self.is_pure_class(l))
-                                        || (matches!(l_const, Some(ConstDatum::Int(0)))
-                                            && self.is_pure_class(r))
+                                    let r_is_zero = matches!(r_const, Some(ConstDatum::Int(0)))
+                                        || matches!(r_const, Some(ConstDatum::Float(f)) if f == 0.0);
+                                    let l_is_zero = matches!(l_const, Some(ConstDatum::Int(0)))
+                                        || matches!(l_const, Some(ConstDatum::Float(f)) if f == 0.0);
+                                    if (r_is_zero && self.is_pure_class(l))
+                                        || (l_is_zero && self.is_pure_class(r))
                                     {
-                                        let zero = self.add(ENode::Int(0));
+                                        let zero = if self.is_float_class(l) || self.is_float_class(r)
+                                        {
+                                            self.add(ENode::FloatBits(0.0_f64.to_bits()))
+                                        } else {
+                                            self.add(ENode::Int(0))
+                                        };
                                         pending_merges.push((cid, zero, "mul-zero"));
                                     }
                                     if matches!(r_const, Some(ConstDatum::Int(2)))
@@ -1313,7 +1368,9 @@ impl EGraph {
                                     }
                                 }
                                 EBinOp::Div | EBinOp::IntDiv => {
-                                    if matches!(r_const, Some(ConstDatum::Int(1))) {
+                                    if matches!(r_const, Some(ConstDatum::Int(1)))
+                                        || matches!(r_const, Some(ConstDatum::Float(f)) if f == 1.0)
+                                    {
                                         pending_merges.push((cid, l, "div-one"));
                                     }
                                     if let Some(ConstDatum::Int(rv)) = r_const {
@@ -2802,49 +2859,144 @@ fn is_static_literal(expr: &Expr) -> bool {
     }
 }
 
+fn collect_modified_vars_in_expr(expr: &Expr, out: &mut BTreeSet<String>) {
+    match expr {
+        Expr::Unary { expr: inner, .. } | Expr::FieldAccess { base: inner, .. } => {
+            collect_modified_vars_in_expr(inner, out);
+        }
+        Expr::Binary { left, right, .. }
+        | Expr::Index {
+            base: left,
+            index: right,
+        } => {
+            collect_modified_vars_in_expr(left, out);
+            collect_modified_vars_in_expr(right, out);
+        }
+        Expr::Call { args, .. } | Expr::List(args) => {
+            for a in args {
+                collect_modified_vars_in_expr(a, out);
+            }
+        }
+        Expr::StructInit { fields, .. } => {
+            for (_, v) in fields {
+                collect_modified_vars_in_expr(v, out);
+            }
+        }
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Push { list, value } => {
+                if let Expr::Var(v) = list {
+                    out.insert(v.clone());
+                }
+                collect_modified_vars_in_expr(list, out);
+                collect_modified_vars_in_expr(value, out);
+            }
+            Intrinsic::Len(a)
+            | Intrinsic::Abs(a)
+            | Intrinsic::Upper(a)
+            | Intrinsic::Lower(a)
+            | Intrinsic::ToStr(a) => collect_modified_vars_in_expr(a, out),
+            Intrinsic::Min(a, b)
+            | Intrinsic::Max(a, b)
+            | Intrinsic::Contains {
+                haystack: a,
+                needle: b,
+            } => {
+                collect_modified_vars_in_expr(a, out);
+                collect_modified_vars_in_expr(b, out);
+            }
+            Intrinsic::Print(args) => {
+                for a in args {
+                    collect_modified_vars_in_expr(a, out);
+                }
+            }
+        },
+        _ => {}
+    }
+}
+
 fn collect_modified_vars(stmts: &[Stmt], out: &mut BTreeSet<String>) {
     for s in stmts {
         match s {
-            Stmt::Let { name, .. } => {
+            Stmt::Let { name, value, .. } => {
                 out.insert(name.clone());
+                collect_modified_vars_in_expr(value, out);
             }
-            Stmt::Assign { target, .. } => {
+            Stmt::Assign { target, value, .. } => {
                 out.insert(target.root_var().to_string());
+                if let AssignTarget::Index { index, .. } = target {
+                    collect_modified_vars_in_expr(index, out);
+                }
+                collect_modified_vars_in_expr(value, out);
             }
             Stmt::If {
+                cond,
                 then_body,
                 else_body,
                 ..
             } => {
+                collect_modified_vars_in_expr(cond, out);
                 collect_modified_vars(then_body, out);
                 collect_modified_vars(else_body, out);
             }
-            Stmt::Match { arms, .. } => {
+            Stmt::Match { expr, arms, .. } => {
+                collect_modified_vars_in_expr(expr, out);
                 for a in arms {
                     collect_modified_vars(&a.body, out);
                 }
             }
-            Stmt::While { body, .. } => {
+            Stmt::While { cond, body, .. } => {
+                collect_modified_vars_in_expr(cond, out);
                 collect_modified_vars(body, out);
             }
-            Stmt::ForEach { var, body, .. } | Stmt::ForRange { var, body, .. } => {
+            Stmt::ForEach {
+                var, iter, body, ..
+            } => {
                 out.insert(var.clone());
+                collect_modified_vars_in_expr(iter, out);
                 collect_modified_vars(body, out);
             }
-            Stmt::Expr {
-                expr: Expr::Intrinsic(intr),
+            Stmt::ForRange {
+                var,
+                start,
+                end,
+                body,
                 ..
             } => {
-                if let Intrinsic::Push {
-                    list: Expr::Var(v), ..
-                } = intr.as_ref()
-                {
-                    out.insert(v.clone());
-                }
+                out.insert(var.clone());
+                collect_modified_vars_in_expr(start, out);
+                collect_modified_vars_in_expr(end, out);
+                collect_modified_vars(body, out);
+            }
+            Stmt::Return {
+                value: Some(val), ..
+            }
+            | Stmt::Assert { cond: val, .. }
+            | Stmt::Expr { expr: val, .. } => {
+                collect_modified_vars_in_expr(val, out);
+            }
+            Stmt::AssertEq { left, right, .. } => {
+                collect_modified_vars_in_expr(left, out);
+                collect_modified_vars_in_expr(right, out);
             }
             _ => {}
         }
     }
+}
+
+fn contains_let_stmt(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|s| match s {
+        Stmt::Let { .. } => true,
+        Stmt::If {
+            then_body,
+            else_body,
+            ..
+        } => contains_let_stmt(then_body) || contains_let_stmt(else_body),
+        Stmt::Match { arms, .. } => arms.iter().any(|a| contains_let_stmt(&a.body)),
+        Stmt::While { body, .. } | Stmt::ForEach { body, .. } | Stmt::ForRange { body, .. } => {
+            contains_let_stmt(body)
+        }
+        _ => false,
+    })
 }
 
 fn contains_break_continue_or_return(stmts: &[Stmt]) -> bool {
@@ -3170,7 +3322,7 @@ fn peval_stmts(
                     alloc_id,
                 );
                 if let (Some(lo), Some(hi)) = (const_int_lit(&s), const_int_lit(&e)) {
-                    let has_inner_let = body.iter().any(|st| matches!(st, Stmt::Let { .. }));
+                    let has_inner_let = contains_let_stmt(body);
                     if let Some(trip) = hi.checked_sub(lo) {
                         if (0..=4).contains(&trip)
                             && !has_inner_let

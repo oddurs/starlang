@@ -539,9 +539,29 @@ fn analyze_single_loop(
         if scan.local_lets.contains(var) {
             continue;
         }
-        let all_additive = ops.iter().all(|(op, val)| {
-            matches!(op, AssignOp::AddAssign | AssignOp::SubAssign)
-                && !expr_mentions_var(val, var)
+        let all_additive = ops.iter().all(|(op, val)| match op {
+            AssignOp::AddAssign | AssignOp::SubAssign => !expr_mentions_var(val, var),
+            AssignOp::Set => match val {
+                Expr::Binary {
+                    op: BinOp::Add,
+                    left,
+                    right,
+                } => {
+                    (matches!(left.as_ref(), Expr::Var(v) if v == var)
+                        && !expr_mentions_var(right, var))
+                        || (matches!(right.as_ref(), Expr::Var(v) if v == var)
+                            && !expr_mentions_var(left, var))
+                }
+                Expr::Binary {
+                    op: BinOp::Sub,
+                    left,
+                    right,
+                } => {
+                    matches!(left.as_ref(), Expr::Var(v) if v == var)
+                        && !expr_mentions_var(right, var)
+                }
+                _ => false,
+            },
         });
         let all_minmax = ops.iter().all(|(op, val)| {
             if *op != AssignOp::Set {
@@ -1121,7 +1141,10 @@ fn ipet_stmts_cycles(
                 );
                 let mut range_scan = LoopBodyScan::default();
                 scan_loop_body(body, var, false, &mut range_scan);
-                let mutates_induction = range_scan.writes.contains_key(var);
+                let mutates_induction = range_scan
+                    .writes
+                    .keys()
+                    .any(|w| w == var || (!range_scan.local_lets.contains(w) && expr_mentions_var(end, w)));
                 loop_proofs.push(LoopTerminationProof {
                     stmt_id: *id,
                     fn_name: fn_name.to_string(),

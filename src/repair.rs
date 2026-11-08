@@ -473,12 +473,13 @@ fn normalize_stmts_alpha(
                         format!("{}[{}]", b, normalize_expr_alpha(index, var_map))
                     }
                 };
-                out.push_str(&format!(
-                    "(assign {} {:?} {});",
-                    tgt_str,
-                    op,
-                    normalize_expr_alpha(value, var_map)
-                ));
+                let val_str = normalize_expr_alpha(value, var_map);
+                let canon_rhs = match op {
+                    AssignOp::Set => val_str,
+                    AssignOp::AddAssign => format!("(Add {} {})", tgt_str, val_str),
+                    AssignOp::SubAssign => format!("(Sub {} {})", tgt_str, val_str),
+                };
+                out.push_str(&format!("(assign {} Set {});", tgt_str, canon_rhs));
             }
             Stmt::If {
                 cond,
@@ -1116,6 +1117,52 @@ fn mutate_single_stmt_for_repair(stmt: &Stmt) -> Vec<(String, String, String, St
                 ));
             }
         }
+        Stmt::ForRange {
+            id,
+            var,
+            start,
+            end,
+            body,
+            meta,
+        } => {
+            if let Expr::Binary {
+                op: BinOp::Sub | BinOp::Add,
+                left,
+                right,
+            } = end
+            {
+                if matches!(right.as_ref(), Expr::Int(1)) {
+                    out.push((
+                        "LoopBoundaryOffByOneRepair".to_string(),
+                        format!("for {} in ..({:?} 1)", var, end),
+                        format!("for {} in ..{:?}", var, left),
+                        Stmt::ForRange {
+                            id: *id,
+                            var: var.clone(),
+                            start: start.clone(),
+                            end: (**left).clone(),
+                            body: body.clone(),
+                            meta: meta.clone(),
+                        },
+                    ));
+                }
+            }
+            for (kind, b_str, a_str, new_end) in mutate_expr_for_repair(end) {
+                out.push((
+                    kind,
+                    format!("for {} in ..({})", var, b_str),
+                    format!("for {} in ..({})", var, a_str),
+                    Stmt::ForRange {
+                        id: *id,
+                        var: var.clone(),
+                        start: start.clone(),
+                        end: new_end,
+                        body: body.clone(),
+                        meta: meta.clone(),
+                    },
+                ));
+            }
+        }
         _ => {}
     }
     out
@@ -1135,6 +1182,9 @@ fn mutate_expr_for_repair(expr: &Expr) -> Vec<(String, String, String, Expr)> {
                 BinOp::Add => &[("ArithmeticSignRepair", BinOp::Sub)],
                 BinOp::Sub => &[("ArithmeticSignRepair", BinOp::Add)],
                 BinOp::Mul => &[("ArithmeticFactorRepair", BinOp::IntDiv)],
+                BinOp::IntDiv | BinOp::Div => &[("ArithmeticFactorRepair", BinOp::Mul)],
+                BinOp::And => &[("LogicalOperatorRepair", BinOp::Or)],
+                BinOp::Or => &[("LogicalOperatorRepair", BinOp::And)],
                 _ => &[],
             };
             for &(kind, new_op) in replacements {
@@ -1220,6 +1270,19 @@ fn mutate_expr_for_repair(expr: &Expr) -> Vec<(String, String, String, Expr)> {
                         },
                     ));
                 }
+            }
+        }
+        Expr::Index { base, index } => {
+            for (kind, b_s, a_s, ni) in mutate_expr_for_repair(index) {
+                out.push((
+                    kind,
+                    b_s,
+                    a_s,
+                    Expr::Index {
+                        base: base.clone(),
+                        index: Box::new(ni),
+                    },
+                ));
             }
         }
         Expr::Intrinsic(intr) => match intr.as_ref() {

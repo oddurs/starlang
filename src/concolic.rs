@@ -370,6 +370,23 @@ pub fn explore_concolic_paths(hub: &HubModule) -> ConcolicReport {
     }
 }
 
+fn const_range_bound_int(e: &Expr) -> Option<i64> {
+    match e {
+        Expr::Int(n) => Some(*n),
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: inner,
+        } => {
+            if let Expr::Int(n) = inner.as_ref() {
+                n.checked_neg()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn count_branch_slots(stmts: &[Stmt]) -> usize {
     let mut count = 0usize;
     for s in stmts {
@@ -389,10 +406,18 @@ fn count_branch_slots(stmts: &[Stmt]) -> usize {
                     count += count_branch_slots(&arm.body);
                 }
             }
-            Stmt::While { body, .. }
-            | Stmt::ForEach { body, .. }
-            | Stmt::ForRange { body, .. } => {
+            Stmt::While { body, .. } | Stmt::ForEach { body, .. } => {
                 count += 2; // loop enter + loop exit
+                count += count_branch_slots(body);
+            }
+            Stmt::ForRange {
+                start, end, body, ..
+            } => {
+                if const_range_bound_int(start).is_some() && const_range_bound_int(end).is_some() {
+                    count += 1; // static range bounds have a single feasible entry/empty outcome
+                } else {
+                    count += 2; // loop enter + loop exit
+                }
                 count += count_branch_slots(body);
             }
             _ => {}
@@ -1185,10 +1210,18 @@ fn eval_concolic_expr(
 fn format_cond_expr(e: &Expr) -> String {
     match e {
         Expr::Int(n) => n.to_string(),
+        Expr::Float(f) => Value::Float(*f).display_str(),
         Expr::Bool(b) => b.to_string(),
         Expr::Str(s) => format!("\"{}\"", s),
         Expr::Var(v) => v.clone(),
         Expr::EnumVariant { enum_name, variant } => format!("{}::{}", enum_name, variant),
+        Expr::Unary { op, expr: inner } => {
+            let sym = match op {
+                UnaryOp::Neg => "-",
+                UnaryOp::Not => "!",
+            };
+            format!("{}{}", sym, format_cond_expr(inner))
+        }
         Expr::Binary { op, left, right } => {
             let sym = match op {
                 BinOp::Add => "+",
@@ -1212,7 +1245,7 @@ fn format_cond_expr(e: &Expr) -> String {
             format!("{}[{}]", format_cond_expr(base), format_cond_expr(index))
         }
         Expr::FieldAccess { base, field } => format!("{}.{}", format_cond_expr(base), field),
-        _ => "expr".to_string(),
+        _ => crate::egraph::format_expr_compact(e),
     }
 }
 
@@ -1568,13 +1601,9 @@ fn analyze_stmts_security(stmts: &[Stmt], pc_taint: TaintLevel, ctx: &mut SecCtx
                     ctx.secret_dependent_loop_or_branch = true;
                 }
                 // Relational guard acts as a dominating sanitizer for variables in `cond`
-                let is_rel_guard = matches!(
-                    cond,
-                    Expr::Binary {
-                        op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne,
-                        ..
-                    }
-                );
+                let is_rel_guard = is_relational_or_compound_guard(cond);
+                let saved_sanitized = ctx.sanitized_vars.clone();
+                let saved_env_taint = ctx.env_taint.clone();
                 if is_rel_guard {
                     ctx.sanitizers_applied += 1;
                     for cv in &cond_vars {
@@ -1596,6 +1625,23 @@ fn analyze_stmts_security(stmts: &[Stmt], pc_taint: TaintLevel, ctx: &mut SecCtx
                 });
                 analyze_stmts_security(then_body, next_pc, ctx);
                 analyze_stmts_security(else_body, next_pc, ctx);
+                // If neither branch exits early (Return/Break/Continue), the guard does not post-dominate
+                // statements after the `If`, so restore pre-guard sanitization for `cond_vars`.
+                if is_rel_guard
+                    && !block_terminates_early(then_body)
+                    && !block_terminates_early(else_body)
+                {
+                    for cv in &cond_vars {
+                        if !saved_sanitized.contains(cv) {
+                            ctx.sanitized_vars.remove(cv);
+                        }
+                        if let Some(prev_taint) = saved_env_taint.get(cv) {
+                            ctx.env_taint.insert(cv.clone(), *prev_taint);
+                        } else {
+                            ctx.env_taint.remove(cv);
+                        }
+                    }
+                }
             }
             Stmt::Match { id, expr, arms, .. } => {
                 audit_expr_sinks(*id, expr, ctx);
@@ -1688,6 +1734,41 @@ fn analyze_stmts_security(stmts: &[Stmt], pc_taint: TaintLevel, ctx: &mut SecCtx
             }
         }
     }
+}
+
+fn is_relational_or_compound_guard(e: &Expr) -> bool {
+    match e {
+        Expr::Binary {
+            op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne,
+            ..
+        } => true,
+        Expr::Binary {
+            op: BinOp::And | BinOp::Or,
+            left,
+            right,
+        } => is_relational_or_compound_guard(left) || is_relational_or_compound_guard(right),
+        Expr::Unary {
+            op: UnaryOp::Not,
+            expr: inner,
+        } => is_relational_or_compound_guard(inner),
+        _ => false,
+    }
+}
+
+fn block_terminates_early(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|s| match s {
+        Stmt::Return { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => true,
+        Stmt::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            !else_body.is_empty()
+                && block_terminates_early(then_body)
+                && block_terminates_early(else_body)
+        }
+        _ => false,
+    })
 }
 
 fn eval_expr_taint(e: &Expr, ctx: &SecCtx) -> (TaintLevel, bool, Vec<String>) {

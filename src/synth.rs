@@ -227,12 +227,29 @@ pub fn parse_synth_spec(spec_str: &str) -> Result<SynthSpec, String> {
 }
 
 fn parse_simple_type(s: &str) -> Result<Type, String> {
-    match s {
+    let trimmed = s.trim();
+    if let Some(inner) = trimmed
+        .strip_prefix("List<")
+        .and_then(|r| r.strip_suffix('>'))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("List[")
+                .and_then(|r| r.strip_suffix(']'))
+        })
+        .or_else(|| {
+            trimmed
+                .strip_prefix("Vec<")
+                .and_then(|r| r.strip_suffix('>'))
+        })
+        .or_else(|| trimmed.strip_prefix('[').and_then(|r| r.strip_suffix(']')))
+    {
+        return Ok(Type::list(parse_simple_type(inner)?));
+    }
+    match trimmed {
         "Int" | "i64" | "int" => Ok(Type::Int),
         "Float" | "f64" | "float" => Ok(Type::Float),
         "Bool" | "bool" => Ok(Type::Bool),
         "Str" | "String" | "str" => Ok(Type::Str),
-        "List<Int>" | "List[Int]" | "[Int]" => Ok(Type::list(Type::Int)),
         other => Err(format!("unsupported synthesis type `{}`", other)),
     }
 }
@@ -340,6 +357,7 @@ pub fn synthesize_from_examples(spec: &SynthSpec) -> SynthReport {
 
     let found_body: Option<(Vec<Stmt>, String)> = if has_list_param {
         synthesize_list_fold_program(spec, &mut candidates_explored)
+            .or_else(|| synthesize_scalar_program(spec, &mut candidates_explored, &mut pruned_by_obs_equiv))
     } else {
         synthesize_scalar_program(spec, &mut candidates_explored, &mut pruned_by_obs_equiv)
     };
@@ -485,11 +503,16 @@ fn synthesize_scalar_program(
     let mut pool: Vec<(Expr, String, Vec<Value>)> = Vec::new();
     let mut seen_vecs: HashMap<String, usize> = HashMap::new();
 
-    // Seed level-0 atoms: parameters + constants
+    // Seed level-0 atoms: parameters + collection/string lengths + constants
     let mut atoms: Vec<(Expr, String)> = Vec::new();
     for (pname, pty) in &spec.params {
         if *pty == Type::Int {
             atoms.push((Expr::Var(pname.clone()), pname.clone()));
+        } else if matches!(pty, Type::List(_) | Type::Str) {
+            atoms.push((
+                Expr::Intrinsic(Box::new(Intrinsic::Len(Expr::Var(pname.clone())))),
+                format!("len({})", pname),
+            ));
         }
     }
     let mut const_set: BTreeSet<i64> = [0, 1, 2, -1, 10, 100].into_iter().collect();
@@ -786,6 +809,18 @@ fn synthesize_list_fold_program(
     let accum_terms: Vec<(Expr, String)> = vec![
         (Expr::Var("item".to_string()), "item".to_string()),
         (Expr::Int(1), "1".to_string()),
+        (
+            Expr::Binary {
+                op: BinOp::Mul,
+                left: Box::new(Expr::Var("item".to_string())),
+                right: Box::new(Expr::Int(2)),
+            },
+            "(item * 2)".to_string(),
+        ),
+        (
+            Expr::Intrinsic(Box::new(Intrinsic::Abs(Expr::Var("item".to_string())))),
+            "abs(item)".to_string(),
+        ),
     ];
 
     type FoldPred = (Option<(BinOp, Expr, String)>, String);

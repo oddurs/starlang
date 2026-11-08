@@ -4327,6 +4327,225 @@ fn direct_mul(flag: bool, x: i64) -> i64 {
         "Expected LoopExit to have >= 2 predecessors (LoopHeader + break block), got {:?}",
         cal_ssa.blocks[loop_exit_id].predecessors
     );
+    verify_pass_18();
 }
+
+#[inline(never)]
+fn verify_pass_18() {
+    // 1. E-Graph float constant folding, float `mul-zero` / `add-zero` / `mul-one` type preservation,
+    //    and nested `Stmt::Let` check during Futamura `ForRange` unrolling (`src/egraph.rs`).
+    let egraph_rs = r#"
+pub fn float_fold(x: f64) -> f64 {
+    let a: f64 = (1.5 + 2.5) * 2.0 - 3.0;
+    let b: f64 = x * 0.0 + a * 1.0 + 0.0;
+    let mut acc: i64 = 0;
+    for i in 0..3 {
+        if true {
+            let step: i64 = i + 1;
+            acc += step;
+        }
+    }
+    return b + 0.5;
+}
+"#;
+    let mut eg_eng = StarEngine::from_source(SpokeId::Rust, egraph_rs).unwrap();
+    let (eg_rep, _) = eg_eng.egraph(false);
+    assert!(
+        eg_rep.translation_validated,
+        "Expected E-Graph optimization of float_fold to preserve equivalence across all inputs"
+    );
+    let opt_rust = eg_rep.views_by_spoke.get("rust").unwrap();
+    assert!(
+        opt_rust.contains("let a: f64 = 5.0;") && opt_rust.contains("let b: f64 = a;"),
+        "Expected float constant folding `(1.5 + 2.5) * 2.0 - 3.0` => `5.0` and `x * 0.0 + a * 1.0 + 0.0` => `a` in E-Graph Rust view, got:\n{}",
+        opt_rust
+    );
+    let (peval_rep, _) = eg_eng.partial_eval(false);
+    assert!(
+        peval_rep.translation_validated,
+        "Expected Futamura partial evaluation to preserve equivalence and not duplicate nested `let step` across unrolled iterations"
+    );
+    let peval_c = peval_rep.views_by_spoke.get("c").unwrap();
+    assert!(
+        peval_c.contains("const double a = 5.0;"),
+        "Expected Futamura partial evaluation + E-Graph to fold `a = 5.0` in C, got:\n{}",
+        peval_c
+    );
+    assert_eq!(
+        peval_c.matches("int64_t step =").count(),
+        1,
+        "Expected `for i in 0..3` with nested `let step` not to unroll into duplicate `int64_t step =` declarations in C:\n{}",
+        peval_c
+    );
+
+    // 2. Concolic static `ForRange` branch coverage & Denning non-dominating `If` guard restoration (`src/concolic.rs`).
+    let conc_rs = r#"
+pub fn range_and_guard(xs: Vec<i64>, d: i64) -> i64 {
+    let mut s: i64 = 0;
+    for i in 0..3 {
+        s += i;
+    }
+    if xs.len() > 0 {
+        s += xs[0];
+    }
+    if d > 0 {
+        let safe_q: i64 = 100 / d;
+        s += safe_q;
+    }
+    let unsafe_q: i64 = 100 / d;
+    return s + unsafe_q;
+}
+"#;
+    let mut conc_eng = StarEngine::from_source(SpokeId::Rust, conc_rs).unwrap();
+    let (conc_rep, _) = conc_eng.concolic(false);
+    let fn_conc = conc_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "range_and_guard")
+        .unwrap();
+    assert_eq!(
+        fn_conc.total_branches, 5,
+        "Expected 1 feasible slot for static `0..3` ForRange + 2*2 for two Ifs = 5 slots, got {}",
+        fn_conc.total_branches
+    );
+    assert!(
+        fn_conc
+            .paths
+            .iter()
+            .any(|p| p.path_condition.contains("len(xs)") || p.path_condition.contains(".len()")),
+        "Expected `format_cond_expr` to format `xs.len() > 0` with `len(xs)` instead of `expr`, got {:?}",
+        fn_conc.paths
+    );
+    let sec_rep = conc_eng.security_flow();
+    let fn_sec = sec_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "range_and_guard")
+        .unwrap();
+    let div_sinks: Vec<_> = fn_sec
+        .sink_audits
+        .iter()
+        .filter(|a| a.sink_kind == "DivisorSink")
+        .collect();
+    assert_eq!(
+        div_sinks.len(),
+        2,
+        "Expected 2 DivisorSink audits in range_and_guard, got {:?}",
+        div_sinks
+    );
+    assert_eq!(
+        div_sinks[0].taint_state, "Sanitized",
+        "Expected first division inside `if d > 0` to be Sanitized, got {:?}",
+        div_sinks[0]
+    );
+    assert_eq!(
+        div_sinks[1].taint_state, "UnsanitizedTaint",
+        "Expected second division after non-exiting `if d > 0` to be UnsanitizedTaint, got {:?}",
+        div_sinks[1]
+    );
+
+    // 3. PBE synthesis with `List<Str>` / `len(xs)` scalar expressions and `item * 2` list fold (`src/synth.rs`).
+    let (synth_len, _) = eg_eng
+        .synthesize(
+            Some("tag_count(tags: List<Str>, bonus: Int) -> Int | ([\"a\", \"b\"], 3) => 5; ([\"x\"], 10) => 11; ([], 4) => 4"),
+            false,
+        )
+        .unwrap();
+    assert!(
+        synth_len.ok && synth_len.tests_passed,
+        "Expected PBE synthesizer to support `List<Str>` and `len(tags) + bonus`, got {:?}",
+        synth_len.program_summary
+    );
+    let (synth_fold2, _) = eg_eng
+        .synthesize(
+            Some("double_pos_sum(items: List<Int>) -> Int | ([1, -2, 3],) => 8; ([5, 0, -1],) => 10; ([-4],) => 0"),
+            false,
+        )
+        .unwrap();
+    assert!(
+        synth_fold2.ok && synth_fold2.tests_passed,
+        "Expected PBE synthesizer to synthesize conditional `(item * 2)` list fold, got {:?}",
+        synth_fold2.program_summary
+    );
+
+    // 4. Polyhedral `Set` additive reduction recognition (`acc = acc + item`) & `ForRange` bound-mutation check (`src/polyhedral.rs`).
+    let poly_star = r#"(fn sum_star ((param xs (List Int))) -> Int
+  (let-mut acc :type Int 0)
+  (for-each x xs
+    (set! acc (+ acc x)))
+  (return acc))
+
+(fn shifting_bound ((param n Int)) -> Int
+  (let-mut limit :type Int n)
+  (let-mut acc :type Int 0)
+  (for-range i 0 limit
+    (set! limit (+ limit 1))
+    (set! acc (+ acc i)))
+  (return acc))"#;
+    let poly_eng = StarEngine::from_source(SpokeId::Star, poly_star).unwrap();
+    let vec_rep = poly_eng.polyhedral();
+    let sum_nest = vec_rep
+        .loops
+        .iter()
+        .find(|n| n.fn_name == "sum_star")
+        .unwrap();
+    assert!(
+        sum_nest.simd_vectorizable && sum_nest.classification == "AssociativeMapReduce",
+        "Expected `(set! acc (+ acc x))` in Star S-Expr to be classified as vectorizable AssociativeMapReduce, got {:?}",
+        sum_nest
+    );
+    let term_rep = poly_eng.termination_wcet();
+    let shift_fn = term_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "shifting_bound")
+        .unwrap();
+    assert!(
+        !shift_fn.proven_terminating,
+        "Expected `for-range i 0 limit` that mutates `limit` inside the body to be flagged as non-terminating"
+    );
+
+    // 5. Repair engine `ForRange` off-by-one boundary repair, `Expr::Index` repair, and `+=` vs `= +` alpha-equivalence (`src/repair.rs`).
+    let broken_range_rs = r#"
+pub fn sum_prefix(xs: Vec<i64>) -> i64 {
+    let mut acc: i64 = 0;
+    for i in 0..(xs.len() - 1) {
+        acc += xs[i];
+    }
+    return acc;
+}
+
+#[test]
+fn test_sum_prefix() {
+    assert_eq!(sum_prefix(vec![10, 20, 30]), 60);
+    assert_eq!(sum_prefix(vec![5, 7]), 12);
+}
+"#;
+    let mut rep_eng = StarEngine::from_source(SpokeId::Rust, broken_range_rs).unwrap();
+    let (_, repair_rep, _) = rep_eng.repair(false);
+    assert!(
+        repair_rep.repaired && repair_rep.tests_passed_after == repair_rep.tests_total,
+        "Expected `for i in 0..(n - 1)` off-by-one bug to be automatically repaired to `for i in 0..n`, got {:?}",
+        repair_rep.patch
+    );
+    let star_bump = StarEngine::from_source(
+        SpokeId::Star,
+        "(fn bump ((param x Int)) -> Int\n  (let-mut a :type Int x)\n  (set! a (+ a 5))\n  (return a))",
+    )
+    .unwrap();
+    let eq_rep = star_bump
+        .equiv_with(
+            SpokeId::Rust,
+            "pub fn bump(x: i64) -> i64 { let mut a: i64 = x; a += 5; return a; }",
+            8,
+        )
+        .unwrap();
+    assert!(
+        eq_rep.all_equivalent && eq_rep.alpha_identical_count == 1,
+        "Expected `a += 5` (Rust) and `(set! a (+ a 5))` (Star) to be alpha-equivalent, got {:?}",
+        eq_rep
+    );
+}
+
 
 
