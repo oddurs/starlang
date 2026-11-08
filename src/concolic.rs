@@ -392,6 +392,17 @@ fn extract_int_constants_from_expr(e: &Expr, out: &mut BTreeSet<i64>) {
             out.insert(n.saturating_sub(1));
             out.insert(n.saturating_add(1));
         }
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: inner,
+        } if matches!(inner.as_ref(), Expr::Int(_)) => {
+            if let Expr::Int(n) = inner.as_ref() {
+                let neg = n.saturating_neg();
+                out.insert(neg);
+                out.insert(neg.saturating_sub(1));
+                out.insert(neg.saturating_add(1));
+            }
+        }
         Expr::Unary { expr, .. } | Expr::FieldAccess { base: expr, .. } => {
             extract_int_constants_from_expr(expr, out);
         }
@@ -408,6 +419,33 @@ fn extract_int_constants_from_expr(e: &Expr, out: &mut BTreeSet<i64>) {
                 extract_int_constants_from_expr(a, out);
             }
         }
+        Expr::StructInit { fields, .. } => {
+            for (_, fv) in fields {
+                extract_int_constants_from_expr(fv, out);
+            }
+        }
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Len(a)
+            | Intrinsic::Abs(a)
+            | Intrinsic::Upper(a)
+            | Intrinsic::Lower(a)
+            | Intrinsic::ToStr(a) => extract_int_constants_from_expr(a, out),
+            Intrinsic::Min(a, b)
+            | Intrinsic::Max(a, b)
+            | Intrinsic::Contains {
+                haystack: a,
+                needle: b,
+            }
+            | Intrinsic::Push { list: a, value: b } => {
+                extract_int_constants_from_expr(a, out);
+                extract_int_constants_from_expr(b, out);
+            }
+            Intrinsic::Print(args) => {
+                for a in args {
+                    extract_int_constants_from_expr(a, out);
+                }
+            }
+        },
         _ => {}
     }
 }
@@ -1051,8 +1089,26 @@ fn format_val_compact(v: &Value) -> String {
 
 fn value_to_ast_expr(v: &Value) -> Option<Expr> {
     match v {
-        Value::Int(n) => Some(Expr::Int(*n)),
-        Value::Float(f) => Some(Expr::Float(*f)),
+        Value::Int(n) => {
+            if *n < 0 && *n > i64::MIN {
+                Some(Expr::Unary {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(Expr::Int(-*n)),
+                })
+            } else {
+                Some(Expr::Int(*n))
+            }
+        }
+        Value::Float(f) => {
+            if *f < 0.0 {
+                Some(Expr::Unary {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(Expr::Float(-*f)),
+                })
+            } else {
+                Some(Expr::Float(*f))
+            }
+        }
         Value::Bool(b) => Some(Expr::Bool(*b)),
         Value::Str(s) => Some(Expr::Str(s.clone())),
         Value::EnumVariant { enum_name, variant } => Some(Expr::EnumVariant {
@@ -1522,7 +1578,19 @@ fn audit_expr_sinks(stmt_id: NodeId, e: &Expr, ctx: &mut SecCtx) {
             audit_expr_sinks(stmt_id, right, ctx);
             let mut div_vars = Vec::new();
             collect_vars_in_expr(right, &mut div_vars);
-            let is_const_nonzero = matches!(right.as_ref(), Expr::Int(n) if *n != 0);
+            let is_const_nonzero = match right.as_ref() {
+                Expr::Int(n) => *n != 0,
+                Expr::Float(f) => *f != 0.0,
+                Expr::Unary {
+                    op: UnaryOp::Neg,
+                    expr: inner,
+                } => match inner.as_ref() {
+                    Expr::Int(n) => *n != 0,
+                    Expr::Float(f) => *f != 0.0,
+                    _ => false,
+                },
+                _ => false,
+            };
             let all_sanitized = is_const_nonzero
                 || (!div_vars.is_empty() && div_vars.iter().all(|v| ctx.sanitized_vars.contains(v)));
             ctx.sink_audits.push(SecuritySinkAudit {

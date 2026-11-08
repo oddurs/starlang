@@ -429,10 +429,36 @@ fn scan_expr_reads(
     }
 }
 
+fn const_int_lit(e: &Expr) -> Option<i64> {
+    match e {
+        Expr::Int(v) => Some(*v),
+        Expr::Unary {
+            op: crate::hub::UnaryOp::Neg,
+            expr: inner,
+        } => {
+            if let Expr::Int(v) = inner.as_ref() {
+                v.checked_neg()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn affine_coeffs(index: &Expr, iv: &str) -> (i64, i64) {
+    if let Some(c) = const_int_lit(index) {
+        return (0, c);
+    }
     match index {
         Expr::Var(v) if v == iv => (1, 0),
-        Expr::Int(c) => (0, *c),
+        Expr::Unary {
+            op: crate::hub::UnaryOp::Neg,
+            expr: inner,
+        } => {
+            let (s, o) = affine_coeffs(inner, iv);
+            (-s, -o)
+        }
         Expr::Binary {
             op: BinOp::Add,
             left,
@@ -456,7 +482,13 @@ fn affine_coeffs(index: &Expr, iv: &str) -> (i64, i64) {
             left,
             right,
         } => match (left.as_ref(), right.as_ref()) {
-            (Expr::Var(v), Expr::Int(k)) | (Expr::Int(k), Expr::Var(v)) if v == iv => (*k, 0),
+            (Expr::Var(v), other) | (other, Expr::Var(v)) if v == iv => {
+                if let Some(k) = const_int_lit(other) {
+                    (k, 0)
+                } else {
+                    (1, 0)
+                }
+            }
             _ => (1, 0),
         },
         _ => (1, 0),
@@ -1054,8 +1086,8 @@ fn ipet_stmts_cycles(
                 let iter_wc = bw_c0 + bw_c1 * 64 + 3;
                 let iter_bc = bb_c0 + bb_c1 * 64 + 3;
 
-                if let (Expr::Int(lo), Expr::Int(hi)) = (start, end) {
-                    let trip = (*hi - *lo).max(0) as u64;
+                if let (Some(lo), Some(hi)) = (const_int_lit(start), const_int_lit(end)) {
+                    let trip = (hi - lo).max(0) as u64;
                     bc_c0 += 2 + trip * iter_bc;
                     wc_c0 += 2 + trip * iter_wc;
                     wcep.push(format!(
@@ -1236,7 +1268,8 @@ fn synthesize_while_ranking_proof(
                 let increments = bound_invariant
                     && scan.writes.get(v).is_some_and(|ops| {
                         ops.iter().any(|(aop, val)| match (aop, val) {
-                            (AssignOp::AddAssign, Expr::Int(k)) => *k > 0,
+                            (AssignOp::AddAssign, rhs) => const_int_lit(rhs).is_some_and(|k| k > 0),
+                            (AssignOp::SubAssign, rhs) => const_int_lit(rhs).is_some_and(|k| k < 0),
                             (
                                 AssignOp::Set,
                                 Expr::Binary {
@@ -1245,12 +1278,17 @@ fn synthesize_while_ranking_proof(
                                     right: r,
                                 },
                             ) => {
-                                matches!((l.as_ref(), r.as_ref()), (Expr::Var(vn), Expr::Int(k)) if vn == v && *k > 0)
+                                (matches!(l.as_ref(), Expr::Var(vn) if vn == v)
+                                    && const_int_lit(r).is_some_and(|k| k > 0))
+                                    || (matches!(r.as_ref(), Expr::Var(vn) if vn == v)
+                                        && const_int_lit(l).is_some_and(|k| k > 0))
                             }
                             _ => false,
                         }) && !ops.iter().any(|(aop, val)| {
-                            matches!((aop, val), (AssignOp::SubAssign, Expr::Int(k)) if *k > 0)
-                                || matches!((aop, val), (AssignOp::AddAssign, Expr::Int(k)) if *k <= 0)
+                            (matches!(aop, AssignOp::SubAssign)
+                                && const_int_lit(val).is_some_and(|k| k >= 0))
+                                || (matches!(aop, AssignOp::AddAssign)
+                                    && const_int_lit(val).is_some_and(|k| k <= 0))
                         })
                     });
                 if increments {
@@ -1284,7 +1322,8 @@ fn synthesize_while_ranking_proof(
                 let decrements = bound_invariant
                     && scan.writes.get(v).is_some_and(|ops| {
                         ops.iter().any(|(aop, val)| match (aop, val) {
-                            (AssignOp::SubAssign, Expr::Int(k)) => *k > 0,
+                            (AssignOp::SubAssign, rhs) => const_int_lit(rhs).is_some_and(|k| k > 0),
+                            (AssignOp::AddAssign, rhs) => const_int_lit(rhs).is_some_and(|k| k < 0),
                             (
                                 AssignOp::Set,
                                 Expr::Binary {
@@ -1293,7 +1332,21 @@ fn synthesize_while_ranking_proof(
                                     right: r,
                                 },
                             ) => {
-                                matches!((l.as_ref(), r.as_ref()), (Expr::Var(vn), Expr::Int(k)) if vn == v && *k > 0)
+                                matches!(l.as_ref(), Expr::Var(vn) if vn == v)
+                                    && const_int_lit(r).is_some_and(|k| k > 0)
+                            }
+                            (
+                                AssignOp::Set,
+                                Expr::Binary {
+                                    op: BinOp::Add,
+                                    left: l,
+                                    right: r,
+                                },
+                            ) => {
+                                (matches!(l.as_ref(), Expr::Var(vn) if vn == v)
+                                    && const_int_lit(r).is_some_and(|k| k < 0))
+                                    || (matches!(r.as_ref(), Expr::Var(vn) if vn == v)
+                                        && const_int_lit(l).is_some_and(|k| k < 0))
                             }
                             (
                                 AssignOp::Set,
@@ -1303,12 +1356,15 @@ fn synthesize_while_ranking_proof(
                                     right: r,
                                 },
                             ) => {
-                                matches!((l.as_ref(), r.as_ref()), (Expr::Var(vn), Expr::Int(k)) if vn == v && *k > 1)
+                                matches!(l.as_ref(), Expr::Var(vn) if vn == v)
+                                    && const_int_lit(r).is_some_and(|k| k > 1)
                             }
                             _ => false,
                         }) && !ops.iter().any(|(aop, val)| {
-                            matches!((aop, val), (AssignOp::AddAssign, Expr::Int(k)) if *k > 0)
-                                || matches!((aop, val), (AssignOp::SubAssign, Expr::Int(k)) if *k <= 0)
+                            (matches!(aop, AssignOp::AddAssign)
+                                && const_int_lit(val).is_some_and(|k| k >= 0))
+                                || (matches!(aop, AssignOp::SubAssign)
+                                    && const_int_lit(val).is_some_and(|k| k <= 0))
                         })
                     });
                 if decrements {

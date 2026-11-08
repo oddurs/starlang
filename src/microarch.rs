@@ -598,8 +598,24 @@ fn sim_stmts_microarch(
                 body,
                 ..
             } => {
-                let trips = match (start, end) {
-                    (Expr::Int(lo), Expr::Int(hi)) => (*hi - *lo).clamp(1, 64) as u64,
+                let const_int = |e: &Expr| -> Option<i64> {
+                    match e {
+                        Expr::Int(v) => Some(*v),
+                        Expr::Unary {
+                            op: UnaryOp::Neg,
+                            expr: inner,
+                        } => {
+                            if let Expr::Int(v) = inner.as_ref() {
+                                v.checked_neg()
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                };
+                let trips = match (const_int(start), const_int(end)) {
+                    (Some(lo), Some(hi)) => (hi - lo).clamp(1, 64) as u64,
                     _ => 16,
                 } * trip_multiplier;
 

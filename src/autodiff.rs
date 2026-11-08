@@ -1084,6 +1084,15 @@ fn synthesize_hub_grad_fn_and_test(
         .map(|p| p.param_name.clone())
         .unwrap_or_else(|| "x".to_string());
 
+    let slope_expr = if slope_int < 0 && slope_int > i64::MIN {
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: Box::new(Expr::Int(-slope_int)),
+        }
+    } else {
+        Expr::Int(slope_int)
+    };
+
     let grad_fn = FnDecl {
         id: 94_000,
         name: prof.grad_fn_name.clone(),
@@ -1106,7 +1115,7 @@ fn synthesize_hub_grad_fn_and_test(
                         left: Box::new(Expr::Var(param_name.clone())),
                         right: Box::new(Expr::Var(param_name)),
                     }),
-                    right: Box::new(Expr::Int(slope_int)),
+                    right: Box::new(slope_expr.clone()),
                 },
                 mutable: false,
                 meta: BTreeMap::new(),
@@ -1130,7 +1139,7 @@ fn synthesize_hub_grad_fn_and_test(
                 func: prof.grad_fn_name.clone(),
                 args: vec![Expr::Int(10)],
             },
-            right: Expr::Int(slope_int),
+            right: slope_expr,
             meta: BTreeMap::new(),
         }],
         comments: Vec::new(),

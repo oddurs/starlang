@@ -475,7 +475,7 @@ fn synthesize_scalar_program(
         }
     }
     for c in const_set {
-        atoms.push((Expr::Int(c), c.to_string()));
+        atoms.push((canonical_int_expr(c), c.to_string()));
     }
 
     for (expr, label) in atoms {
@@ -559,7 +559,7 @@ fn synthesize_scalar_program(
             for j in 0..cur_len {
                 let (ref e1, ref l1, ref v1) = pool[i];
                 let (ref e2, ref l2, ref v2) = pool[j];
-                if matches!(e1, Expr::Int(_)) && matches!(e2, Expr::Int(_)) {
+                if is_const_int_expr(e1) && is_const_int_expr(e2) {
                     continue;
                 }
                 let ops: &[(&str, bool)] = &[
@@ -948,10 +948,41 @@ fn build_synth_unit_test(spec: &SynthSpec) -> TestDecl {
     }
 }
 
+fn canonical_int_expr(n: i64) -> Expr {
+    if n < 0 && n > i64::MIN {
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: Box::new(Expr::Int(-n)),
+        }
+    } else {
+        Expr::Int(n)
+    }
+}
+
+fn is_const_int_expr(e: &Expr) -> bool {
+    match e {
+        Expr::Int(_) => true,
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: inner,
+        } => matches!(inner.as_ref(), Expr::Int(_)),
+        _ => false,
+    }
+}
+
 fn val_to_expr(v: &Value) -> Expr {
     match v {
-        Value::Int(n) => Expr::Int(*n),
-        Value::Float(f) => Expr::Float(*f),
+        Value::Int(n) => canonical_int_expr(*n),
+        Value::Float(f) => {
+            if *f < 0.0 {
+                Expr::Unary {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(Expr::Float(-*f)),
+                }
+            } else {
+                Expr::Float(*f)
+            }
+        }
         Value::Bool(b) => Expr::Bool(*b),
         Value::Str(s) => Expr::Str(s.clone()),
         Value::List(items) => Expr::List(items.iter().map(val_to_expr).collect()),

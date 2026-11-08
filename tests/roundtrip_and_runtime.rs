@@ -2889,4 +2889,92 @@ def main() -> None:
         "Expected Futamura specialization for negative constant bias=-5, got: {:?}",
         pe_neg_rep.specializations
     );
+
+    // 13. Concolic solver extracts negative boundary constants (`x < -100`), security auditor
+    // treats non-zero negative literal divisor (`x // -2`) as safe, and injected tests preserve GetPut
+    let conc_neg_py = "\
+def check_neg_boundary(x: int) -> int:
+    if x < -100:
+        return x // -2
+    return x // 2
+
+def main() -> None:
+    print(check_neg_boundary(-120))
+";
+    let mut conc_neg_eng = StarEngine::from_source(SpokeId::Python, conc_neg_py).unwrap();
+    let sec_neg_rep = conc_neg_eng.security_flow();
+    assert!(
+        sec_neg_rep.all_sinks_safe,
+        "Non-zero negative constant divisor `x // -2` must be recognized as safe: {:?}",
+        sec_neg_rep
+    );
+    let (conc_neg_rep, _) = conc_neg_eng.concolic(true);
+    assert!(
+        conc_neg_rep.total_paths >= 2,
+        "Concolic solver must extract `-100` boundary seed and cover both branches: {:?}",
+        conc_neg_rep
+    );
+    let star_after_conc = conc_neg_eng.project(SpokeId::Star);
+    let snap_conc = conc_neg_eng
+        .apply_edit(SpokeId::Star, &star_after_conc)
+        .expect("Star round-trip after concolic test injection must succeed");
+    assert_eq!(snap_conc.views["star"], star_after_conc);
+
+    // 14. Floyd-Turing termination prover recognizes `i += -1` as a valid decrement for `while i > 0`
+    // and rejects `i += -1` for `while i < 10`
+    let wcet_dec_py = "\
+def countdown_by_neg_add(n: int) -> int:
+    i: int = n
+    acc: int = 0
+    while i > 0:
+        acc += i
+        i += -1
+    return acc
+
+def main() -> None:
+    print(countdown_by_neg_add(4))
+";
+    let wcet_dec_eng = StarEngine::from_source(SpokeId::Python, wcet_dec_py).unwrap();
+    let wcet_dec_rep = wcet_dec_eng.termination_wcet();
+    assert!(
+        wcet_dec_rep.all_terminating,
+        "`while i > 0` with `i += -1` must be proven terminating: {:?}",
+        wcet_dec_rep
+    );
+
+    let wcet_bad_py = "\
+def diverge_by_neg_add(n: int) -> int:
+    i: int = n
+    while i < 10:
+        i += -1
+    return i
+
+def main() -> None:
+    print(diverge_by_neg_add(0))
+";
+    let wcet_bad_eng = StarEngine::from_source(SpokeId::Python, wcet_bad_py).unwrap();
+    let wcet_bad_rep = wcet_bad_eng.termination_wcet();
+    assert!(
+        !wcet_bad_rep.all_terminating,
+        "`while i < 10` with `i += -1` must NOT be proven terminating: {:?}",
+        wcet_bad_rep
+    );
+
+    // 15. AutoDiff gradient synthesis on negative slope (`100 - 3 * x`) emits canonical negative AST
+    let ad_neg_py = "\
+def neg_slope_fn(x: int) -> int:
+    return 100 - 3 * x
+
+def main() -> None:
+    print(neg_slope_fn(10))
+";
+    let mut ad_neg_eng = StarEngine::from_source(SpokeId::Python, ad_neg_py).unwrap();
+    let (ad_neg_rep, _) = ad_neg_eng.autodiff(true);
+    assert!(ad_neg_rep.verified_partials >= 1);
+    let star_after_ad = ad_neg_eng.project(SpokeId::Star);
+    assert!(
+        star_after_ad.contains("(neg 3)"),
+        "Synthesized negative gradient slope must use canonical `(neg 3)` in Star IR: {}",
+        star_after_ad
+    );
 }

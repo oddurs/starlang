@@ -258,8 +258,15 @@ impl FheBuilder {
                         );
                     }
                     BinOp::Mul => {
-                        let is_plain =
-                            matches!(left.as_ref(), Expr::Int(_)) || matches!(right.as_ref(), Expr::Int(_));
+                        let is_const_int = |e: &Expr| match e {
+                            Expr::Int(_) => true,
+                            Expr::Unary {
+                                op: crate::hub::UnaryOp::Neg,
+                                expr: inner,
+                            } => matches!(inner.as_ref(), Expr::Int(_)),
+                            _ => false,
+                        };
+                        let is_plain = is_const_int(left) || is_const_int(right);
                         self.mult_depth += 1;
                         if is_plain {
                             self.push_gate(

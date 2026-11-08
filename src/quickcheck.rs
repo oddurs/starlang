@@ -686,8 +686,26 @@ fn format_value_tuple(args: &[Value]) -> String {
 
 fn value_to_hub_expr(val: &Value) -> Expr {
     match val {
-        Value::Int(v) => Expr::Int(*v),
-        Value::Float(v) => Expr::Float(*v),
+        Value::Int(v) => {
+            if *v < 0 && *v > i64::MIN {
+                Expr::Unary {
+                    op: crate::hub::UnaryOp::Neg,
+                    expr: Box::new(Expr::Int(-*v)),
+                }
+            } else {
+                Expr::Int(*v)
+            }
+        }
+        Value::Float(v) => {
+            if *v < 0.0 {
+                Expr::Unary {
+                    op: crate::hub::UnaryOp::Neg,
+                    expr: Box::new(Expr::Float(-*v)),
+                }
+            } else {
+                Expr::Float(*v)
+            }
+        }
         Value::Bool(b) => Expr::Bool(*b),
         Value::Str(s) => Expr::Str(s.clone()),
         Value::List(items) => Expr::List(items.iter().map(value_to_hub_expr).collect()),
