@@ -113,6 +113,25 @@ impl GoFmtCtx {
         )
     }
 
+    fn type_needs_deep_equal(&self, ty: &Type) -> bool {
+        match ty {
+            Type::List(_) => true,
+            Type::Named(name) => self
+                .struct_fields
+                .get(name)
+                .is_some_and(|fields| fields.values().any(|ft| self.type_needs_deep_equal(ft))),
+            _ => false,
+        }
+    }
+
+    fn expr_needs_deep_equal(&self, expr: &Expr) -> bool {
+        if matches!(expr, Expr::List(_)) {
+            return true;
+        }
+        self.expr_ty(expr)
+            .is_some_and(|ty| self.type_needs_deep_equal(&ty))
+    }
+
     fn collect_imports(&mut self, hub: &HubModule) -> BTreeSet<&'static str> {
         let mut imports = BTreeSet::new();
         for item in &hub.items {
@@ -141,11 +160,22 @@ impl GoFmtCtx {
                     name, ty, value, ..
                 } => {
                     self.scan_expr_imports(value, imports);
-                    if let Some(t) = ty.clone().or_else(|| self.expr_ty(value)) {
+                    if let Some(t) = ty.clone().or_else(|| self.expr_ty(value)).or_else(|| {
+                        if matches!(value, Expr::List(_)) {
+                            Some(Type::List(Box::new(Type::Int)))
+                        } else {
+                            None
+                        }
+                    }) {
                         self.local_env.insert(name.clone(), t);
                     }
                 }
-                Stmt::Assign { value, .. } => self.scan_expr_imports(value, imports),
+                Stmt::Assign { target, value, .. } => {
+                    if let AssignTarget::Index { index, .. } = target {
+                        self.scan_expr_imports(index, imports);
+                    }
+                    self.scan_expr_imports(value, imports);
+                }
                 Stmt::If {
                     cond,
                     then_body,
@@ -231,7 +261,12 @@ impl GoFmtCtx {
                 self.scan_expr_imports(index, imports);
             }
             Expr::Unary { expr: inner, .. } => self.scan_expr_imports(inner, imports),
-            Expr::Binary { left, right, .. } => {
+            Expr::Binary { op, left, right } => {
+                if matches!(op, BinOp::Eq | BinOp::Ne)
+                    && (self.expr_needs_deep_equal(left) || self.expr_needs_deep_equal(right))
+                {
+                    imports.insert("reflect");
+                }
                 self.scan_expr_imports(left, imports);
                 self.scan_expr_imports(right, imports);
             }
@@ -398,7 +433,13 @@ impl GoFmtCtx {
                         val_str
                     ));
                 } else {
-                    if let Some(inferred) = self.expr_ty(value) {
+                    if let Some(inferred) = self.expr_ty(value).or_else(|| {
+                        if matches!(value, Expr::List(_)) {
+                            Some(Type::List(Box::new(Type::Int)))
+                        } else {
+                            None
+                        }
+                    }) {
                         self.local_env.insert(name.clone(), inferred);
                     }
                     out.push_str(&format!("{}{} := {}\n", pad, name, self.fmt_expr(value)));
@@ -636,6 +677,30 @@ impl GoFmtCtx {
                 }
             }
             Expr::Binary { op, left, right } => {
+                if matches!(op, BinOp::Eq | BinOp::Ne)
+                    && (self.expr_needs_deep_equal(left) || self.expr_needs_deep_equal(right))
+                {
+                    let fmt_side = |side: &Expr, peer: &Expr| -> String {
+                        if let Expr::List(items) = side {
+                            if items.is_empty() {
+                                if let Some(Type::List(elem)) = self.expr_ty(peer) {
+                                    return format!("[]{}{{}}", Self::fmt_type(&elem));
+                                }
+                            }
+                        }
+                        self.fmt_expr(side)
+                    };
+                    let call = format!(
+                        "reflect.DeepEqual({}, {})",
+                        fmt_side(left, right),
+                        fmt_side(right, left)
+                    );
+                    return if *op == BinOp::Ne {
+                        format!("!{}", call)
+                    } else {
+                        call
+                    };
+                }
                 let l_raw = self.fmt_clean_int(left);
                 let r_raw = self.fmt_clean_int(right);
                 let l_str = if needs_parens(left, *op, false) {
@@ -1462,6 +1527,19 @@ impl GoParser {
                     meta: Metadata::new(),
                 });
             }
+            if let Expr::Binary {
+                op: BinOp::Ne,
+                left,
+                right,
+            } = cond
+            {
+                return Ok(Stmt::AssertEq {
+                    id: 0,
+                    left: *left,
+                    right: *right,
+                    meta: Metadata::new(),
+                });
+            }
         }
         Ok(Stmt::If {
             id: 0,
@@ -1711,7 +1789,22 @@ impl GoParser {
             });
         }
         if self.eat(&GTokKind::Bang) {
+            let parenthesized = matches!(self.peek_kind(), Some(GTokKind::LParen));
             let inner = self.parse_unary()?;
+            if !parenthesized {
+                if let Expr::Binary {
+                    op: BinOp::Eq,
+                    left,
+                    right,
+                } = inner
+                {
+                    return Ok(Expr::Binary {
+                        op: BinOp::Ne,
+                        left,
+                        right,
+                    });
+                }
+            }
             return Ok(Expr::Unary {
                 op: UnaryOp::Not,
                 expr: Box::new(inner),

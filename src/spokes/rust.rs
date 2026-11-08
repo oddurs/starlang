@@ -298,7 +298,13 @@ impl RustFmtCtx {
                     AssignTarget::Var(v) => v.clone(),
                     AssignTarget::Field { base, field } => format!("{}.{}", base, field),
                     AssignTarget::Index { base, index } => {
-                        format!("{}[{} as usize]", base, self.fmt_expr(index))
+                        let idx_str = match index {
+                            Expr::Binary { .. } | Expr::Unary { .. } => {
+                                format!("({}) as usize", self.fmt_expr(index))
+                            }
+                            _ => format!("{} as usize", self.fmt_expr(index)),
+                        };
+                        format!("{}[{}]", base, idx_str)
                     }
                 };
                 out.push_str(&format!(

@@ -3029,6 +3029,9 @@ fn reference_based_starlang_differential_validation_and_14_engine_torture_suite(
       (then
         (continue)))
     (push! acc (call classify_code x mode)))
+  (let idx 0)
+  (set! (index acc (+ idx 1)) (+ (index acc 0) 27))
+  (add! (index acc (+ idx 0)) 3)
   (let-mut total 0)
   (for-range i 0 (len acc)
     (add! total (index acc i)))
@@ -3042,20 +3045,21 @@ fn reference_based_starlang_differential_validation_and_14_engine_torture_suite(
 
 (fn main () -> Void
   (let batch (list (neg 5) 0 10 (neg 20) 7 (neg 99) 50))
-  (let pkt (call score_batch batch RouteMode::Direct "Alpha"))
+  (let-mut pkt (call score_batch batch RouteMode::Direct "Alpha"))
+  (add! (field pkt weight) 2)
   (let has_ten (contains batch 10))
   (let has_al (contains (get-field pkt tag) "AL"))
   (let-mut flag_score 0)
   (if (and (and has_ten has_al) (not (contains batch 999)))
     (then
       (set! flag_score 11)))
-  (print (get-field pkt id) (get-field pkt weight) (get-field pkt tag) flag_score (to-str (- 100 (- 30 10)))))
+  (print (get-field pkt id) (get-field pkt weight) (get-field pkt tag) flag_score (to-str (- 100 (- 30 10))) has_ten (to-str (not has_ten))))
 
 (test reference_oracle_invariants
   (let batch (list (neg 5) 0 10 (neg 20) 7))
   (let pkt (call score_batch batch RouteMode::Relay "Beta"))
   (assert-eq (get-field pkt id) 4)
-  (assert-eq (get-field pkt weight) 223)
+  (assert-eq (get-field pkt weight) 228)
   (assert-eq (get-field pkt tag) "BETA")
   (assert (contains batch (neg 5)))
   (assert (not (contains batch 999))))
@@ -3076,7 +3080,7 @@ fn reference_based_starlang_differential_validation_and_14_engine_torture_suite(
     // Ground-truth Hub VM reference oracle
     let ref_snap = engine.snapshot();
     assert!(ref_snap.live_eval.ok, "{:?}", ref_snap.live_eval.error);
-    let expected_stdout = "4 413 ALPHA 11 80";
+    let expected_stdout = "4 420 ALPHA 11 80 true false";
     assert_eq!(ref_snap.live_eval.stdout.trim(), expected_stdout);
     assert_eq!(ref_snap.test_results.len(), 1);
     assert!(
@@ -3218,7 +3222,51 @@ def test_banner() -> None:
     );
     assert_eq!(pass_run.results[0].stdout, expected_banner_out);
 
-    // 5. Multi-seed property-based fuzzer sweep validating GetPut, Cold Put, Optimizer, E-Graph & Wasm
+    // 5. Validate structural equality (`==`/`!=`) on List and Struct values across all 13 spokes
+    //    (Warm GetPut, 13x13 PutGetPut) and all 14 native/JIT execution engines!
+    let struct_list_eq_star = r#"(struct PairBox
+  (field label Str)
+  (field nums (List Int)))
+
+(fn check_structural_eq ((param a PairBox) (param b PairBox)) -> Bool
+  (let xs (list 1 2 3))
+  (let ys (list 1 2 3))
+  (let zs (list 1 2 4))
+  (return (and (and (== xs ys) (!= xs zs)) (and (== a b) (!= (get-field a nums) zs)))))
+
+(fn main () -> Void
+  (let p1 (make PairBox (label "ok") (nums (list 10 20))))
+  (let p2 (make PairBox (label "ok") (nums (list 10 20))))
+  (print (call check_structural_eq p1 p2)))
+"#;
+    let eq_eng = StarEngine::from_source(SpokeId::Star, struct_list_eq_star).unwrap();
+    let eq_hub = eq_eng.hub().clone();
+    assert_eq!(eq_eng.snapshot().live_eval.stdout.trim(), "true");
+    for spoke_a in SpokeId::ALL {
+        let lens_a = lens_for(spoke_a);
+        let code_a = lens_a.get(&eq_hub);
+        let warm_a = lens_a.put(&code_a, &eq_hub).unwrap_or_else(|e| {
+            panic!("Structural eq Warm GetPut failed on {:?}: {}\n{}", spoke_a, e, code_a)
+        });
+        assert_eq!(warm_a, eq_hub, "Structural eq GetPut drift on {:?}", spoke_a);
+    }
+    let eq_run = run_all_spokes(&eq_eng);
+    for r in &eq_run.results {
+        assert!(
+            r.ok,
+            "Structural equality program failed on engine {}:\nstdout: {}\nstderr: {}",
+            r.language, r.stdout, r.stderr
+        );
+        assert_eq!(
+            r.stdout.trim(),
+            "true",
+            "Structural equality diverged on engine {}",
+            r.language
+        );
+    }
+    assert!(eq_run.outputs_match);
+
+    // 6. Multi-seed property-based fuzzer sweep validating GetPut, Cold Put, Optimizer, E-Graph & Wasm
     for seed in [0x000A_11CE_0001_u64, 0x0B0B_0002_u64, 0xCAFE_F00D_u64] {
         let fuzz = run_fuzz_suite(seed, 20);
         assert!(

@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
 use crate::hub::{
-    normalize_module, EnumDecl, Expr, Field, FnDecl, HubModule, Item, Metadata, NodeId, Param,
-    Stmt, StructDecl, TestDecl, Type,
+    normalize_module, AssignOp, AssignTarget, BinOp, EnumDecl, Expr, Field, FnDecl, HubModule,
+    Item, Metadata, NodeId, Param, Stmt, StructDecl, TestDecl, Type,
 };
 use crate::lens::SpokeId;
 
@@ -487,15 +487,56 @@ fn reconcile_stmts(
                     *id = claim_id(None, next_id, used);
                 }
             }
-            Stmt::Assign { id, meta, .. } => {
+            Stmt::Assign {
+                id,
+                target,
+                op,
+                value,
+                meta,
+            } => {
                 if let Some(Stmt::Assign {
                     id: pid,
+                    target: ptarget,
+                    op: pop,
+                    value: pvalue,
                     meta: pmeta,
-                    ..
                 }) = prev_stmt
                 {
                     *id = claim_id(Some(*pid), next_id, used);
                     *meta = merge_meta(meta, Some(pmeta), edited_spoke);
+                    if *pop == AssignOp::Set
+                        && matches!(op, AssignOp::AddAssign | AssignOp::SubAssign)
+                        && target == ptarget
+                        && matches!(
+                            edited_spoke,
+                            SpokeId::Zig | SpokeId::Java | SpokeId::Lua
+                        )
+                    {
+                        if let Expr::Binary {
+                            op: bop,
+                            left,
+                            right,
+                        } = pvalue
+                        {
+                            let op_matches = (*op == AssignOp::AddAssign && *bop == BinOp::Add)
+                                || (*op == AssignOp::SubAssign && *bop == BinOp::Sub);
+                            let target_expr = match target {
+                                AssignTarget::Var(v) => Expr::Var(v.clone()),
+                                AssignTarget::Field { base, field } => Expr::FieldAccess {
+                                    base: Box::new(Expr::Var(base.clone())),
+                                    field: field.clone(),
+                                },
+                                AssignTarget::Index { base, index } => Expr::Index {
+                                    base: Box::new(Expr::Var(base.clone())),
+                                    index: Box::new(index.clone()),
+                                },
+                            };
+                            if op_matches && **left == target_expr && **right == *value {
+                                *op = AssignOp::Set;
+                                *value = pvalue.clone();
+                            }
+                        }
+                    }
                 } else {
                     *id = claim_id(None, next_id, used);
                 }

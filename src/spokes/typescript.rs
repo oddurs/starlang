@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::hub::{
-    AssignOp, AssignTarget, BinOp, Diagnostic, EnumDecl, Expr, Field, FnDecl, HubModule, Intrinsic,
-    Item, MatchArm, MatchPat, Metadata, Param, Stmt, StructDecl, TestDecl, Type, UnaryOp,
+    infer_expr_type, AssignOp, AssignTarget, BinOp, Diagnostic, EnumDecl, Expr, Field, FnDecl,
+    HubModule, Intrinsic, Item, MatchArm, MatchPat, Metadata, Param, Stmt, StructDecl, TestDecl,
+    Type, UnaryOp,
 };
 use crate::lens::{escape_str, format_float, needs_parens, LanguageLens, SpokeId};
 use crate::reconcile::reconcile_modules;
@@ -16,6 +17,7 @@ impl LanguageLens for TypeScriptLens {
     }
 
     fn get(&self, hub: &HubModule) -> String {
+        let mut ctx = TsFmtCtx::from_hub(hub);
         let mut out = String::new();
         for (idx, item) in hub.items.iter().enumerate() {
             if idx > 0 {
@@ -24,8 +26,8 @@ impl LanguageLens for TypeScriptLens {
             match item {
                 Item::Struct(s) => fmt_struct(s, &mut out),
                 Item::Enum(e) => fmt_enum(e, &mut out),
-                Item::Function(f) => fmt_fn(f, &mut out),
-                Item::Test(t) => fmt_test(t, &mut out),
+                Item::Function(f) => ctx.fmt_fn(f, &mut out),
+                Item::Test(t) => ctx.fmt_test(t, &mut out),
             }
         }
         if hub.has_main() {
@@ -92,40 +94,6 @@ fn fmt_enum(e: &EnumDecl, out: &mut String) {
     ));
 }
 
-fn fmt_fn(f: &FnDecl, out: &mut String) {
-    for c in &f.comments {
-        out.push_str(&format!("// {}\n", c));
-    }
-    let export_kw = if f.name == "main" { "" } else { "export " };
-    let params_str: Vec<String> = f
-        .params
-        .iter()
-        .map(|p| format!("{}: {}", p.name, fmt_type(&p.ty)))
-        .collect();
-    out.push_str(&format!(
-        "{}function {}({}): {} {{\n",
-        export_kw,
-        f.name,
-        params_str.join(", "),
-        fmt_type(&f.ret_ty)
-    ));
-    for stmt in &f.body {
-        fmt_stmt(stmt, 1, out);
-    }
-    out.push_str("}\n");
-}
-
-fn fmt_test(t: &TestDecl, out: &mut String) {
-    for c in &t.comments {
-        out.push_str(&format!("// {}\n", c));
-    }
-    out.push_str(&format!("export function test_{}(): void {{\n", t.name));
-    for stmt in &t.body {
-        fmt_stmt(stmt, 1, out);
-    }
-    out.push_str("}\n");
-}
-
 fn fmt_pat(pat: &MatchPat) -> String {
     match pat {
         MatchPat::EnumVariant { enum_name, variant } => format!("{}.{}", enum_name, variant),
@@ -135,293 +103,449 @@ fn fmt_pat(pat: &MatchPat) -> String {
     }
 }
 
-fn fmt_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
-    let pad = "  ".repeat(indent);
-    match stmt {
-        Stmt::Comment { text, .. } => {
-            out.push_str(&format!("{}// {}\n", pad, text));
+struct TsFmtCtx {
+    fn_ret_types: HashMap<String, Type>,
+    struct_fields: HashMap<String, HashMap<String, Type>>,
+    enum_names: HashSet<String>,
+    local_env: HashMap<String, Type>,
+}
+
+impl TsFmtCtx {
+    fn from_hub(hub: &HubModule) -> Self {
+        let mut fn_ret_types = HashMap::new();
+        let mut struct_fields = HashMap::new();
+        let mut enum_names = HashSet::new();
+        for item in &hub.items {
+            match item {
+                Item::Function(f) => {
+                    fn_ret_types.insert(f.name.clone(), f.ret_ty.clone());
+                }
+                Item::Struct(s) => {
+                    let mut fmap = HashMap::new();
+                    for fl in &s.fields {
+                        fmap.insert(fl.name.clone(), fl.ty.clone());
+                    }
+                    struct_fields.insert(s.name.clone(), fmap);
+                }
+                Item::Enum(e) => {
+                    enum_names.insert(e.name.clone());
+                }
+                Item::Test(_) => {}
+            }
         }
-        Stmt::Let {
-            name,
-            mutable,
-            ty,
-            value,
-            ..
-        } => {
-            let kw = if *mutable { "let" } else { "const" };
-            if let Some(t) = ty {
+        Self {
+            fn_ret_types,
+            struct_fields,
+            enum_names,
+            local_env: HashMap::new(),
+        }
+    }
+
+    fn expr_ty(&self, expr: &Expr) -> Option<Type> {
+        infer_expr_type(
+            expr,
+            &self.local_env,
+            &self.fn_ret_types,
+            &self.struct_fields,
+            &self.enum_names,
+        )
+    }
+
+    fn expr_needs_deep_eq(&self, expr: &Expr) -> bool {
+        if matches!(expr, Expr::List(_) | Expr::StructInit { .. }) {
+            return true;
+        }
+        match self.expr_ty(expr) {
+            Some(Type::List(_)) => true,
+            Some(Type::Named(name)) => !self.enum_names.contains(&name),
+            _ => false,
+        }
+    }
+
+    fn fmt_fn(&mut self, f: &FnDecl, out: &mut String) {
+        for c in &f.comments {
+            out.push_str(&format!("// {}\n", c));
+        }
+        self.local_env.clear();
+        for p in &f.params {
+            self.local_env.insert(p.name.clone(), p.ty.clone());
+        }
+        let export_kw = if f.name == "main" { "" } else { "export " };
+        let params_str: Vec<String> = f
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", p.name, fmt_type(&p.ty)))
+            .collect();
+        out.push_str(&format!(
+            "{}function {}({}): {} {{\n",
+            export_kw,
+            f.name,
+            params_str.join(", "),
+            fmt_type(&f.ret_ty)
+        ));
+        for stmt in &f.body {
+            self.fmt_stmt(stmt, 1, out);
+        }
+        out.push_str("}\n");
+    }
+
+    fn fmt_test(&mut self, t: &TestDecl, out: &mut String) {
+        for c in &t.comments {
+            out.push_str(&format!("// {}\n", c));
+        }
+        self.local_env.clear();
+        out.push_str(&format!("export function test_{}(): void {{\n", t.name));
+        for stmt in &t.body {
+            self.fmt_stmt(stmt, 1, out);
+        }
+        out.push_str("}\n");
+    }
+
+    fn fmt_stmt(&mut self, stmt: &Stmt, indent: usize, out: &mut String) {
+        let pad = "  ".repeat(indent);
+        match stmt {
+            Stmt::Comment { text, .. } => {
+                out.push_str(&format!("{}// {}\n", pad, text));
+            }
+            Stmt::Let {
+                name,
+                mutable,
+                ty,
+                value,
+                ..
+            } => {
+                let kw = if *mutable { "let" } else { "const" };
+                let val_str = self.fmt_expr(value);
+                if let Some(t) = ty {
+                    self.local_env.insert(name.clone(), t.clone());
+                    out.push_str(&format!(
+                        "{}{} {}: {} = {};\n",
+                        pad,
+                        kw,
+                        name,
+                        fmt_type(t),
+                        val_str
+                    ));
+                } else {
+                    if let Some(inferred) = self.expr_ty(value).or_else(|| {
+                        if matches!(value, Expr::List(_)) {
+                            Some(Type::List(Box::new(Type::Int)))
+                        } else {
+                            None
+                        }
+                    }) {
+                        self.local_env.insert(name.clone(), inferred);
+                    }
+                    out.push_str(&format!("{}{} {} = {};\n", pad, kw, name, val_str));
+                }
+            }
+            Stmt::Assign {
+                target, op, value, ..
+            } => {
+                let op_str = match op {
+                    AssignOp::Set => "=",
+                    AssignOp::AddAssign => "+=",
+                    AssignOp::SubAssign => "-=",
+                };
+                let tgt = match target {
+                    AssignTarget::Var(v) => v.clone(),
+                    AssignTarget::Field { base, field } => format!("{}.{}", base, field),
+                    AssignTarget::Index { base, index } => {
+                        format!("{}[{}]", base, self.fmt_expr(index))
+                    }
+                };
                 out.push_str(&format!(
-                    "{}{} {}: {} = {};\n",
+                    "{}{} {} {};\n",
                     pad,
-                    kw,
-                    name,
-                    fmt_type(t),
-                    fmt_expr(value)
+                    tgt,
+                    op_str,
+                    self.fmt_expr(value)
                 ));
-            } else {
-                out.push_str(&format!("{}{} {} = {};\n", pad, kw, name, fmt_expr(value)));
             }
-        }
-        Stmt::Assign {
-            target, op, value, ..
-        } => {
-            let op_str = match op {
-                AssignOp::Set => "=",
-                AssignOp::AddAssign => "+=",
-                AssignOp::SubAssign => "-=",
-            };
-            let tgt = match target {
-                AssignTarget::Var(v) => v.clone(),
-                AssignTarget::Field { base, field } => format!("{}.{}", base, field),
-                AssignTarget::Index { base, index } => {
-                    format!("{}[{}]", base, fmt_expr(index))
-                }
-            };
-            out.push_str(&format!("{}{} {} {};\n", pad, tgt, op_str, fmt_expr(value)));
-        }
-        Stmt::If {
-            cond,
-            then_body,
-            else_body,
-            ..
-        } => {
-            fmt_if_chain(cond, then_body, else_body, indent, true, out);
-        }
-        Stmt::Match { expr, arms, .. } => {
-            out.push_str(&format!("{}switch ({}) {{\n", pad, fmt_expr(expr)));
-            for arm in arms {
-                if arm.pat == MatchPat::Wildcard {
-                    out.push_str(&format!("{}  default: {{\n", pad));
-                } else {
-                    out.push_str(&format!("{}  case {}: {{\n", pad, fmt_pat(&arm.pat)));
-                }
-                for s in &arm.body {
-                    fmt_stmt(s, indent + 2, out);
-                }
-                let ends_with_return = matches!(arm.body.last(), Some(Stmt::Return { .. }));
-                if !ends_with_return {
-                    out.push_str(&format!("{}    break;\n", pad));
-                }
-                out.push_str(&format!("{}  }}\n", pad));
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+                ..
+            } => {
+                self.fmt_if_chain(cond, then_body, else_body, indent, true, out);
             }
-            out.push_str(&format!("{}}}\n", pad));
-        }
-        Stmt::While { cond, body, .. } => {
-            out.push_str(&format!("{}while ({}) {{\n", pad, fmt_expr(cond)));
-            for s in body {
-                fmt_stmt(s, indent + 1, out);
+            Stmt::Match { expr, arms, .. } => {
+                out.push_str(&format!("{}switch ({}) {{\n", pad, self.fmt_expr(expr)));
+                for arm in arms {
+                    if arm.pat == MatchPat::Wildcard {
+                        out.push_str(&format!("{}  default: {{\n", pad));
+                    } else {
+                        out.push_str(&format!("{}  case {}: {{\n", pad, fmt_pat(&arm.pat)));
+                    }
+                    let saved = self.local_env.clone();
+                    for s in &arm.body {
+                        self.fmt_stmt(s, indent + 2, out);
+                    }
+                    self.local_env = saved;
+                    let ends_with_return = matches!(arm.body.last(), Some(Stmt::Return { .. }));
+                    if !ends_with_return {
+                        out.push_str(&format!("{}    break;\n", pad));
+                    }
+                    out.push_str(&format!("{}  }}\n", pad));
+                }
+                out.push_str(&format!("{}}}\n", pad));
             }
-            out.push_str(&format!("{}}}\n", pad));
-        }
-        Stmt::ForEach {
-            var, iter, body, ..
-        } => {
-            out.push_str(&format!("{}for (const {} of {}) {{\n", pad, var, fmt_expr(iter)));
-            for s in body {
-                fmt_stmt(s, indent + 1, out);
+            Stmt::While { cond, body, .. } => {
+                out.push_str(&format!("{}while ({}) {{\n", pad, self.fmt_expr(cond)));
+                let saved = self.local_env.clone();
+                for s in body {
+                    self.fmt_stmt(s, indent + 1, out);
+                }
+                self.local_env = saved;
+                out.push_str(&format!("{}}}\n", pad));
             }
-            out.push_str(&format!("{}}}\n", pad));
-        }
-        Stmt::ForRange {
-            var,
-            start,
-            end,
-            body,
-            ..
-        } => {
-            out.push_str(&format!(
-                "{}for (let {} = {}; {} < {}; {}++) {{\n",
-                pad,
+            Stmt::ForEach {
+                var, iter, body, ..
+            } => {
+                out.push_str(&format!(
+                    "{}for (const {} of {}) {{\n",
+                    pad,
+                    var,
+                    self.fmt_expr(iter)
+                ));
+                let saved = self.local_env.clone();
+                if let Some(Type::List(elem)) = self.expr_ty(iter) {
+                    self.local_env.insert(var.clone(), *elem);
+                }
+                for s in body {
+                    self.fmt_stmt(s, indent + 1, out);
+                }
+                self.local_env = saved;
+                out.push_str(&format!("{}}}\n", pad));
+            }
+            Stmt::ForRange {
                 var,
-                fmt_expr(start),
-                var,
-                fmt_expr(end),
-                var
-            ));
-            for s in body {
-                fmt_stmt(s, indent + 1, out);
+                start,
+                end,
+                body,
+                ..
+            } => {
+                out.push_str(&format!(
+                    "{}for (let {} = {}; {} < {}; {}++) {{\n",
+                    pad,
+                    var,
+                    self.fmt_expr(start),
+                    var,
+                    self.fmt_expr(end),
+                    var
+                ));
+                let saved = self.local_env.clone();
+                self.local_env.insert(var.clone(), Type::Int);
+                for s in body {
+                    self.fmt_stmt(s, indent + 1, out);
+                }
+                self.local_env = saved;
+                out.push_str(&format!("{}}}\n", pad));
             }
+            Stmt::Break { .. } => out.push_str(&format!("{}break;\n", pad)),
+            Stmt::Continue { .. } => out.push_str(&format!("{}continue;\n", pad)),
+            Stmt::Return { value, .. } => match value {
+                Some(v) => out.push_str(&format!("{}return {};\n", pad, self.fmt_expr(v))),
+                None => out.push_str(&format!("{}return;\n", pad)),
+            },
+            Stmt::Assert { cond, .. } => {
+                out.push_str(&format!(
+                    "{}if (!({})) {{ throw new Error(\"assertion failed\"); }}\n",
+                    pad,
+                    self.fmt_expr(cond)
+                ));
+            }
+            Stmt::AssertEq { left, right, .. } => {
+                out.push_str(&format!(
+                    "{}if (JSON.stringify({}) !== JSON.stringify({})) {{ throw new Error(\"assert_eq failed\"); }}\n",
+                    pad,
+                    self.fmt_expr(left),
+                    self.fmt_expr(right)
+                ));
+            }
+            Stmt::Expr { expr, .. } => {
+                if matches!(expr, Expr::StructInit { .. }) {
+                    out.push_str(&format!("{}({});\n", pad, self.fmt_expr(expr)));
+                } else {
+                    out.push_str(&format!("{}{};\n", pad, self.fmt_expr(expr)));
+                }
+            }
+        }
+    }
+
+    fn fmt_if_chain(
+        &mut self,
+        cond: &Expr,
+        then_body: &[Stmt],
+        else_body: &[Stmt],
+        indent: usize,
+        first: bool,
+        out: &mut String,
+    ) {
+        let pad = "  ".repeat(indent);
+        if first {
+            out.push_str(&format!("{}if ({}) {{\n", pad, self.fmt_expr(cond)));
+        } else {
+            out.push_str(&format!(" else if ({}) {{\n", self.fmt_expr(cond)));
+        }
+        let saved = self.local_env.clone();
+        for s in then_body {
+            self.fmt_stmt(s, indent + 1, out);
+        }
+        self.local_env = saved;
+
+        if else_body.is_empty() {
+            out.push_str(&format!("{}}}\n", pad));
+        } else if else_body.len() == 1 && matches!(&else_body[0], Stmt::If { .. }) {
+            out.push_str(&format!("{}}}", pad));
+            if let Stmt::If {
+                cond: c2,
+                then_body: t2,
+                else_body: e2,
+                ..
+            } = &else_body[0]
+            {
+                self.fmt_if_chain(c2, t2, e2, indent, false, out);
+            }
+        } else {
+            out.push_str(&format!("{}}} else {{\n", pad));
+            let saved2 = self.local_env.clone();
+            for s in else_body {
+                self.fmt_stmt(s, indent + 1, out);
+            }
+            self.local_env = saved2;
             out.push_str(&format!("{}}}\n", pad));
         }
-        Stmt::Break { .. } => out.push_str(&format!("{}break;\n", pad)),
-        Stmt::Continue { .. } => out.push_str(&format!("{}continue;\n", pad)),
-        Stmt::Return { value, .. } => match value {
-            Some(v) => out.push_str(&format!("{}return {};\n", pad, fmt_expr(v))),
-            None => out.push_str(&format!("{}return;\n", pad)),
-        },
-        Stmt::Assert { cond, .. } => {
-            out.push_str(&format!(
-                "{}if (!({})) {{ throw new Error(\"assertion failed\"); }}\n",
-                pad,
-                fmt_expr(cond)
-            ));
+    }
+
+    fn fmt_postfix(&self, expr: &Expr) -> String {
+        let s = self.fmt_expr(expr);
+        match expr {
+            Expr::Binary { .. } | Expr::Unary { .. } | Expr::StructInit { .. } => format!("({})", s),
+            Expr::Int(v) if *v < 0 => format!("({})", s),
+            Expr::Float(v) if *v < 0.0 => format!("({})", s),
+            _ => s,
         }
-        Stmt::AssertEq { left, right, .. } => {
-            out.push_str(&format!(
-                "{}if (JSON.stringify({}) !== JSON.stringify({})) {{ throw new Error(\"assert_eq failed\"); }}\n",
-                pad,
-                fmt_expr(left),
-                fmt_expr(right)
-            ));
-        }
-        Stmt::Expr { expr, .. } => {
-            if matches!(expr, Expr::StructInit { .. }) {
-                out.push_str(&format!("{}({});\n", pad, fmt_expr(expr)));
-            } else {
-                out.push_str(&format!("{}{};\n", pad, fmt_expr(expr)));
+    }
+
+    fn fmt_expr(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Int(v) => v.to_string(),
+            Expr::Float(v) => format_float(*v),
+            Expr::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+            Expr::Str(s) => format!("\"{}\"", escape_str(s)),
+            Expr::Var(v) => v.clone(),
+            Expr::EnumVariant { enum_name, variant } => format!("{}.{}", enum_name, variant),
+            Expr::List(items) => {
+                let inner: Vec<String> = items.iter().map(|e| self.fmt_expr(e)).collect();
+                format!("[{}]", inner.join(", "))
             }
-        }
-    }
-}
-
-fn fmt_if_chain(
-    cond: &Expr,
-    then_body: &[Stmt],
-    else_body: &[Stmt],
-    indent: usize,
-    first: bool,
-    out: &mut String,
-) {
-    let pad = "  ".repeat(indent);
-    if first {
-        out.push_str(&format!("{}if ({}) {{\n", pad, fmt_expr(cond)));
-    } else {
-        out.push_str(&format!(" else if ({}) {{\n", self::fmt_expr(cond)));
-    }
-    for s in then_body {
-        fmt_stmt(s, indent + 1, out);
-    }
-
-    if else_body.is_empty() {
-        out.push_str(&format!("{}}}\n", pad));
-    } else if else_body.len() == 1 && matches!(&else_body[0], Stmt::If { .. }) {
-        out.push_str(&format!("{}}}", pad));
-        if let Stmt::If {
-            cond: c2,
-            then_body: t2,
-            else_body: e2,
-            ..
-        } = &else_body[0]
-        {
-            fmt_if_chain(c2, t2, e2, indent, false, out);
-        }
-    } else {
-        out.push_str(&format!("{}}} else {{\n", pad));
-        for s in else_body {
-            fmt_stmt(s, indent + 1, out);
-        }
-        out.push_str(&format!("{}}}\n", pad));
-    }
-}
-
-fn fmt_postfix(expr: &Expr) -> String {
-    let s = fmt_expr(expr);
-    match expr {
-        Expr::Binary { .. } | Expr::Unary { .. } | Expr::StructInit { .. } => format!("({})", s),
-        Expr::Int(v) if *v < 0 => format!("({})", s),
-        Expr::Float(v) if *v < 0.0 => format!("({})", s),
-        _ => s,
-    }
-}
-
-fn fmt_expr(expr: &Expr) -> String {
-    match expr {
-        Expr::Int(v) => v.to_string(),
-        Expr::Float(v) => format_float(*v),
-        Expr::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        Expr::Str(s) => format!("\"{}\"", escape_str(s)),
-        Expr::Var(v) => v.clone(),
-        Expr::EnumVariant { enum_name, variant } => format!("{}.{}", enum_name, variant),
-        Expr::List(items) => {
-            let inner: Vec<String> = items.iter().map(fmt_expr).collect();
-            format!("[{}]", inner.join(", "))
-        }
-        Expr::StructInit { name, fields } => {
-            let inner: Vec<String> = fields
-                .iter()
-                .map(|(fname, fval)| format!("{}: {}", fname, fmt_expr(fval)))
-                .collect();
-            format!("{{ {} }} as {}", inner.join(", "), name)
-        }
-        Expr::FieldAccess { base, field } => format!("{}.{}", fmt_postfix(base), field),
-        Expr::Index { base, index } => format!("{}[{}]", fmt_postfix(base), fmt_expr(index)),
-        Expr::Unary { op, expr: inner } => {
-            let sym = match op {
-                UnaryOp::Neg => "-",
-                UnaryOp::Not => "!",
-            };
-            match inner.as_ref() {
-                Expr::Binary { .. } | Expr::Unary { .. } | Expr::StructInit { .. } => {
-                    format!("{}({})", sym, fmt_expr(inner))
+            Expr::StructInit { name, fields } => {
+                let inner: Vec<String> = fields
+                    .iter()
+                    .map(|(fname, fval)| format!("{}: {}", fname, self.fmt_expr(fval)))
+                    .collect();
+                format!("{{ {} }} as {}", inner.join(", "), name)
+            }
+            Expr::FieldAccess { base, field } => format!("{}.{}", self.fmt_postfix(base), field),
+            Expr::Index { base, index } => {
+                format!("{}[{}]", self.fmt_postfix(base), self.fmt_expr(index))
+            }
+            Expr::Unary { op, expr: inner } => {
+                let sym = match op {
+                    UnaryOp::Neg => "-",
+                    UnaryOp::Not => "!",
+                };
+                match inner.as_ref() {
+                    Expr::Binary { .. } | Expr::Unary { .. } | Expr::StructInit { .. } => {
+                        format!("{}({})", sym, self.fmt_expr(inner))
+                    }
+                    _ => format!("{}{}", sym, self.fmt_expr(inner)),
                 }
-                _ => format!("{}{}", sym, fmt_expr(inner)),
             }
-        }
-        Expr::Binary { op, left, right } => {
-            if *op == BinOp::IntDiv {
-                let l_str = if needs_parens(left, BinOp::Div, false) {
-                    format!("({})", fmt_expr(left))
-                } else {
-                    fmt_expr(left)
-                };
-                let r_str = if needs_parens(right, BinOp::Div, true) {
-                    format!("({})", fmt_expr(right))
-                } else {
-                    fmt_expr(right)
-                };
-                return format!("Math.trunc({} / {})", l_str, r_str);
-            }
+            Expr::Binary { op, left, right } => {
+                if matches!(op, BinOp::Eq | BinOp::Ne)
+                    && (self.expr_needs_deep_eq(left) || self.expr_needs_deep_eq(right))
+                {
+                    let op_str = if *op == BinOp::Eq { "===" } else { "!==" };
+                    return format!(
+                        "JSON.stringify({}) {} JSON.stringify({})",
+                        self.fmt_expr(left),
+                        op_str,
+                        self.fmt_expr(right)
+                    );
+                }
 
-            let l_str = if needs_parens(left, *op, false) {
-                format!("({})", fmt_expr(left))
-            } else {
-                fmt_expr(left)
-            };
-            let r_str = if needs_parens(right, *op, true) {
-                format!("({})", fmt_expr(right))
-            } else {
-                fmt_expr(right)
-            };
-            let op_str = match op {
-                BinOp::Add => "+",
-                BinOp::Sub => "-",
-                BinOp::Mul => "*",
-                BinOp::Div | BinOp::IntDiv => "/",
-                BinOp::Mod => "%",
-                BinOp::Eq => "===",
-                BinOp::Ne => "!==",
-                BinOp::Lt => "<",
-                BinOp::Le => "<=",
-                BinOp::Gt => ">",
-                BinOp::Ge => ">=",
-                BinOp::And => "&&",
-                BinOp::Or => "||",
-            };
-            format!("{} {} {}", l_str, op_str, r_str)
+                if *op == BinOp::IntDiv {
+                    let l_str = if needs_parens(left, BinOp::Div, false) {
+                        format!("({})", self.fmt_expr(left))
+                    } else {
+                        self.fmt_expr(left)
+                    };
+                    let r_str = if needs_parens(right, BinOp::Div, true) {
+                        format!("({})", self.fmt_expr(right))
+                    } else {
+                        self.fmt_expr(right)
+                    };
+                    return format!("Math.trunc({} / {})", l_str, r_str);
+                }
+
+                let l_str = if needs_parens(left, *op, false) {
+                    format!("({})", self.fmt_expr(left))
+                } else {
+                    self.fmt_expr(left)
+                };
+                let r_str = if needs_parens(right, *op, true) {
+                    format!("({})", self.fmt_expr(right))
+                } else {
+                    self.fmt_expr(right)
+                };
+                let op_str = match op {
+                    BinOp::Add => "+",
+                    BinOp::Sub => "-",
+                    BinOp::Mul => "*",
+                    BinOp::Div | BinOp::IntDiv => "/",
+                    BinOp::Mod => "%",
+                    BinOp::Eq => "===",
+                    BinOp::Ne => "!==",
+                    BinOp::Lt => "<",
+                    BinOp::Le => "<=",
+                    BinOp::Gt => ">",
+                    BinOp::Ge => ">=",
+                    BinOp::And => "&&",
+                    BinOp::Or => "||",
+                };
+                format!("{} {} {}", l_str, op_str, r_str)
+            }
+            Expr::Call { func, args } => {
+                let inner: Vec<String> = args.iter().map(|e| self.fmt_expr(e)).collect();
+                format!("{}({})", func, inner.join(", "))
+            }
+            Expr::Intrinsic(intr) => match intr.as_ref() {
+                Intrinsic::Len(e) => format!("{}.length", self.fmt_postfix(e)),
+                Intrinsic::Min(a, b) => {
+                    format!("Math.min({}, {})", self.fmt_expr(a), self.fmt_expr(b))
+                }
+                Intrinsic::Max(a, b) => {
+                    format!("Math.max({}, {})", self.fmt_expr(a), self.fmt_expr(b))
+                }
+                Intrinsic::Abs(a) => format!("Math.abs({})", self.fmt_expr(a)),
+                Intrinsic::Push { list, value } => {
+                    format!("{}.push({})", self.fmt_postfix(list), self.fmt_expr(value))
+                }
+                Intrinsic::Print(args) => {
+                    let inner: Vec<String> = args.iter().map(|e| self.fmt_expr(e)).collect();
+                    format!("console.log({})", inner.join(", "))
+                }
+                Intrinsic::Contains { haystack, needle } => {
+                    format!("{}.includes({})", self.fmt_postfix(haystack), self.fmt_expr(needle))
+                }
+                Intrinsic::Upper(e) => format!("{}.toUpperCase()", self.fmt_postfix(e)),
+                Intrinsic::Lower(e) => format!("{}.toLowerCase()", self.fmt_postfix(e)),
+                Intrinsic::ToStr(e) => format!("String({})", self.fmt_expr(e)),
+            },
         }
-        Expr::Call { func, args } => {
-            let inner: Vec<String> = args.iter().map(fmt_expr).collect();
-            format!("{}({})", func, inner.join(", "))
-        }
-        Expr::Intrinsic(intr) => match intr.as_ref() {
-            Intrinsic::Len(e) => format!("{}.length", fmt_postfix(e)),
-            Intrinsic::Min(a, b) => format!("Math.min({}, {})", fmt_expr(a), fmt_expr(b)),
-            Intrinsic::Max(a, b) => format!("Math.max({}, {})", fmt_expr(a), fmt_expr(b)),
-            Intrinsic::Abs(a) => format!("Math.abs({})", fmt_expr(a)),
-            Intrinsic::Push { list, value } => {
-                format!("{}.push({})", fmt_postfix(list), fmt_expr(value))
-            }
-            Intrinsic::Print(args) => {
-                let inner: Vec<String> = args.iter().map(fmt_expr).collect();
-                format!("console.log({})", inner.join(", "))
-            }
-            Intrinsic::Contains { haystack, needle } => {
-                format!("{}.includes({})", fmt_postfix(haystack), fmt_expr(needle))
-            }
-            Intrinsic::Upper(e) => format!("{}.toUpperCase()", fmt_postfix(e)),
-            Intrinsic::Lower(e) => format!("{}.toLowerCase()", fmt_postfix(e)),
-            Intrinsic::ToStr(e) => format!("String({})", fmt_expr(e)),
-        },
     }
 }
 
@@ -1177,32 +1301,14 @@ impl TsParser {
                 op: BinOp::Ne,
                 left,
                 right,
-            } = &cond
+            } = cond
             {
-                if let (
-                    Expr::Call {
-                        func: lf,
-                        args: largs,
-                    },
-                    Expr::Call {
-                        func: rf,
-                        args: rargs,
-                    },
-                ) = (left.as_ref(), right.as_ref())
-                {
-                    if lf == "__json_stringify"
-                        && rf == "__json_stringify"
-                        && largs.len() == 1
-                        && rargs.len() == 1
-                    {
-                        return Ok(Stmt::AssertEq {
-                            id: 0,
-                            left: largs[0].clone(),
-                            right: rargs[0].clone(),
-                            meta: Metadata::new(),
-                        });
-                    }
-                }
+                return Ok(Stmt::AssertEq {
+                    id: 0,
+                    left: *left,
+                    right: *right,
+                    meta: Metadata::new(),
+                });
             }
             if let Expr::Unary {
                 op: UnaryOp::Not,
@@ -1418,6 +1524,32 @@ impl TsParser {
             if let Some(op) = op {
                 self.next();
                 let right = self.parse_add()?;
+                if matches!(op, BinOp::Eq | BinOp::Ne) {
+                    if let (
+                        Expr::Call {
+                            func: lf,
+                            args: largs,
+                        },
+                        Expr::Call {
+                            func: rf,
+                            args: rargs,
+                        },
+                    ) = (&left, &right)
+                    {
+                        if lf == "__json_stringify"
+                            && rf == "__json_stringify"
+                            && largs.len() == 1
+                            && rargs.len() == 1
+                        {
+                            left = Expr::Binary {
+                                op,
+                                left: Box::new(largs[0].clone()),
+                                right: Box::new(rargs[0].clone()),
+                            };
+                            continue;
+                        }
+                    }
+                }
                 left = Expr::Binary {
                     op,
                     left: Box::new(left),
