@@ -263,6 +263,7 @@ pub struct EGraph {
     pub iterations: usize,
     pub non_numeric_vars: BTreeSet<String>,
     pub float_vars: BTreeSet<String>,
+    pub int_vars: BTreeSet<String>,
 }
 
 impl Default for EGraph {
@@ -283,6 +284,7 @@ impl EGraph {
             iterations: 0,
             non_numeric_vars: BTreeSet::new(),
             float_vars: BTreeSet::new(),
+            int_vars: BTreeSet::new(),
         }
     }
 
@@ -343,7 +345,7 @@ impl EGraph {
         };
         let is_float = match &canon {
             ENode::FloatBits(_) => true,
-            ENode::Var(v) => self.float_vars.contains(v),
+            ENode::Var(v) => self.float_vars.contains(v) && !self.int_vars.contains(v),
             ENode::Unary {
                 op: EUnaryOp::Neg,
                 arg,
@@ -636,12 +638,19 @@ impl EGraph {
         let Some(cls) = self.classes.get(&root) else {
             return false;
         };
+        if cls
+            .nodes
+            .iter()
+            .any(|n| matches!(n, ENode::Var(v) if self.int_vars.contains(v)))
+        {
+            return false;
+        }
         if cls.is_float {
             return true;
         }
         cls.nodes.iter().any(|n| match n {
             ENode::FloatBits(_) => true,
-            ENode::Var(v) => self.float_vars.contains(v),
+            ENode::Var(v) => self.float_vars.contains(v) && !self.int_vars.contains(v),
             _ => false,
         })
     }
@@ -1907,7 +1916,9 @@ pub fn superoptimize_egraph(hub: &HubModule) -> EGraphReport {
                     env.insert(p.name.clone(), p.ty.clone());
                     if p.ty == crate::hub::Type::Float {
                         eg.float_vars.insert(p.name.clone());
-                    } else if p.ty != crate::hub::Type::Int {
+                    } else if p.ty == crate::hub::Type::Int {
+                        eg.int_vars.insert(p.name.clone());
+                    } else {
                         eg.non_numeric_vars.insert(p.name.clone());
                     }
                 }
@@ -2084,10 +2095,11 @@ fn seed_expr_in_egraph(
     let root = eg.find(cid);
     if let Some(ty) = crate::hub::infer_expr_type(expr, env, fn_ret_types, struct_fields, enum_names)
     {
+        let has_int_var = matches!(expr, Expr::Var(v) if eg.int_vars.contains(v));
         if let Some(cls) = eg.classes.get_mut(&root) {
-            if ty == crate::hub::Type::Float {
+            if ty == crate::hub::Type::Float && !has_int_var {
                 cls.is_float = true;
-            } else if ty != crate::hub::Type::Int {
+            } else if ty != crate::hub::Type::Int && ty != crate::hub::Type::Float {
                 cls.is_non_numeric = true;
             }
         }
@@ -2116,7 +2128,9 @@ fn seed_stmts_in_egraph(
                     env.insert(name.clone(), t.clone());
                     if t == crate::hub::Type::Float {
                         eg.float_vars.insert(name.clone());
-                    } else if t != crate::hub::Type::Int {
+                    } else if t == crate::hub::Type::Int {
+                        eg.int_vars.insert(name.clone());
+                    } else {
                         eg.non_numeric_vars.insert(name.clone());
                     }
                 }
@@ -2191,7 +2205,9 @@ fn seed_stmts_in_egraph(
                     body_env.insert(var.clone(), (*elem_ty).clone());
                     if *elem_ty == crate::hub::Type::Float {
                         eg.float_vars.insert(var.clone());
-                    } else if *elem_ty != crate::hub::Type::Int {
+                    } else if *elem_ty == crate::hub::Type::Int {
+                        eg.int_vars.insert(var.clone());
+                    } else {
                         eg.non_numeric_vars.insert(var.clone());
                     }
                 }
@@ -2215,6 +2231,7 @@ fn seed_stmts_in_egraph(
                 seed_expr_in_egraph(eg, end, env, fn_ret_types, struct_fields, enum_names);
                 let mut body_env = env.clone();
                 body_env.insert(var.clone(), crate::hub::Type::Int);
+                eg.int_vars.insert(var.clone());
                 seed_stmts_in_egraph(
                     eg,
                     body,
@@ -2684,10 +2701,17 @@ pub fn partial_eval_module(hub: &HubModule) -> PartialEvalReport {
         new_items = with_specs;
     }
 
-    let intermediate_hub = HubModule {
+    let mut intermediate_hub = HubModule {
         items: new_items,
         next_id,
     };
+    if loops_unrolled > 0
+        || static_branches_folded > 0
+        || residual_functions_synthesized > 0
+        || !specializations.is_empty()
+    {
+        crate::hub::normalize_module(&mut intermediate_hub);
+    }
 
     // Chain into E-Graph Equality Saturation Superoptimizer on the partially evaluated module!
     let eg_rep = superoptimize_egraph(&intermediate_hub);
@@ -3752,21 +3776,34 @@ fn peval_expr(
             if func != caller_name {
                 if let Some(callee) = fns_map.get(func) {
                     if callee.params.len() == eval_args.len() && !callee.params.is_empty() {
-                        // Case A: All arguments are static literals and callee reduces to a single Return expression
-                        if eval_args.iter().all(is_static_literal) {
+                        let mut callee_mod_vars = BTreeSet::new();
+                        collect_modified_vars(&callee.body, &mut callee_mod_vars);
+
+                        // Case A: All arguments are static literals, no parameter is mutated in callee,
+                        // and callee reduces to a single Return expression
+                        if eval_args.iter().all(is_static_literal)
+                            && callee
+                                .params
+                                .iter()
+                                .all(|p| !callee_mod_vars.contains(&p.name))
+                        {
                             let mut call_env = BTreeMap::new();
                             for (p, a) in callee.params.iter().zip(eval_args.iter()) {
                                 call_env.insert(p.name.clone(), a.clone());
                             }
+                            let mut tmp_synth_fns = synthesized_fns.clone();
+                            let mut tmp_specs = Vec::new();
+                            let mut tmp_folded = 0usize;
+                            let mut tmp_unrolled = 0usize;
                             let reduced_body = peval_stmts(
                                 &callee.name,
                                 &callee.body,
                                 &mut call_env,
                                 fns_map,
-                                synthesized_fns,
-                                specializations,
-                                static_branches_folded,
-                                loops_unrolled,
+                                &mut tmp_synth_fns,
+                                &mut tmp_specs,
+                                &mut tmp_folded,
+                                &mut tmp_unrolled,
                                 alloc_id,
                             );
                             if let [Stmt::Return {
@@ -3774,6 +3811,10 @@ fn peval_expr(
                                 ..
                             }] = reduced_body.as_slice()
                             {
+                                *synthesized_fns = tmp_synth_fns;
+                                specializations.extend(tmp_specs);
+                                *static_branches_folded += tmp_folded;
+                                *loops_unrolled += tmp_unrolled;
                                 let bindings_str = callee
                                     .params
                                     .iter()
@@ -3802,8 +3843,19 @@ fn peval_expr(
                         }
 
                         // Case B: Mixed static + dynamic arguments (e.g., static EnumVariant or Int policy/cap)
-                        let has_static = eval_args.iter().any(is_static_literal);
-                        let has_dynamic = eval_args.iter().any(|a| !is_static_literal(a));
+                        let is_specializable_arg = |(p, a): (&crate::hub::Param, &Expr)| {
+                            is_static_literal(a) && !callee_mod_vars.contains(&p.name)
+                        };
+                        let has_static = callee
+                            .params
+                            .iter()
+                            .zip(eval_args.iter())
+                            .any(is_specializable_arg);
+                        let has_dynamic = callee
+                            .params
+                            .iter()
+                            .zip(eval_args.iter())
+                            .any(|pair| !is_specializable_arg(pair));
                         if has_static && has_dynamic && caller_name == "main" {
                             let mut suffix_parts = Vec::new();
                             let mut residual_params = Vec::new();
@@ -3812,7 +3864,7 @@ fn peval_expr(
                             let mut binding_notes = Vec::new();
 
                             for (p, a) in callee.params.iter().zip(eval_args.iter()) {
-                                if is_static_literal(a) {
+                                if is_specializable_arg((p, a)) {
                                     let tag = if let Some(v) = const_int_lit(a) {
                                         if v >= 0 {
                                             format!("i{}", v)
@@ -3825,6 +3877,22 @@ fn peval_expr(
                                                 variant.to_lowercase()
                                             }
                                             Expr::Bool(b) => format!("b{}", b),
+                                            Expr::Str(s) => {
+                                                if s.is_empty() {
+                                                    "s_empty".to_string()
+                                                } else {
+                                                    let mut slug = String::from("s_");
+                                                    for ch in s.chars().take(16) {
+                                                        if ch.is_ascii_alphanumeric() {
+                                                            slug.push(ch.to_ascii_lowercase());
+                                                        } else {
+                                                            slug.push_str(&format!("x{:x}", ch as u32));
+                                                        }
+                                                    }
+                                                    slug
+                                                }
+                                            }
+                                            Expr::Float(f) => format!("f{:x}", f.to_bits()),
                                             _ => "const".to_string(),
                                         }
                                     };

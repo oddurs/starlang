@@ -321,7 +321,7 @@ fn analyze_fn_autodiff(f: &FnDecl) -> FunctionAutoDiffProfile {
     let mut num_params: Vec<&Param> = Vec::new();
     for (idx, p) in f.params.iter().enumerate() {
         match &p.ty {
-            Type::Int => {
+            Type::Int | Type::Float => {
                 let sample_v = match p.name.as_str() {
                     "base_capacity" | "capacity" | "limit" | "budget" => 40.0,
                     "floor" | "threshold" | "min_val" => 5.0,
@@ -332,7 +332,7 @@ fn analyze_fn_autodiff(f: &FnDecl) -> FunctionAutoDiffProfile {
                 base_env.insert(p.name.clone(), sample_v);
                 num_params.push(p);
             }
-            Type::List(inner) if **inner == Type::Int => {
+            Type::List(inner) if matches!(**inner, Type::Int | Type::Float) => {
                 base_env.insert(p.name.clone(), 20.0);
                 num_params.push(p);
             }
@@ -565,6 +565,7 @@ fn eval_expr_on_tape(
             let v = *n as f64;
             (tape.push(TapeOp::Const, n.to_string(), v), v)
         }
+        Expr::Float(f) => (tape.push(TapeOp::Const, format!("{}", f), *f), *f),
         Expr::Bool(b) => {
             let v = if *b { 1.0 } else { 0.0 };
             (tape.push(TapeOp::Const, b.to_string(), v), v)
@@ -793,6 +794,7 @@ fn eval_stmts_dual(stmts: &[Stmt], env: &mut BTreeMap<String, Dual>) -> Option<D
 fn eval_expr_dual(expr: &Expr, env: &BTreeMap<String, Dual>) -> Dual {
     match expr {
         Expr::Int(n) => Dual::constant(*n as f64),
+        Expr::Float(f) => Dual::constant(*f),
         Expr::Bool(b) => Dual::constant(if *b { 1.0 } else { 0.0 }),
         Expr::Var(name) => env.get(name).copied().unwrap_or_else(|| Dual::constant(1.0)),
         Expr::Unary { op, expr: inner } => {
@@ -919,7 +921,11 @@ fn synthesize_symbolic_partial(f: &FnDecl, param_name: &str, sample_slope: f64) 
 
 fn diff_expr_symbolic(expr: &Expr, var: &str) -> String {
     match expr {
-        Expr::Int(_) | Expr::Bool(_) | Expr::Str(_) | Expr::EnumVariant { .. } => "0".to_string(),
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Bool(_)
+        | Expr::Str(_)
+        | Expr::EnumVariant { .. } => "0".to_string(),
         Expr::Var(name) => {
             if name == var {
                 "1".to_string()
@@ -1310,7 +1316,21 @@ fn scan_stmts_stability(
                     next_site_id,
                 );
             }
-            Stmt::Assign { op, value, .. } => {
+            Stmt::Assign {
+                target, op, value, ..
+            } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    scan_expr_stability(
+                        fn_name,
+                        index,
+                        in_loop,
+                        hazards,
+                        overflow_sites,
+                        quantization_sites,
+                        cancellation_sites,
+                        next_site_id,
+                    );
+                }
                 if in_loop && matches!(op, AssignOp::AddAssign) {
                     let sid = *next_site_id;
                     *next_site_id += 1;
@@ -1373,7 +1393,17 @@ fn scan_stmts_stability(
                     next_site_id,
                 );
             }
-            Stmt::Match { arms, .. } => {
+            Stmt::Match { expr, arms, .. } => {
+                scan_expr_stability(
+                    fn_name,
+                    expr,
+                    in_loop,
+                    hazards,
+                    overflow_sites,
+                    quantization_sites,
+                    cancellation_sites,
+                    next_site_id,
+                );
                 for arm in arms {
                     scan_stmts_stability(
                         fn_name,
@@ -1387,7 +1417,73 @@ fn scan_stmts_stability(
                     );
                 }
             }
-            Stmt::ForRange { body, .. } | Stmt::ForEach { body, .. } | Stmt::While { body, .. } => {
+            Stmt::ForRange {
+                start, end, body, ..
+            } => {
+                scan_expr_stability(
+                    fn_name,
+                    start,
+                    in_loop,
+                    hazards,
+                    overflow_sites,
+                    quantization_sites,
+                    cancellation_sites,
+                    next_site_id,
+                );
+                scan_expr_stability(
+                    fn_name,
+                    end,
+                    in_loop,
+                    hazards,
+                    overflow_sites,
+                    quantization_sites,
+                    cancellation_sites,
+                    next_site_id,
+                );
+                scan_stmts_stability(
+                    fn_name,
+                    body,
+                    true,
+                    hazards,
+                    overflow_sites,
+                    quantization_sites,
+                    cancellation_sites,
+                    next_site_id,
+                );
+            }
+            Stmt::ForEach { iter, body, .. } => {
+                scan_expr_stability(
+                    fn_name,
+                    iter,
+                    in_loop,
+                    hazards,
+                    overflow_sites,
+                    quantization_sites,
+                    cancellation_sites,
+                    next_site_id,
+                );
+                scan_stmts_stability(
+                    fn_name,
+                    body,
+                    true,
+                    hazards,
+                    overflow_sites,
+                    quantization_sites,
+                    cancellation_sites,
+                    next_site_id,
+                );
+            }
+            Stmt::While { cond, body, .. } => {
+                scan_expr_stability(
+                    fn_name,
+                    cond,
+                    true,
+                    hazards,
+                    overflow_sites,
+                    quantization_sites,
+                    cancellation_sites,
+                    next_site_id,
+                );
                 scan_stmts_stability(
                     fn_name,
                     body,
@@ -1495,10 +1591,32 @@ fn scan_expr_stability(
                 _ => {}
             }
         }
-        Expr::Unary { expr: inner, .. } => {
+        Expr::Unary { expr: inner, .. } | Expr::FieldAccess { base: inner, .. } => {
             scan_expr_stability(
                 fn_name,
                 inner,
+                in_loop,
+                hazards,
+                overflow_sites,
+                quantization_sites,
+                cancellation_sites,
+                next_site_id,
+            );
+        }
+        Expr::Index { base, index } => {
+            scan_expr_stability(
+                fn_name,
+                base,
+                in_loop,
+                hazards,
+                overflow_sites,
+                quantization_sites,
+                cancellation_sites,
+                next_site_id,
+            );
+            scan_expr_stability(
+                fn_name,
+                index,
                 in_loop,
                 hazards,
                 overflow_sites,

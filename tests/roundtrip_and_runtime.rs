@@ -3604,6 +3604,11 @@ def test_banner() -> None:
         );
     }
 
+    verify_passes_14_and_15();
+}
+
+#[inline(never)]
+fn verify_passes_14_and_15() {
     // 10. Pass 14: Trace zero-ID statement numbering & recursive hotspot step accounting,
     //     Complexity transitive callee loop depth, Polyhedral affine array map vs recurrence &
     //     flipped/conjunctive while ranking proofs, and 3-way merge scalar metadata + loop-body logging
@@ -3806,6 +3811,146 @@ def test_banner() -> None:
             .any(|c| c.scope.contains("[while]") && c.summary.contains("acc += 2")),
         "Expected granular `[while]` change log for one-sided while-body edit, got: {:?}",
         m_res.applied_changes
+    );
+
+    // -----------------------------------------------------------------------
+    // 15. Pass 15: Concolic & Security Flow, E-Graph & Futamura Partial Eval,
+    //     and Forward-Dual / Reverse-Tape AutoDiff & Numerical Stability
+    // -----------------------------------------------------------------------
+    // Concolic Explorer:
+    // - Zero/duplicate statement NodeId normalization before branch slot tracking
+    // - Bounded recursion depth (`depth <= 16`) & shared step counter on recursive `Expr::Call`
+    let concolic_star = r#"(fn two_ifs ((param n Int)) -> Int
+  (let-mut r 0)
+  (if (> n 0)
+    (then (add! r 10))
+    (else (add! r 1)))
+  (if (> n 5)
+    (then (add! r 100))
+    (else (add! r 2)))
+  (return r))
+(fn bad_rec ((param n Int)) -> Int
+  (if (== n 0)
+    (then (return 1))
+    (else (return (+ 1 (call bad_rec (- n 1)))))))
+"#;
+    let mut conc_hub = StarEngine::from_source(SpokeId::Star, concolic_star)
+        .unwrap()
+        .hub()
+        .clone();
+    // Force duplicate id=0 on both `if` statements in `two_ifs`
+    if let starlang::hub::Item::Function(f) = &mut conc_hub.items[0] {
+        for stmt in &mut f.body {
+            if let starlang::hub::Stmt::If { id, .. } = stmt {
+                *id = 0;
+            }
+        }
+    }
+    let conc_rep = starlang::concolic::explore_concolic_paths(&conc_hub);
+    assert!(
+        conc_rep.all_synthesized_tests_pass,
+        "Expected concolic synthesized tests on normalized AST and bounded recursive fn to pass in HubVm"
+    );
+    let two_ifs_rep = conc_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "two_ifs")
+        .unwrap();
+    assert_eq!(
+        two_ifs_rep.covered_branches, 4,
+        "Expected both `if` statements (originally id=0) to have distinct branch slots and achieve 4/4 branch coverage"
+    );
+    assert_eq!(two_ifs_rep.branch_coverage_pct, 100);
+
+    // Security Flow Auditor:
+    // - `AssignTarget::Index` emits `IndexBoundsSink` and audits index divisor sinks
+    // - `ForRange` with confidential `secret_cap` bound flags `!constant_time_clean`
+    let sec_star = r#"(fn leak_and_index ((param idx Int) (param secret_cap Int)) -> Int
+  (let-mut buf (list 10 20 30))
+  (set! (index buf idx) 99)
+  (let-mut acc 0)
+  (for-range i 0 secret_cap
+    (add! acc i))
+  (return acc))
+"#;
+    let sec_eng = StarEngine::from_source(SpokeId::Star, sec_star).unwrap();
+    let sec_rep = sec_eng.security_flow();
+    assert!(
+        sec_rep.unsanitized_sinks >= 1,
+        "Expected unsanitized IndexBoundsSink on `buf[idx] = 99`, got: {:?}",
+        sec_rep.functions[0].sink_audits
+    );
+    assert!(
+        !sec_rep.functions[0].constant_time_clean,
+        "Expected secret-dependent ForRange bound `0..secret_cap` to flag !constant_time_clean"
+    );
+
+    // E-Graph Superoptimizer & Futamura Partial Evaluator:
+    // - Cross-function variable name `x: Float` vs `x: Int` must not rewrite `x - x` to `0.0` in Int fn
+    // - Futamura Case B does not elide mutated parameter `p`, and distinguishes string tags (`"fast"` vs `"slow"`)
+    let eg_pe_star = r#"(fn float_id ((param x Float)) -> Float
+  (return (- x x)))
+(fn int_zero ((param x Int)) -> Int
+  (return (+ (- x x) (len "λ"))))
+(fn mut_param_callee ((param step Int) (param dyn_v Int)) -> Int
+  (add! step 1)
+  (return (+ step dyn_v)))
+(fn mode_scale ((param mode Str) (param v Int)) -> Int
+  (if (== mode "fast")
+    (then (return (* v 2)))
+    (else (return (* v 3)))))
+(fn main ((param v Int)) -> Int
+  (let a (call int_zero v))
+  (let b (call mut_param_callee 5 v))
+  (let c (call mode_scale "fast" v))
+  (let d (call mode_scale "slow" v))
+  (print (+ (+ a b) (+ c d)))
+  (return (+ (+ a b) (+ c d))))
+(test eg_pe_check
+  (assert-eq (call main 10) 68))
+"#;
+    let mut eg_pe_eng = StarEngine::from_source(SpokeId::Star, eg_pe_star).unwrap();
+    let (eg_rep, _) = eg_pe_eng.egraph(false);
+    assert!(
+        eg_rep.translation_validated,
+        "Expected E-Graph optimization with cross-function Float/Int `x` and UTF-8 `len(\"λ\")` to validate"
+    );
+    let (pe_rep, _) = eg_pe_eng.partial_eval(false);
+    assert!(
+        pe_rep.translation_validated && pe_rep.tests_passed == pe_rep.tests_total,
+        "Expected Futamura partial evaluation with mutated param & distinct string tags to validate"
+    );
+
+    // AutoDiff & Numerical Stability:
+    // - `Type::Float` parameters & `Expr::Float` literals differentiated accurately
+    // - `AssignTarget::Index` and `Expr::Index` audited for numerical hazards
+    let ad_star = r#"(fn quad_float ((param x Float)) -> Float
+  (let-mut buf (list 1 2 3))
+  (set! (index buf (/ 4 2)) 9)
+  (return (+ (* 2.5 (* x x)) (* 3.0 x))))
+"#;
+    let mut ad_eng = StarEngine::from_source(SpokeId::Star, ad_star).unwrap();
+    let (ad_rep, _) = ad_eng.autodiff(false);
+    let qf_prof = ad_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "quad_float")
+        .unwrap();
+    assert_eq!(qf_prof.differentiable_params, 1);
+    assert!(
+        qf_prof.all_partials_verified && (qf_prof.partials[0].forward_dual_deriv - 63.0).abs() < 1e-2,
+        "Expected d/dx (2.5*x^2 + 3.0*x) at x=12 to be 63.0 and match reverse tape, got: {:?}",
+        qf_prof.partials
+    );
+    let stab_rep = ad_eng.numerical_stability();
+    let qf_stab = stab_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "quad_float")
+        .unwrap();
+    assert!(
+        qf_stab.quantization_sites >= 1,
+        "Expected TruncatingDivQuantization hazard inside `AssignTarget::Index` (`buf[4 / 2] = 9`) to be detected"
     );
 }
 

@@ -101,11 +101,13 @@ pub struct SecurityFlowReport {
 /// and boundary-negation input solving), and synthesize a path-covering unit test suite across all 13 spokes.
 pub fn explore_concolic_paths(hub: &HubModule) -> ConcolicReport {
     let start = Instant::now();
+    let mut work_hub = hub.clone();
+    crate::hub::normalize_module(&mut work_hub);
     let mut enums_map: BTreeMap<String, EnumDecl> = BTreeMap::new();
     let mut structs_map: BTreeMap<String, StructDecl> = BTreeMap::new();
     let mut fns_map: BTreeMap<String, FnDecl> = BTreeMap::new();
 
-    for item in &hub.items {
+    for item in &work_hub.items {
         match item {
             Item::Enum(e) => {
                 enums_map.insert(e.name.clone(), e.clone());
@@ -126,9 +128,9 @@ pub fn explore_concolic_paths(hub: &HubModule) -> ConcolicReport {
     let mut covered_branches = 0usize;
     let mut synthesized_tests: Vec<TestDecl> = Vec::new();
     let mut synthesized_assertions_count = 0usize;
-    let mut next_node_id = hub.next_id.max(500);
+    let mut next_node_id = work_hub.next_id.max(500);
 
-    for item in &hub.items {
+    for item in &work_hub.items {
         let Item::Function(f) = item else {
             continue;
         };
@@ -163,6 +165,7 @@ pub fn explore_concolic_paths(hub: &HubModule) -> ConcolicReport {
                 &fns_map,
                 &enums_map,
                 &mut trace,
+                0,
             ) {
                 for slot in &trace.branch_slots {
                     hit_slots.insert(slot.clone());
@@ -324,7 +327,7 @@ pub fn explore_concolic_paths(hub: &HubModule) -> ConcolicReport {
         });
     }
 
-    let mut hub_with_tests = hub.clone();
+    let mut hub_with_tests = work_hub.clone();
     hub_with_tests.next_id = next_node_id;
     for td in &synthesized_tests {
         hub_with_tests.items.retain(|existing| match existing {
@@ -641,13 +644,17 @@ fn eval_concolic_fn(
     fns: &BTreeMap<String, FnDecl>,
     enums: &BTreeMap<String, EnumDecl>,
     trace: &mut ConcolicTrace,
+    depth: usize,
 ) -> Result<Value, String> {
+    if depth > 16 {
+        return Err("call depth budget exceeded".to_string());
+    }
     let mut env: BTreeMap<String, Value> = BTreeMap::new();
     for (p, v) in f.params.iter().zip(args.iter()) {
         env.insert(p.name.clone(), v.clone());
     }
     let mut ret_slot = Value::Void;
-    eval_concolic_block(&f.body, &mut env, fns, enums, trace, &mut ret_slot)?;
+    eval_concolic_block(&f.body, &mut env, fns, enums, trace, &mut ret_slot, depth)?;
     Ok(ret_slot)
 }
 
@@ -658,9 +665,11 @@ fn eval_concolic_block(
     enums: &BTreeMap<String, EnumDecl>,
     trace: &mut ConcolicTrace,
     ret_slot: &mut Value,
+    depth: usize,
 ) -> Result<FlowSignal, String> {
     let mut block_lets: Vec<(String, Option<Value>)> = Vec::new();
-    let res = eval_concolic_block_inner(stmts, env, fns, enums, trace, ret_slot, &mut block_lets);
+    let res =
+        eval_concolic_block_inner(stmts, env, fns, enums, trace, ret_slot, &mut block_lets, depth);
     for (name, prev) in block_lets.into_iter().rev() {
         match prev {
             Some(v) => {
@@ -674,6 +683,7 @@ fn eval_concolic_block(
     res
 }
 
+#[allow(clippy::too_many_arguments)]
 fn eval_concolic_block_inner(
     stmts: &[Stmt],
     env: &mut BTreeMap<String, Value>,
@@ -682,6 +692,7 @@ fn eval_concolic_block_inner(
     trace: &mut ConcolicTrace,
     ret_slot: &mut Value,
     block_lets: &mut Vec<(String, Option<Value>)>,
+    depth: usize,
 ) -> Result<FlowSignal, String> {
     for s in stmts {
         trace.steps += 1;
@@ -691,13 +702,13 @@ fn eval_concolic_block_inner(
         match s {
             Stmt::Comment { .. } => {}
             Stmt::Let { name, value, .. } => {
-                let v = eval_concolic_expr(value, env, fns, enums)?;
+                let v = eval_concolic_expr(value, env, fns, enums, trace, depth)?;
                 block_lets.push((name.clone(), env.insert(name.clone(), v)));
             }
             Stmt::Assign {
                 target, op, value, ..
             } => {
-                let rhs = eval_concolic_expr(value, env, fns, enums)?;
+                let rhs = eval_concolic_expr(value, env, fns, enums, trace, depth)?;
                 let apply_op = |op: &AssignOp, cur: Value, r: Value| -> Value {
                     match (op, cur, r) {
                         (AssignOp::Set, _, rv) => rv,
@@ -733,7 +744,7 @@ fn eval_concolic_block_inner(
                         }
                     }
                     AssignTarget::Index { base, index } => {
-                        let idx_val = eval_concolic_expr(index, env, fns, enums)?;
+                        let idx_val = eval_concolic_expr(index, env, fns, enums, trace, depth)?;
                         if let (Some(Value::List(mut items)), Value::Int(i)) =
                             (env.get(base).cloned(), idx_val)
                         {
@@ -757,14 +768,14 @@ fn eval_concolic_block_inner(
                 else_body,
                 ..
             } => {
-                let cval = eval_concolic_expr(cond, env, fns, enums)?;
+                let cval = eval_concolic_expr(cond, env, fns, enums, trace, depth)?;
                 let taken = matches!(cval, Value::Bool(true));
                 let cond_str = format_cond_expr(cond);
                 if taken {
                     trace.branch_slots.push(format!("if#{}:T", id));
                     trace.constraints.push(cond_str);
                     let sig =
-                        eval_concolic_block(then_body, env, fns, enums, trace, ret_slot)?;
+                        eval_concolic_block(then_body, env, fns, enums, trace, ret_slot, depth)?;
                     if !matches!(sig, FlowSignal::Next) {
                         return Ok(sig);
                     }
@@ -772,7 +783,7 @@ fn eval_concolic_block_inner(
                     trace.branch_slots.push(format!("if#{}:F", id));
                     trace.constraints.push(format!("!({})", cond_str));
                     let sig =
-                        eval_concolic_block(else_body, env, fns, enums, trace, ret_slot)?;
+                        eval_concolic_block(else_body, env, fns, enums, trace, ret_slot, depth)?;
                     if !matches!(sig, FlowSignal::Next) {
                         return Ok(sig);
                     }
@@ -781,7 +792,7 @@ fn eval_concolic_block_inner(
             Stmt::Match {
                 id, expr, arms, ..
             } => {
-                let sval = eval_concolic_expr(expr, env, fns, enums)?;
+                let sval = eval_concolic_expr(expr, env, fns, enums, trace, depth)?;
                 let scrut_str = format_cond_expr(expr);
                 for (arm_idx, arm) in arms.iter().enumerate() {
                     let matches = match (&arm.pat, &sval) {
@@ -806,7 +817,7 @@ fn eval_concolic_block_inner(
                             .constraints
                             .push(format!("{} == {:?}", scrut_str, arm.pat));
                         let sig = eval_concolic_block(
-                            &arm.body, env, fns, enums, trace, ret_slot,
+                            &arm.body, env, fns, enums, trace, ret_slot, depth,
                         )?;
                         if !matches!(sig, FlowSignal::Next) {
                             return Ok(sig);
@@ -818,7 +829,7 @@ fn eval_concolic_block_inner(
             Stmt::While { id, cond, body, .. } => {
                 let mut iters = 0usize;
                 loop {
-                    let cval = eval_concolic_expr(cond, env, fns, enums)?;
+                    let cval = eval_concolic_expr(cond, env, fns, enums, trace, depth)?;
                     if !matches!(cval, Value::Bool(true)) {
                         if iters == 0 {
                             trace.branch_slots.push(format!("while#{}:0", id));
@@ -829,7 +840,7 @@ fn eval_concolic_block_inner(
                         trace.branch_slots.push(format!("while#{}:>0", id));
                     }
                     iters += 1;
-                    let sig = eval_concolic_block(body, env, fns, enums, trace, ret_slot)?;
+                    let sig = eval_concolic_block(body, env, fns, enums, trace, ret_slot, depth)?;
                     match sig {
                         FlowSignal::Next | FlowSignal::Continue => {}
                         FlowSignal::Break => break,
@@ -844,7 +855,7 @@ fn eval_concolic_block_inner(
                 body,
                 ..
             } => {
-                let list_val = eval_concolic_expr(iter, env, fns, enums)?;
+                let list_val = eval_concolic_expr(iter, env, fns, enums, trace, depth)?;
                 let Value::List(items) = list_val else {
                     return Err("for-each expects list".to_string());
                 };
@@ -863,7 +874,7 @@ fn eval_concolic_block_inner(
                 block_lets.push((var.clone(), prev_var));
                 for item in items {
                     env.insert(var.clone(), item);
-                    let sig = eval_concolic_block(body, env, fns, enums, trace, ret_slot)?;
+                    let sig = eval_concolic_block(body, env, fns, enums, trace, ret_slot, depth)?;
                     match sig {
                         FlowSignal::Next | FlowSignal::Continue => {}
                         FlowSignal::Break => break,
@@ -879,10 +890,12 @@ fn eval_concolic_block_inner(
                 body,
                 ..
             } => {
-                let Value::Int(s_idx) = eval_concolic_expr(start, env, fns, enums)? else {
+                let Value::Int(s_idx) = eval_concolic_expr(start, env, fns, enums, trace, depth)?
+                else {
                     return Err("range start must be Int".to_string());
                 };
-                let Value::Int(e_idx) = eval_concolic_expr(end, env, fns, enums)? else {
+                let Value::Int(e_idx) = eval_concolic_expr(end, env, fns, enums, trace, depth)?
+                else {
                     return Err("range end must be Int".to_string());
                 };
                 if s_idx >= e_idx {
@@ -894,7 +907,7 @@ fn eval_concolic_block_inner(
                 block_lets.push((var.clone(), prev_var));
                 for idx in s_idx..e_idx {
                     env.insert(var.clone(), Value::Int(idx));
-                    let sig = eval_concolic_block(body, env, fns, enums, trace, ret_slot)?;
+                    let sig = eval_concolic_block(body, env, fns, enums, trace, ret_slot, depth)?;
                     match sig {
                         FlowSignal::Next | FlowSignal::Continue => {}
                         FlowSignal::Break => break,
@@ -906,27 +919,27 @@ fn eval_concolic_block_inner(
             Stmt::Continue { .. } => return Ok(FlowSignal::Continue),
             Stmt::Return { value, .. } => {
                 *ret_slot = if let Some(v) = value {
-                    eval_concolic_expr(v, env, fns, enums)?
+                    eval_concolic_expr(v, env, fns, enums, trace, depth)?
                 } else {
                     Value::Void
                 };
                 return Ok(FlowSignal::Return);
             }
             Stmt::Assert { cond, .. } => {
-                let v = eval_concolic_expr(cond, env, fns, enums)?;
+                let v = eval_concolic_expr(cond, env, fns, enums, trace, depth)?;
                 if !matches!(v, Value::Bool(true)) {
                     return Err("assertion failed".to_string());
                 }
             }
             Stmt::AssertEq { left, right, .. } => {
-                let l = eval_concolic_expr(left, env, fns, enums)?;
-                let r = eval_concolic_expr(right, env, fns, enums)?;
+                let l = eval_concolic_expr(left, env, fns, enums, trace, depth)?;
+                let r = eval_concolic_expr(right, env, fns, enums, trace, depth)?;
                 if l != r {
                     return Err("assert_eq failed".to_string());
                 }
             }
             Stmt::Expr { expr, .. } => {
-                let _ = eval_concolic_expr(expr, env, fns, enums)?;
+                let _ = eval_concolic_expr(expr, env, fns, enums, trace, depth)?;
             }
         }
     }
@@ -938,6 +951,8 @@ fn eval_concolic_expr(
     env: &mut BTreeMap<String, Value>,
     fns: &BTreeMap<String, FnDecl>,
     enums: &BTreeMap<String, EnumDecl>,
+    trace: &mut ConcolicTrace,
+    depth: usize,
 ) -> Result<Value, String> {
     match e {
         Expr::Int(n) => Ok(Value::Int(*n)),
@@ -955,14 +970,17 @@ fn eval_concolic_expr(
         Expr::List(items) => {
             let mut out = Vec::with_capacity(items.len());
             for it in items {
-                out.push(eval_concolic_expr(it, env, fns, enums)?);
+                out.push(eval_concolic_expr(it, env, fns, enums, trace, depth)?);
             }
             Ok(Value::List(out))
         }
         Expr::StructInit { name, fields } => {
             let mut map = BTreeMap::new();
             for (k, fe) in fields {
-                map.insert(k.clone(), eval_concolic_expr(fe, env, fns, enums)?);
+                map.insert(
+                    k.clone(),
+                    eval_concolic_expr(fe, env, fns, enums, trace, depth)?,
+                );
             }
             Ok(Value::Struct {
                 name: name.clone(),
@@ -970,7 +988,7 @@ fn eval_concolic_expr(
             })
         }
         Expr::FieldAccess { base, field } => {
-            let b = eval_concolic_expr(base, env, fns, enums)?;
+            let b = eval_concolic_expr(base, env, fns, enums, trace, depth)?;
             if let Value::Struct { fields, .. } = b {
                 fields
                     .get(field)
@@ -981,8 +999,8 @@ fn eval_concolic_expr(
             }
         }
         Expr::Index { base, index } => {
-            let b = eval_concolic_expr(base, env, fns, enums)?;
-            let idx = eval_concolic_expr(index, env, fns, enums)?;
+            let b = eval_concolic_expr(base, env, fns, enums, trace, depth)?;
+            let idx = eval_concolic_expr(index, env, fns, enums, trace, depth)?;
             if let (Value::List(items), Value::Int(i)) = (b, idx) {
                 if i < 0 || (i as usize) >= items.len() {
                     Err("index out of bounds".to_string())
@@ -994,7 +1012,7 @@ fn eval_concolic_expr(
             }
         }
         Expr::Unary { op, expr } => {
-            let v = eval_concolic_expr(expr, env, fns, enums)?;
+            let v = eval_concolic_expr(expr, env, fns, enums, trace, depth)?;
             match (op, v) {
                 (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(n.wrapping_neg())),
                 (UnaryOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
@@ -1004,31 +1022,35 @@ fn eval_concolic_expr(
         }
         Expr::Binary { op, left, right } => {
             if *op == BinOp::And {
-                let Value::Bool(l) = eval_concolic_expr(left, env, fns, enums)? else {
+                let Value::Bool(l) = eval_concolic_expr(left, env, fns, enums, trace, depth)?
+                else {
                     return Err("&& expects Bool".to_string());
                 };
                 if !l {
                     return Ok(Value::Bool(false));
                 }
-                let Value::Bool(r) = eval_concolic_expr(right, env, fns, enums)? else {
+                let Value::Bool(r) = eval_concolic_expr(right, env, fns, enums, trace, depth)?
+                else {
                     return Err("&& expects Bool".to_string());
                 };
                 return Ok(Value::Bool(r));
             }
             if *op == BinOp::Or {
-                let Value::Bool(l) = eval_concolic_expr(left, env, fns, enums)? else {
+                let Value::Bool(l) = eval_concolic_expr(left, env, fns, enums, trace, depth)?
+                else {
                     return Err("|| expects Bool".to_string());
                 };
                 if l {
                     return Ok(Value::Bool(true));
                 }
-                let Value::Bool(r) = eval_concolic_expr(right, env, fns, enums)? else {
+                let Value::Bool(r) = eval_concolic_expr(right, env, fns, enums, trace, depth)?
+                else {
                     return Err("|| expects Bool".to_string());
                 };
                 return Ok(Value::Bool(r));
             }
-            let l = eval_concolic_expr(left, env, fns, enums)?;
-            let r = eval_concolic_expr(right, env, fns, enums)?;
+            let l = eval_concolic_expr(left, env, fns, enums, trace, depth)?;
+            let r = eval_concolic_expr(right, env, fns, enums, trace, depth)?;
             match (op, l, r) {
                 (BinOp::Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_add(b))),
                 (BinOp::Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
@@ -1078,28 +1100,34 @@ fn eval_concolic_expr(
         Expr::Call { func, args } => {
             let mut arg_vals = Vec::with_capacity(args.len());
             for a in args {
-                arg_vals.push(eval_concolic_expr(a, env, fns, enums)?);
+                arg_vals.push(eval_concolic_expr(a, env, fns, enums, trace, depth)?);
             }
             let callee = fns
                 .get(func)
                 .ok_or_else(|| format!("unknown fn {}", func))?;
-            let mut sub_trace = ConcolicTrace::default();
-            eval_concolic_fn(callee, &arg_vals, fns, enums, &mut sub_trace)
+            let mut sub_trace = ConcolicTrace {
+                branch_slots: Vec::new(),
+                constraints: Vec::new(),
+                steps: trace.steps,
+            };
+            let res = eval_concolic_fn(callee, &arg_vals, fns, enums, &mut sub_trace, depth + 1);
+            trace.steps = sub_trace.steps;
+            res
         }
         Expr::Intrinsic(intr) => match intr.as_ref() {
-            Intrinsic::Len(x) => match eval_concolic_expr(x, env, fns, enums)? {
+            Intrinsic::Len(x) => match eval_concolic_expr(x, env, fns, enums, trace, depth)? {
                 Value::List(xs) => Ok(Value::Int(xs.len() as i64)),
                 Value::Str(s) => Ok(Value::Int(s.len() as i64)),
                 _ => Err("len expects list/str".to_string()),
             },
-            Intrinsic::Abs(x) => match eval_concolic_expr(x, env, fns, enums)? {
+            Intrinsic::Abs(x) => match eval_concolic_expr(x, env, fns, enums, trace, depth)? {
                 Value::Int(n) => Ok(Value::Int(n.wrapping_abs())),
                 Value::Float(f) => Ok(Value::Float(f.abs())),
                 _ => Err("abs expects number".to_string()),
             },
             Intrinsic::Min(a, b) => {
-                let va = eval_concolic_expr(a, env, fns, enums)?;
-                let vb = eval_concolic_expr(b, env, fns, enums)?;
+                let va = eval_concolic_expr(a, env, fns, enums, trace, depth)?;
+                let vb = eval_concolic_expr(b, env, fns, enums, trace, depth)?;
                 match (va, vb) {
                     (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x.min(y))),
                     (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x.min(y))),
@@ -1107,8 +1135,8 @@ fn eval_concolic_expr(
                 }
             }
             Intrinsic::Max(a, b) => {
-                let va = eval_concolic_expr(a, env, fns, enums)?;
-                let vb = eval_concolic_expr(b, env, fns, enums)?;
+                let va = eval_concolic_expr(a, env, fns, enums, trace, depth)?;
+                let vb = eval_concolic_expr(b, env, fns, enums, trace, depth)?;
                 match (va, vb) {
                     (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x.max(y))),
                     (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x.max(y))),
@@ -1116,24 +1144,24 @@ fn eval_concolic_expr(
                 }
             }
             Intrinsic::ToStr(x) => {
-                let v = eval_concolic_expr(x, env, fns, enums)?;
+                let v = eval_concolic_expr(x, env, fns, enums, trace, depth)?;
                 Ok(Value::Str(v.display_str()))
             }
             Intrinsic::Upper(x) => {
-                let Value::Str(s) = eval_concolic_expr(x, env, fns, enums)? else {
+                let Value::Str(s) = eval_concolic_expr(x, env, fns, enums, trace, depth)? else {
                     return Err("upper expects Str".to_string());
                 };
                 Ok(Value::Str(s.to_uppercase()))
             }
             Intrinsic::Lower(x) => {
-                let Value::Str(s) = eval_concolic_expr(x, env, fns, enums)? else {
+                let Value::Str(s) = eval_concolic_expr(x, env, fns, enums, trace, depth)? else {
                     return Err("lower expects Str".to_string());
                 };
                 Ok(Value::Str(s.to_lowercase()))
             }
             Intrinsic::Contains { haystack, needle } => {
-                let h = eval_concolic_expr(haystack, env, fns, enums)?;
-                let n = eval_concolic_expr(needle, env, fns, enums)?;
+                let h = eval_concolic_expr(haystack, env, fns, enums, trace, depth)?;
+                let n = eval_concolic_expr(needle, env, fns, enums, trace, depth)?;
                 match (h, n) {
                     (Value::List(xs), val) => Ok(Value::Bool(xs.contains(&val))),
                     (Value::Str(s), Value::Str(sub)) => Ok(Value::Bool(s.contains(&sub))),
@@ -1141,7 +1169,7 @@ fn eval_concolic_expr(
                 }
             }
             Intrinsic::Push { list, value } => {
-                let v = eval_concolic_expr(value, env, fns, enums)?;
+                let v = eval_concolic_expr(value, env, fns, enums, trace, depth)?;
                 if let Expr::Var(vname) = list {
                     if let Some(Value::List(items)) = env.get_mut(vname) {
                         items.push(v);
@@ -1468,6 +1496,30 @@ fn analyze_stmts_security(stmts: &[Stmt], pc_taint: TaintLevel, ctx: &mut SecCtx
             Stmt::Assign {
                 id, target, value, ..
             } => {
+                if let AssignTarget::Index { base, index } = target {
+                    audit_expr_sinks(*id, index, ctx);
+                    let mut idx_vars = Vec::new();
+                    collect_vars_in_expr(index, &mut idx_vars);
+                    let all_sanitized = !idx_vars.is_empty()
+                        && idx_vars.iter().all(|v| ctx.sanitized_vars.contains(v));
+                    ctx.sink_audits.push(SecuritySinkAudit {
+                        stmt_id: *id,
+                        func: ctx.fn_name.clone(),
+                        sink_kind: "IndexBoundsSink".to_string(),
+                        expr_summary: format!("{}[{}]", base, format_cond_expr(index)),
+                        taint_state: if all_sanitized {
+                            "Sanitized".to_string()
+                        } else {
+                            "UnsanitizedTaint".to_string()
+                        },
+                        safe: all_sanitized,
+                        note: if all_sanitized {
+                            "Index variable bounded by dominating range/guard sanitizer".to_string()
+                        } else {
+                            "Index expression is not dominated by a bounds sanitizer".to_string()
+                        },
+                    });
+                }
                 audit_expr_sinks(*id, value, ctx);
                 let root = target.root_var().to_string();
                 let (expr_taint, is_sanitized_clamp, src_vars) = eval_expr_taint(value, ctx);
@@ -1559,6 +1611,9 @@ fn analyze_stmts_security(stmts: &[Stmt], pc_taint: TaintLevel, ctx: &mut SecCtx
             Stmt::While { id, cond, body, .. } => {
                 audit_expr_sinks(*id, cond, ctx);
                 let (cond_taint, _, cond_vars) = eval_expr_taint(cond, ctx);
+                if cond_taint == TaintLevel::Confidential {
+                    ctx.secret_dependent_loop_or_branch = true;
+                }
                 for cv in cond_vars {
                     ctx.sanitized_vars.insert(cv);
                 }
@@ -1566,21 +1621,31 @@ fn analyze_stmts_security(stmts: &[Stmt], pc_taint: TaintLevel, ctx: &mut SecCtx
                 analyze_stmts_security(body, pc_taint.join(cond_taint), ctx);
             }
             Stmt::ForEach {
-                var, iter, body, ..
+                id, var, iter, body, ..
             } => {
+                audit_expr_sinks(*id, iter, ctx);
                 let (iter_taint, _, _) = eval_expr_taint(iter, ctx);
+                if iter_taint == TaintLevel::Confidential {
+                    ctx.secret_dependent_loop_or_branch = true;
+                }
                 ctx.env_taint.insert(var.clone(), iter_taint);
                 analyze_stmts_security(body, pc_taint.join(iter_taint), ctx);
             }
             Stmt::ForRange {
+                id,
                 var,
                 start,
                 end,
                 body,
                 ..
             } => {
+                audit_expr_sinks(*id, start, ctx);
+                audit_expr_sinks(*id, end, ctx);
                 let (s_taint, _, _) = eval_expr_taint(start, ctx);
                 let (e_taint, _, _) = eval_expr_taint(end, ctx);
+                if s_taint == TaintLevel::Confidential || e_taint == TaintLevel::Confidential {
+                    ctx.secret_dependent_loop_or_branch = true;
+                }
                 ctx.sanitized_vars.insert(var.clone());
                 ctx.sanitizers_applied += 1;
                 ctx.env_taint.insert(var.clone(), TaintLevel::Sanitized);

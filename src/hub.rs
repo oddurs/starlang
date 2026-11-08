@@ -555,6 +555,75 @@ pub fn normalize_module(module: &mut HubModule) {
             _ => {}
         }
     }
+
+    let mut seen_ids = HashSet::new();
+    let mut next_id = module.next_id.max(1);
+    for item in &mut module.items {
+        match item {
+            Item::Function(f) => {
+                ensure_unique_stmt_ids(&mut f.body, &mut seen_ids, &mut next_id);
+            }
+            Item::Test(t) => {
+                ensure_unique_stmt_ids(&mut t.body, &mut seen_ids, &mut next_id);
+            }
+            _ => {}
+        }
+    }
+    module.next_id = next_id;
+}
+
+fn ensure_unique_stmt_ids(
+    stmts: &mut [Stmt],
+    seen: &mut HashSet<NodeId>,
+    next_id: &mut NodeId,
+) {
+    let alloc = |id: &mut NodeId, seen: &mut HashSet<NodeId>, next_id: &mut NodeId| {
+        if *id == 0 || !seen.insert(*id) {
+            while *next_id == 0 || seen.contains(next_id) {
+                *next_id += 1;
+            }
+            *id = *next_id;
+            seen.insert(*id);
+            *next_id += 1;
+        } else if *id >= *next_id {
+            *next_id = *id + 1;
+        }
+    };
+    for stmt in stmts {
+        match stmt {
+            Stmt::Comment { id, .. }
+            | Stmt::Let { id, .. }
+            | Stmt::Assign { id, .. }
+            | Stmt::Break { id }
+            | Stmt::Continue { id }
+            | Stmt::Return { id, .. }
+            | Stmt::Assert { id, .. }
+            | Stmt::AssertEq { id, .. }
+            | Stmt::Expr { id, .. } => alloc(id, seen, next_id),
+            Stmt::If {
+                id,
+                then_body,
+                else_body,
+                ..
+            } => {
+                alloc(id, seen, next_id);
+                ensure_unique_stmt_ids(then_body, seen, next_id);
+                ensure_unique_stmt_ids(else_body, seen, next_id);
+            }
+            Stmt::Match { id, arms, .. } => {
+                alloc(id, seen, next_id);
+                for arm in arms {
+                    ensure_unique_stmt_ids(&mut arm.body, seen, next_id);
+                }
+            }
+            Stmt::While { id, body, .. }
+            | Stmt::ForEach { id, body, .. }
+            | Stmt::ForRange { id, body, .. } => {
+                alloc(id, seen, next_id);
+                ensure_unique_stmt_ids(body, seen, next_id);
+            }
+        }
+    }
 }
 
 fn collect_mutated_vars(stmts: &[Stmt], out: &mut HashSet<String>) {
