@@ -640,7 +640,7 @@ impl EGraph {
                 _ => None,
             },
             ENode::Abs(a) => match self.const_of(*a)? {
-                ConstDatum::Int(x) => Some(ENode::Int(x.abs())),
+                ConstDatum::Int(x) => x.checked_abs().map(ENode::Int),
                 _ => None,
             },
             ENode::Upper(a) => match self.const_of(*a)? {
@@ -2605,31 +2605,41 @@ fn peval_stmts(
                     alloc_id,
                 );
                 if let (Expr::Int(lo), Expr::Int(hi)) = (&s, &e) {
-                    let trip = *hi - *lo;
-                    if (0..=4).contains(&trip) && !contains_break_continue_or_return(body) {
-                        *loops_unrolled += 1;
-                        let mut mod_vars = BTreeSet::new();
-                        collect_modified_vars(body, &mut mod_vars);
-                        for mv in &mod_vars {
-                            env.remove(mv);
+                    let has_inner_let = body.iter().any(|st| matches!(st, Stmt::Let { .. }));
+                    if let Some(trip) = hi.checked_sub(*lo) {
+                        if (0..=4).contains(&trip)
+                            && !has_inner_let
+                            && !contains_break_continue_or_return(body)
+                        {
+                            *loops_unrolled += 1;
+                            let prev_var = env.get(var).cloned();
+                            let mut mod_vars = BTreeSet::new();
+                            collect_modified_vars(body, &mut mod_vars);
+                            for mv in &mod_vars {
+                                env.remove(mv);
+                            }
+                            for idx in *lo..*hi {
+                                env.insert(var.clone(), Expr::Int(idx));
+                                let iter_stmts = peval_stmts(
+                                    caller_name,
+                                    body,
+                                    env,
+                                    fns_map,
+                                    synthesized_fns,
+                                    specializations,
+                                    static_branches_folded,
+                                    loops_unrolled,
+                                    alloc_id,
+                                );
+                                out.extend(iter_stmts);
+                            }
+                            if let Some(pv) = prev_var {
+                                env.insert(var.clone(), pv);
+                            } else {
+                                env.remove(var);
+                            }
+                            continue;
                         }
-                        for idx in *lo..*hi {
-                            env.insert(var.clone(), Expr::Int(idx));
-                            let iter_stmts = peval_stmts(
-                                caller_name,
-                                body,
-                                env,
-                                fns_map,
-                                synthesized_fns,
-                                specializations,
-                                static_branches_folded,
-                                loops_unrolled,
-                                alloc_id,
-                            );
-                            out.extend(iter_stmts);
-                        }
-                        env.remove(var);
-                        continue;
                     }
                 }
                 let mut mod_vars = BTreeSet::new();
@@ -3262,7 +3272,7 @@ fn peval_expr(
                                 if is_static_literal(a) {
                                     let tag = match a {
                                         Expr::Int(v) if *v >= 0 => format!("i{}", v),
-                                        Expr::Int(v) => format!("in{}", v.abs()),
+                                        Expr::Int(v) => format!("in{}", v.unsigned_abs()),
                                         Expr::EnumVariant { variant, .. } => {
                                             variant.to_lowercase()
                                         }

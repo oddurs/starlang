@@ -363,24 +363,27 @@ fn fmt_expr(expr: &Expr) -> String {
             }
         },
         Expr::Binary { op, left, right } => {
-            let wrap_contains = |e: &Expr| -> Option<String> {
-                if let Expr::Intrinsic(intr) = e {
-                    if matches!(intr.as_ref(), Intrinsic::Contains { .. })
-                        && !matches!(op, BinOp::And | BinOp::Or)
-                    {
+            let wrap_low_prec = |e: &Expr| -> Option<String> {
+                if !matches!(op, BinOp::And | BinOp::Or) {
+                    if let Expr::Intrinsic(intr) = e {
+                        if matches!(intr.as_ref(), Intrinsic::Contains { .. }) {
+                            return Some(format!("({})", fmt_expr(e)));
+                        }
+                    }
+                    if matches!(e, Expr::Unary { op: UnaryOp::Not, .. }) {
                         return Some(format!("({})", fmt_expr(e)));
                     }
                 }
                 None
             };
-            let l_str = wrap_contains(left).unwrap_or_else(|| {
+            let l_str = wrap_low_prec(left).unwrap_or_else(|| {
                 if needs_parens(left, *op, false) {
                     format!("({})", fmt_expr(left))
                 } else {
                     fmt_expr(left)
                 }
             });
-            let r_str = wrap_contains(right).unwrap_or_else(|| {
+            let r_str = wrap_low_prec(right).unwrap_or_else(|| {
                 if needs_parens(right, *op, true) {
                     format!("({})", fmt_expr(right))
                 } else {

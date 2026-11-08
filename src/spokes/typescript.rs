@@ -265,7 +265,11 @@ fn fmt_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             ));
         }
         Stmt::Expr { expr, .. } => {
-            out.push_str(&format!("{}{};\n", pad, fmt_expr(expr)));
+            if matches!(expr, Expr::StructInit { .. }) {
+                out.push_str(&format!("{}({});\n", pad, fmt_expr(expr)));
+            } else {
+                out.push_str(&format!("{}{};\n", pad, fmt_expr(expr)));
+            }
         }
     }
 }
@@ -1242,6 +1246,10 @@ impl TsParser {
         let mut arms = Vec::new();
 
         while !matches!(self.peek_kind(), Some(TsTokKind::RBrace) | None) {
+            if matches!(self.peek_kind(), Some(TsTokKind::Comment(_))) {
+                self.next();
+                continue;
+            }
             let pat = if self.eat_kw("default") {
                 self.expect(&TsTokKind::Colon, "':'")?;
                 MatchPat::Wildcard

@@ -1055,7 +1055,7 @@ impl<'a> Recorder<'a> {
             Expr::Unary { op, expr: inner } => {
                 let v = self.eval_expr(fn_name, inner, env)?;
                 match (op, v) {
-                    (UnaryOp::Neg, Value::Int(i)) => Ok(Value::Int(-i)),
+                    (UnaryOp::Neg, Value::Int(i)) => Ok(Value::Int(i.wrapping_neg())),
                     (UnaryOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
                     (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
                     _ => Err("invalid unary operand".to_string()),
@@ -1131,7 +1131,7 @@ impl<'a> Recorder<'a> {
                     }
                 }
                 Intrinsic::Abs(a) => match self.eval_expr(fn_name, a, env)? {
-                    Value::Int(x) => Ok(Value::Int(x.abs())),
+                    Value::Int(x) => Ok(Value::Int(x.wrapping_abs())),
                     Value::Float(x) => Ok(Value::Float(x.abs())),
                     _ => Err("abs requires numeric arg".to_string()),
                 },
@@ -1270,19 +1270,19 @@ fn eval_binop(op: BinOp, lv: Value, rv: Value) -> Result<Value, String> {
         (BinOp::Sub, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
         (BinOp::Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_mul(b))),
         (BinOp::Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
-        (BinOp::Div, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
-        (BinOp::IntDiv, Value::Int(a), Value::Int(b)) => {
+        (BinOp::Div | BinOp::IntDiv, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+        (BinOp::Div | BinOp::IntDiv, Value::Int(a), Value::Int(b)) => {
             if b == 0 {
                 Err("division by zero".to_string())
             } else {
-                Ok(Value::Int(a / b))
+                Ok(Value::Int(a.wrapping_div(b)))
             }
         }
         (BinOp::Mod, Value::Int(a), Value::Int(b)) => {
             if b == 0 {
                 Err("modulo by zero".to_string())
             } else {
-                Ok(Value::Int(a % b))
+                Ok(Value::Int(a.wrapping_rem(b)))
             }
         }
         (BinOp::Eq, a, b) => Ok(Value::Bool(a == b)),

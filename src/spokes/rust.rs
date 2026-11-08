@@ -624,6 +624,9 @@ impl RustFmtCtx {
                                 Expr::Str(s) if pass == Some("ref") => {
                                     format!("\"{}\"", escape_str(s))
                                 }
+                                Expr::Binary { .. }
+                                | Expr::Unary { .. }
+                                | Expr::Intrinsic(_) => format!("&({})", self.fmt_expr(arg)),
                                 _ => format!("&{}", self.fmt_expr(arg)),
                             },
                             _ => self.fmt_owned_expr(arg),

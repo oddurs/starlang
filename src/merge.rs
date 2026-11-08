@@ -180,6 +180,7 @@ pub fn merge_hub_modules(
                         &mut used_right,
                         &mut merged_items,
                         &mut changes,
+                        &mut conflicts,
                     );
                 }
                 left_cursor += 1;
@@ -297,6 +298,7 @@ pub fn merge_hub_modules(
                 &mut used_right,
                 &mut merged_items,
                 &mut changes,
+                &mut conflicts,
             );
         }
         left_cursor += 1;
@@ -330,6 +332,7 @@ pub fn merge_hub_modules(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn maybe_push_added_item(
     added: &Item,
     left_spoke: SpokeId,
@@ -338,16 +341,17 @@ fn maybe_push_added_item(
     used_right: &mut [bool],
     merged_items: &mut Vec<Item>,
     changes: &mut Vec<AppliedChange>,
+    conflicts: &mut Vec<MergeConflict>,
 ) {
     let key = item_key(added);
-    // Check if Right added the exact same item convergently
+    // Check if Right added an item with the same key
     if let Some((ri, r_it)) = right_items
         .iter()
         .enumerate()
         .find(|(idx, ri)| !used_right[*idx] && item_key(ri) == key)
     {
+        used_right[ri] = true;
         if sem_eq_item(added, r_it) {
-            used_right[ri] = true;
             changes.push(AppliedChange {
                 spoke: left_spoke,
                 scope: key.clone(),
@@ -358,9 +362,25 @@ fn maybe_push_added_item(
                     right_spoke.display_name()
                 ),
             });
-            merged_items.push(added.clone());
-            return;
+        } else {
+            conflicts.push(MergeConflict {
+                node_id: item_id(added),
+                scope: key.clone(),
+                description: format!(
+                    "Add/add conflict on {}: added with different definitions in {} and {}",
+                    key,
+                    left_spoke.display_name(),
+                    right_spoke.display_name()
+                ),
+                base_summary: "(not present)".to_string(),
+                left_spoke,
+                left_summary: key.clone(),
+                right_spoke,
+                right_summary: key.clone(),
+            });
         }
+        merged_items.push(added.clone());
+        return;
     }
     changes.push(AppliedChange {
         spoke: left_spoke,

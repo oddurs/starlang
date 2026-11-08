@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use crate::egraph::format_expr_compact;
 use crate::hub::{
-    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, NodeId, Stmt, Type,
-    UnaryOp,
+    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, MatchPat, NodeId,
+    Stmt, Type, UnaryOp,
 };
 use crate::ssa::analyze_ssa;
 
@@ -296,6 +296,28 @@ fn allocate_fn_registers(
     }
 
     // Extend live ranges inside loops so loop-carried variables span the full loop back-edge
+    let mut label_pcs: BTreeMap<String, usize> = BTreeMap::new();
+    for inst in &insts {
+        if let IrOp::Label { name } = &inst.op {
+            label_pcs.insert(name.clone(), inst.pc);
+        }
+    }
+    for inst in &insts {
+        if let IrOp::Jump { target_label } = &inst.op {
+            if let Some(&target_pc) = label_pcs.get(target_label) {
+                if target_pc < inst.pc {
+                    for (v, start_pc) in &var_start {
+                        if let Some(end_pc) = var_end.get_mut(v) {
+                            if *start_pc <= target_pc && *end_pc >= target_pc && *end_pc < inst.pc {
+                                *end_pc = inst.pc;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let all_vars: Vec<String> = var_start.keys().cloned().collect();
     let mut adj: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for v in &all_vars {
@@ -322,7 +344,7 @@ fn allocate_fn_registers(
             for live_set in [&blk.live_in, &blk.live_out] {
                 let base_vars: Vec<String> = live_set
                     .iter()
-                    .map(|s| s.split('_').next().unwrap_or(s).to_string())
+                    .map(|s| s.rsplit_once('_').map(|(b, _)| b).unwrap_or(s).to_string())
                     .filter(|b| adj.contains_key(b))
                     .collect();
                 for i in 0..base_vars.len() {
@@ -693,17 +715,53 @@ fn lower_stmts_to_ir(
                 let end_lbl = format!(".L_endmatch_{}", id);
                 for (a_idx, arm) in arms.iter().enumerate() {
                     let next_lbl = format!(".L_arm_{}_{}", id, a_idx + 1);
-                    let pc = insts.len();
-                    insts.push(IrInst {
-                        pc,
-                        loop_depth,
-                        op: IrOp::CmpBranchFalse {
-                            cond_var: scr_v.clone(),
-                            target_label: next_lbl.clone(),
-                        },
-                        defs: Vec::new(),
-                        uses: vec![scr_v.clone()],
-                    });
+                    if !matches!(arm.pat, MatchPat::Wildcard) {
+                        let pat_v = format!("t{}", *temp_counter);
+                        *temp_counter += 1;
+                        let pat_imm = match &arm.pat {
+                            MatchPat::Int(v) => *v,
+                            MatchPat::EnumVariant { variant, .. } => variant.len() as i64,
+                            MatchPat::Str(s) => s.len() as i64,
+                            MatchPat::Wildcard => 0,
+                        };
+                        let p_pc = insts.len();
+                        insts.push(IrInst {
+                            pc: p_pc,
+                            loop_depth,
+                            op: IrOp::MovImm {
+                                dst: pat_v.clone(),
+                                imm: pat_imm,
+                            },
+                            defs: vec![pat_v.clone()],
+                            uses: Vec::new(),
+                        });
+                        let cmp_v = format!("t{}", *temp_counter);
+                        *temp_counter += 1;
+                        let c_pc = insts.len();
+                        insts.push(IrInst {
+                            pc: c_pc,
+                            loop_depth,
+                            op: IrOp::BinOp {
+                                dst: cmp_v.clone(),
+                                op: BinOp::Eq,
+                                lhs: scr_v.clone(),
+                                rhs: pat_v.clone(),
+                            },
+                            defs: vec![cmp_v.clone()],
+                            uses: vec![scr_v.clone(), pat_v],
+                        });
+                        let pc = insts.len();
+                        insts.push(IrInst {
+                            pc,
+                            loop_depth,
+                            op: IrOp::CmpBranchFalse {
+                                cond_var: cmp_v.clone(),
+                                target_label: next_lbl.clone(),
+                            },
+                            defs: Vec::new(),
+                            uses: vec![cmp_v],
+                        });
+                    }
                     lower_stmts_to_ir(&arm.body, loop_depth, insts, temp_counter, label_counter);
                     let jpc = insts.len();
                     insts.push(IrInst {

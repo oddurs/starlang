@@ -1,4 +1,4 @@
-use crate::hub::{BinOp, Diagnostic, Expr, HubModule};
+use crate::hub::{BinOp, Diagnostic, Expr, HubModule, UnaryOp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpokeId {
@@ -175,6 +175,9 @@ pub fn needs_parens(child: &Expr, parent_op: BinOp, is_right: bool) -> bool {
             let non_assoc_cmp = cp == 3 && pp == 3;
             cp < pp || (is_right && cp == pp) || non_assoc_cmp
         }
+        Expr::Unary {
+            op: UnaryOp::Neg, ..
+        } => is_right && parent_op == BinOp::Sub,
         _ => false,
     }
 }
@@ -197,6 +200,7 @@ pub fn escape_str(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
+            '\0' => out.push_str("\\0"),
             other => out.push(other),
         }
     }

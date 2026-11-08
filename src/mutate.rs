@@ -799,7 +799,7 @@ fn harvest_expr(
             expr: inner,
         } => {
             if let Expr::Int(v) = inner.as_ref() {
-                ints.insert(-*v);
+                ints.insert(v.saturating_neg());
             }
             harvest_expr(inner, ints, floats, strs);
         }
@@ -862,7 +862,7 @@ fn probes_for_type(ty: &Type, hub: &HubModule, pools: &BoundaryPools) -> Vec<Exp
                 if v < 0 {
                     Expr::Unary {
                         op: UnaryOp::Neg,
-                        expr: Box::new(Expr::Int(-v)),
+                        expr: Box::new(Expr::Int(v.saturating_neg())),
                     }
                 } else {
                     Expr::Int(v)

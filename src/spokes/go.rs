@@ -664,8 +664,18 @@ impl GoFmtCtx {
                     BinOp::Or => "||",
                 };
                 // If both sides are untyped int literals in an arithmetic expr, wrap result in int64(...)
-                let both_int_lits = matches!(left.as_ref(), Expr::Int(_))
-                    && matches!(right.as_ref(), Expr::Int(_))
+                let is_int_lit = |e: &Expr| {
+                    matches!(e, Expr::Int(_))
+                        || matches!(
+                            e,
+                            Expr::Unary {
+                                op: UnaryOp::Neg,
+                                expr: inner
+                            } if matches!(inner.as_ref(), Expr::Int(_))
+                        )
+                };
+                let both_int_lits = is_int_lit(left)
+                    && is_int_lit(right)
                     && matches!(
                         op,
                         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::IntDiv | BinOp::Mod
@@ -1467,6 +1477,10 @@ impl GoParser {
         self.expect(&GTokKind::LBrace, "'{' after switch")?;
         let mut arms = Vec::new();
         while !matches!(self.peek_kind(), Some(GTokKind::RBrace) | None) {
+            if matches!(self.peek_kind(), Some(GTokKind::Comment(_))) {
+                self.next();
+                continue;
+            }
             let pat = if self.eat_kw("default") {
                 self.expect(&GTokKind::Colon, "':' after default")?;
                 MatchPat::Wildcard
@@ -1478,6 +1492,16 @@ impl GoParser {
                         MatchPat::EnumVariant { enum_name, variant }
                     }
                     Expr::Int(v) => MatchPat::Int(v),
+                    Expr::Unary {
+                        op: UnaryOp::Neg,
+                        expr: inner,
+                    } if matches!(*inner, Expr::Int(_)) => {
+                        if let Expr::Int(v) = *inner {
+                            MatchPat::Int(-v)
+                        } else {
+                            unreachable!()
+                        }
+                    }
                     Expr::Str(s) => MatchPat::Str(s),
                     _ => return self.err("unsupported Go switch case pattern"),
                 }

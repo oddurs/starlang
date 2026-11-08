@@ -936,6 +936,7 @@ enum PTokKind {
     Minus,
     Star,
     Slash,
+    Percent,
     Bang,
     Eq,
     PlusEq,
@@ -1216,6 +1217,7 @@ fn lex_perl(source: &str) -> Result<Vec<PTok>, Diagnostic> {
             '-' => PTokKind::Minus,
             '*' => PTokKind::Star,
             '/' => PTokKind::Slash,
+            '%' => PTokKind::Percent,
             '!' => PTokKind::Bang,
             '=' => PTokKind::Eq,
             '<' => PTokKind::Lt,
@@ -2028,6 +2030,7 @@ impl PerlParser {
             let op = match self.peek_kind() {
                 Some(PTokKind::Star) => Some(BinOp::Mul),
                 Some(PTokKind::Slash) => Some(BinOp::Div),
+                Some(PTokKind::Percent) => Some(BinOp::Mod),
                 _ => None,
             };
             if let Some(bop) = op {

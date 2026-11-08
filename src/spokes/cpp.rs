@@ -856,8 +856,18 @@ impl CppFmtCtx {
                     BinOp::And => "&&",
                     BinOp::Or => "||",
                 };
-                let both_int_lits = matches!(left.as_ref(), Expr::Int(_))
-                    && matches!(right.as_ref(), Expr::Int(_))
+                let is_int_lit = |e: &Expr| {
+                    matches!(e, Expr::Int(_))
+                        || matches!(
+                            e,
+                            Expr::Unary {
+                                op: UnaryOp::Neg,
+                                expr: inner
+                            } if matches!(inner.as_ref(), Expr::Int(_))
+                        )
+                };
+                let both_int_lits = is_int_lit(left)
+                    && is_int_lit(right)
                     && matches!(
                         op,
                         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::IntDiv | BinOp::Mod

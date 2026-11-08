@@ -598,6 +598,30 @@ impl<'a> ModuleVerifier<'a> {
                                 if let Some(bdom) = eval_bool_domain(value, &state) {
                                     state.bools.insert(v.clone(), bdom);
                                 }
+                                match value {
+                                    Expr::List(items) => {
+                                        state
+                                            .lens
+                                            .insert(v.clone(), IntDomain::constant(items.len() as i64));
+                                    }
+                                    Expr::Str(s) => {
+                                        state
+                                            .lens
+                                            .insert(v.clone(), IntDomain::constant(s.len() as i64));
+                                    }
+                                    Expr::Var(other) => {
+                                        if let Some(ldom) = state.lens.get(other).cloned() {
+                                            state.lens.insert(v.clone(), ldom);
+                                        } else {
+                                            state.lens.remove(v);
+                                        }
+                                    }
+                                    _ => {
+                                        state.lens.remove(v);
+                                    }
+                                }
+                                state.strict_lt_len.retain(|(_, lv)| lv != v);
+                                state.len_aliases.retain(|_, target_lv| target_lv != v);
                                 rhs_dom
                             }
                             AssignOp::AddAssign => add_domains(&state.int_dom(v), &rhs_dom),
@@ -868,6 +892,7 @@ impl<'a> ModuleVerifier<'a> {
                             lv.clone(),
                             IntDomain::range(cur.lo.saturating_add(1), cur.hi.saturating_add(1)),
                         );
+                        state.len_aliases.retain(|_, target_lv| target_lv != lv);
                     }
                 }
                 Some(state)
@@ -1297,7 +1322,7 @@ fn eval_int_domain(expr: &Expr, state: &SymState) -> IntDomain {
             if d.is_empty() {
                 d
             } else {
-                IntDomain::range(-d.hi, -d.lo)
+                IntDomain::range(d.hi.saturating_neg(), d.lo.saturating_neg())
             }
         }
         Expr::Binary { op, left, right } => {
@@ -1325,9 +1350,9 @@ fn eval_int_domain(expr: &Expr, state: &SymState) -> IntDomain {
                 if d.is_empty() || d.lo >= 0 {
                     d
                 } else if d.hi <= 0 {
-                    IntDomain::range(-d.hi, -d.lo)
+                    IntDomain::range(d.hi.saturating_neg(), d.lo.saturating_neg())
                 } else {
-                    IntDomain::range(0, (-d.lo).max(d.hi))
+                    IntDomain::range(0, d.lo.saturating_neg().max(d.hi))
                 }
             }
             Intrinsic::Min(a, b) => {
@@ -1420,8 +1445,8 @@ fn div_domains(a: &IntDomain, b: &IntDomain) -> IntDomain {
         return IntDomain::range(lo, hi);
     }
     if b.lo == b.hi && b.lo != 0 && a.lo > -INF && a.hi < INF {
-        let c1 = a.lo / b.lo;
-        let c2 = a.hi / b.lo;
+        let c1 = a.lo.wrapping_div(b.lo);
+        let c2 = a.hi.wrapping_div(b.lo);
         return IntDomain::range(c1.min(c2), c1.max(c2));
     }
     IntDomain::top()

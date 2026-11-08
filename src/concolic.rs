@@ -565,19 +565,52 @@ fn eval_concolic_block(
                 target, op, value, ..
             } => {
                 let rhs = eval_concolic_expr(value, env, fns, enums)?;
-                if let AssignTarget::Var(vname) = target {
-                    let cur = env.get(vname).cloned().unwrap_or(Value::Int(0));
-                    let next = match (op, cur, rhs) {
-                        (AssignOp::Set, _, r) => r,
+                let apply_op = |op: &AssignOp, cur: Value, r: Value| -> Value {
+                    match (op, cur, r) {
+                        (AssignOp::Set, _, rv) => rv,
                         (AssignOp::AddAssign, Value::Int(a), Value::Int(b)) => {
-                            Value::Int(a.saturating_add(b))
+                            Value::Int(a.wrapping_add(b))
+                        }
+                        (AssignOp::AddAssign, Value::Float(a), Value::Float(b)) => {
+                            Value::Float(a + b)
+                        }
+                        (AssignOp::AddAssign, Value::Str(a), Value::Str(b)) => {
+                            Value::Str(format!("{}{}", a, b))
                         }
                         (AssignOp::SubAssign, Value::Int(a), Value::Int(b)) => {
-                            Value::Int(a.saturating_sub(b))
+                            Value::Int(a.wrapping_sub(b))
                         }
-                        (_, _, r) => r,
-                    };
-                    env.insert(vname.clone(), next);
+                        (AssignOp::SubAssign, Value::Float(a), Value::Float(b)) => {
+                            Value::Float(a - b)
+                        }
+                        (_, _, rv) => rv,
+                    }
+                };
+                match target {
+                    AssignTarget::Var(vname) => {
+                        let cur = env.get(vname).cloned().unwrap_or(Value::Int(0));
+                        let next = apply_op(op, cur, rhs);
+                        env.insert(vname.clone(), next);
+                    }
+                    AssignTarget::Field { base, field } => {
+                        if let Some(Value::Struct { name, mut fields }) = env.get(base).cloned() {
+                            let cur = fields.get(field).cloned().unwrap_or(Value::Int(0));
+                            fields.insert(field.clone(), apply_op(op, cur, rhs));
+                            env.insert(base.clone(), Value::Struct { name, fields });
+                        }
+                    }
+                    AssignTarget::Index { base, index } => {
+                        let idx_val = eval_concolic_expr(index, env, fns, enums)?;
+                        if let (Some(Value::List(mut items)), Value::Int(i)) =
+                            (env.get(base).cloned(), idx_val)
+                        {
+                            if i >= 0 && (i as usize) < items.len() {
+                                let cur = items[i as usize].clone();
+                                items[i as usize] = apply_op(op, cur, rhs);
+                                env.insert(base.clone(), Value::List(items));
+                            }
+                        }
+                    }
                 }
             }
             Stmt::If {
@@ -822,7 +855,7 @@ fn eval_concolic_expr(
         Expr::Unary { op, expr } => {
             let v = eval_concolic_expr(expr, env, fns, enums)?;
             match (op, v) {
-                (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(n.saturating_neg())),
+                (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(n.wrapping_neg())),
                 (UnaryOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
                 (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
                 _ => Err("unary type mismatch".to_string()),
@@ -832,30 +865,44 @@ fn eval_concolic_expr(
             let l = eval_concolic_expr(left, env, fns, enums)?;
             let r = eval_concolic_expr(right, env, fns, enums)?;
             match (op, l, r) {
-                (BinOp::Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.saturating_add(b))),
+                (BinOp::Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_add(b))),
+                (BinOp::Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
                 (BinOp::Add, Value::Str(a), Value::Str(b)) => Ok(Value::Str(format!("{}{}", a, b))),
-                (BinOp::Sub, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.saturating_sub(b))),
-                (BinOp::Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.saturating_mul(b))),
+                (BinOp::Sub, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_sub(b))),
+                (BinOp::Sub, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+                (BinOp::Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_mul(b))),
+                (BinOp::Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
                 (BinOp::IntDiv | BinOp::Div, Value::Int(a), Value::Int(b)) => {
                     if b == 0 {
                         Err("division by zero".to_string())
                     } else {
-                        Ok(Value::Int(a / b))
+                        Ok(Value::Int(a.wrapping_div(b)))
                     }
+                }
+                (BinOp::IntDiv | BinOp::Div, Value::Float(a), Value::Float(b)) => {
+                    Ok(Value::Float(a / b))
                 }
                 (BinOp::Mod, Value::Int(a), Value::Int(b)) => {
                     if b == 0 {
                         Err("modulo by zero".to_string())
                     } else {
-                        Ok(Value::Int(a % b))
+                        Ok(Value::Int(a.wrapping_rem(b)))
                     }
                 }
                 (BinOp::Eq, a, b) => Ok(Value::Bool(a == b)),
                 (BinOp::Ne, a, b) => Ok(Value::Bool(a != b)),
                 (BinOp::Lt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
+                (BinOp::Lt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
+                (BinOp::Lt, Value::Str(a), Value::Str(b)) => Ok(Value::Bool(a < b)),
                 (BinOp::Le, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
+                (BinOp::Le, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
+                (BinOp::Le, Value::Str(a), Value::Str(b)) => Ok(Value::Bool(a <= b)),
                 (BinOp::Gt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
+                (BinOp::Gt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
+                (BinOp::Gt, Value::Str(a), Value::Str(b)) => Ok(Value::Bool(a > b)),
                 (BinOp::Ge, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
+                (BinOp::Ge, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
+                (BinOp::Ge, Value::Str(a), Value::Str(b)) => Ok(Value::Bool(a >= b)),
                 (BinOp::And, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
                 (BinOp::Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
                 _ => Err("binary op mismatch".to_string()),

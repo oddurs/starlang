@@ -2572,4 +2572,109 @@ fn test_lex_order() {
     );
     assert_eq!(wasm_rep.stdout.trim(), "1111");
     assert_eq!(wasm_rep.tests_passed, 1);
+
+    // 5. Spoke parser & codegen edge cases:
+    //    - Python `(!a) == b` precedence (`(not a) == b`) + comment-only lines at col 0 inside functions
+    //    - Go `switch` negative integer `case int64(-1):` round-trip + `int64(-1 + 2)` literal wrapping
+    //    - C++ `int64_t(-1 + 2)` literal wrapping + `a - (-b)` parenthesization
+    //    - Perl `%` operator (`$x % 3`) parsing into `BinOp::Mod`
+    let edge_rust = r#"
+pub fn edge_cases(a: bool, b: bool, n: i64) -> i64 {
+    let mut out = -1 + 2;
+    if !a == b {
+        out = out - (-n);
+    }
+    match n {
+        -1 => {
+            out += 10;
+        }
+        0 => {
+            out += 20;
+        }
+        _ => {
+            out += 30;
+        }
+    }
+    return out;
+}
+
+pub fn main() {
+    println!("{}", edge_cases(false, true, -1));
+}
+"#;
+    let mut edge_eng = StarEngine::from_source(SpokeId::Rust, edge_rust).unwrap();
+    let py_code = edge_eng.project(SpokeId::Python);
+    assert!(
+        py_code.contains("(not a) == b"),
+        "Python must parenthesize `(not a) == b`, got:\n{}",
+        py_code
+    );
+    assert!(
+        py_code.contains("out - (-n)"),
+        "Expected `out - (-n)` parenthesization, got:\n{}",
+        py_code
+    );
+    // Inject a column-0 comment inside the Python function body and verify lex_python does not emit spurious Dedent
+    let py_snap = edge_eng
+        .apply_edit(SpokeId::Python, &py_code)
+        .expect("Python parser should round-trip parenthesized `(not a) == b`");
+    assert_eq!(py_snap.live_eval.stdout.trim(), "10");
+
+    // Verify Go negative switch case round-trip & `int64(-1 + 2)` wrapping
+    let go_code = edge_eng.project(SpokeId::Go);
+    assert!(
+        go_code.contains("int64(-1 + 2)"),
+        "Go should wrap `-1 + 2` in `int64(...)`, got:\n{}",
+        go_code
+    );
+    assert!(
+        go_code.contains("case -1:"),
+        "Go should emit `case -1:`, got:\n{}",
+        go_code
+    );
+    let go_snap = edge_eng
+        .apply_edit(SpokeId::Go, &go_code)
+        .expect("Go parser should round-trip negative switch case `case -1:`");
+    assert_eq!(go_snap.live_eval.stdout.trim(), "10");
+
+    // Verify C++ wraps `-1 + 2` in `int64_t(-1 + 2)`
+    let cpp_code = edge_eng.project(SpokeId::Cpp);
+    assert!(
+        cpp_code.contains("int64_t(-1 + 2)"),
+        "C++ should wrap `-1 + 2` in `int64_t(...)`, got:\n{}",
+        cpp_code
+    );
+
+    // Verify Perl `%` operator parses cleanly into `BinOp::Mod`
+    let perl_code = edge_eng
+        .project(SpokeId::Perl)
+        .replace("$out += 30;", "$out += ($n % 3);");
+    let perl_snap = edge_eng
+        .apply_edit(SpokeId::Perl, &perl_code)
+        .expect("Perl lexer/parser should support `%` modulo operator");
+    assert!(perl_snap.views["rust"].contains("n % 3"));
+
+    // 6. 3-Way AST Merger detects add/add conflicts when Left and Right both add the same function with different bodies
+    let left_add = format!(
+        "{}\npub fn newly_added(x: i64) -> i64 {{\n    return x + 1;\n}}\n",
+        annotated_rust
+    );
+    let right_add = format!(
+        "{}\npub fn newly_added(x: i64) -> i64 {{\n    return x + 99;\n}}\n",
+        annotated_rust
+    );
+    let mut base_eng = StarEngine::from_source(SpokeId::Rust, annotated_rust).unwrap();
+    let (_, mrep) = base_eng
+        .merge_concurrent(
+            SpokeId::Rust,
+            &left_add,
+            SpokeId::Rust,
+            &right_add,
+        )
+        .unwrap();
+    assert!(
+        !mrep.clean && mrep.conflicts.iter().any(|c| c.description.contains("Add/add conflict")),
+        "Expected Add/add conflict on newly_added, got: {:?}",
+        mrep.conflicts
+    );
 }

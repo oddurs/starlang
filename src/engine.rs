@@ -188,18 +188,14 @@ impl StarEngine {
     /// injects a realistic fault first and then repairs it back to a verified state.
     pub fn repair(&mut self, inject_if_healthy: bool) -> (SyncSnapshot, RepairReport, Option<String>) {
         let mut injected_desc = None;
-        let target_hub = {
-            let initial_check = repair_module(self.hub());
-            if initial_check.already_healthy && inject_if_healthy {
-                let (buggy, desc) = inject_demo_bug(self.hub());
-                injected_desc = Some(desc);
-                buggy
-            } else {
-                self.hub().clone()
-            }
+        let initial_check = repair_module(self.hub());
+        let report = if initial_check.already_healthy && inject_if_healthy {
+            let (buggy, desc) = inject_demo_bug(self.hub());
+            injected_desc = Some(desc);
+            repair_module(&buggy)
+        } else {
+            initial_check
         };
-
-        let report = repair_module(&target_hub);
         if report.repaired && !report.already_healthy {
             let active = self.current().spoke;
             self.push_hub(report.repaired_hub.clone(), active);
@@ -466,6 +462,7 @@ impl StarEngine {
                     .items
                     .push(crate::hub::Item::Test(new_test.clone()));
             }
+            crate::hub::normalize_module(&mut next_hub);
             let active = self.current().spoke;
             self.push_hub(next_hub, active);
             Some(self.snapshot())

@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
-use crate::hub::{AssignOp, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, Stmt, Type, UnaryOp};
+use crate::hub::{
+    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, Stmt, Type, UnaryOp,
+};
 use crate::lens::SpokeId;
 use crate::quickcheck::run_quickcheck;
 use crate::verify::verify_module;
@@ -599,8 +601,11 @@ fn lower_stmts_for_ssa(
             } => {
                 let root = target.root_var().to_string();
                 let mut reads = Vec::new();
-                if *op != AssignOp::Set {
+                if *op != AssignOp::Set || !matches!(target, AssignTarget::Var(_)) {
                     reads.push(root.clone());
+                }
+                if let AssignTarget::Index { index, .. } = target {
+                    collect_expr_reads(index, &mut reads);
                 }
                 collect_expr_reads(value, &mut reads);
                 let val_str = summarize_expr(value);
@@ -754,8 +759,6 @@ fn lower_stmts_for_ssa(
                 add_raw_edge(blocks, hdr_bb, after_bb);
                 if let Some(be) = lower_stmts_for_ssa(body, body_bb, exit, blocks) {
                     add_raw_edge(blocks, be, hdr_bb);
-                } else {
-                    add_raw_edge(blocks, body_bb, hdr_bb);
                 }
                 cur = after_bb;
             }
@@ -779,8 +782,6 @@ fn lower_stmts_for_ssa(
                 add_raw_edge(blocks, hdr_bb, after_bb);
                 if let Some(be) = lower_stmts_for_ssa(body, body_bb, exit, blocks) {
                     add_raw_edge(blocks, be, hdr_bb);
-                } else {
-                    add_raw_edge(blocks, body_bb, hdr_bb);
                 }
                 cur = after_bb;
             }
@@ -809,8 +810,6 @@ fn lower_stmts_for_ssa(
                 add_raw_edge(blocks, hdr_bb, after_bb);
                 if let Some(be) = lower_stmts_for_ssa(body, body_bb, exit, blocks) {
                     add_raw_edge(blocks, be, hdr_bb);
-                } else {
-                    add_raw_edge(blocks, body_bb, hdr_bb);
                 }
                 cur = after_bb;
             }
