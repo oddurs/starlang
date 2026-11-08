@@ -250,7 +250,17 @@ fn merge_meta(new_meta: &Metadata, prev_meta: Option<&Metadata>, edited_spoke: S
     let mut merged = Metadata::new();
     for (k, v) in prev {
         if (!k.starts_with(owned_prefix) && k != "explicit_mut")
-            || (k == "explicit_mut" && matches!(edited_spoke, SpokeId::Python | SpokeId::Go))
+            || (k == "explicit_mut"
+                && matches!(
+                    edited_spoke,
+                    SpokeId::Python
+                        | SpokeId::Go
+                        | SpokeId::Ruby
+                        | SpokeId::Lua
+                        | SpokeId::Perl
+                        | SpokeId::C
+                        | SpokeId::Java
+                ))
         {
             merged.insert(k.clone(), v.clone());
         }
@@ -454,7 +464,16 @@ fn reconcile_stmts(
                 {
                     *id = claim_id(Some(*pid), next_id, used);
                     *meta = merge_meta(meta, Some(pmeta), edited_spoke);
-                    if ty.is_none() && matches!(edited_spoke, SpokeId::Python | SpokeId::Go) {
+                    if ty.is_none()
+                        && matches!(
+                            edited_spoke,
+                            SpokeId::Python
+                                | SpokeId::Go
+                                | SpokeId::Ruby
+                                | SpokeId::Lua
+                                | SpokeId::Perl
+                        )
+                    {
                         if pty.is_some() {
                             *ty = pty.clone();
                         }

@@ -2430,3 +2430,146 @@ fn fhe_ring_lwe_blinded_circuit_compiler_and_reynolds_separation_logic_verifier_
         assert!(f.mermaid_seplogic.contains("flowchart LR"));
     }
 }
+
+#[test]
+fn compiler_soundness_review_catches_type_holes_reconcile_meta_and_wasm_str_ordering() {
+    // 1. Typechecker catches mixed Int/Float on '-', '*', '/', Float '%', duplicate fields/variants/params,
+    //    and non-Void functions missing a guaranteed return path.
+    let bad_rust = r#"
+#[derive(Clone, Debug, PartialEq)]
+pub struct DupStruct {
+    pub x: i64,
+    pub x: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DupEnum {
+    Alpha,
+    Alpha,
+}
+
+pub fn bad_arith(a: i64, a: f64) -> i64 {
+    let m = 10 - 2.5;
+    let r = 3.5 % 1.5;
+    if a > 0.0 {
+        return 1;
+    }
+}
+"#;
+    let bad_eng = StarEngine::from_source(SpokeId::Rust, bad_rust).unwrap();
+    let diags = starlang::typecheck::check_module(bad_eng.hub());
+    let msgs: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
+    assert!(
+        msgs.iter().any(|m| m.contains("duplicate field 'x' in struct 'DupStruct'")),
+        "Expected duplicate field diagnostic, got {:?}",
+        msgs
+    );
+    assert!(
+        msgs.iter().any(|m| m.contains("duplicate variant 'Alpha' in enum 'DupEnum'")),
+        "Expected duplicate variant diagnostic, got {:?}",
+        msgs
+    );
+    assert!(
+        msgs.iter().any(|m| m.contains("duplicate parameter 'a' in function 'bad_arith'")),
+        "Expected duplicate parameter diagnostic, got {:?}",
+        msgs
+    );
+    assert!(
+        msgs.iter().any(|m| m.contains("arithmetic operator requires matching numeric types")),
+        "Expected mixed numeric operand diagnostic, got {:?}",
+        msgs
+    );
+    assert!(
+        msgs.iter().any(|m| m.contains("modulo operator '%' requires Int operands")),
+        "Expected Float modulo diagnostic, got {:?}",
+        msgs
+    );
+    assert!(
+        msgs.iter().any(|m| m.contains("non-void function 'bad_arith' (returns Int) may exit without returning a value")),
+        "Expected missing return path diagnostic, got {:?}",
+        msgs
+    );
+
+    // 2. Reconciler preserves `explicit_mut` (`let mut`) and `Let.ty` across Ruby, Lua, Perl, C, and Java edits
+    let annotated_rust = r#"
+pub fn compute(x: i64) -> i64 {
+    let mut counter: i64 = x + 1;
+    return counter;
+}
+
+pub fn main() {
+    println!("{}", compute(41));
+}
+"#;
+    let mut eng = StarEngine::from_source(SpokeId::Rust, annotated_rust).unwrap();
+    assert!(eng.project(SpokeId::Rust).contains("let mut counter: i64 = x + 1;"));
+
+    for spoke in [SpokeId::Ruby, SpokeId::Lua, SpokeId::Perl] {
+        let code = eng.project(spoke);
+        let snap = eng.apply_edit(spoke, &code).unwrap();
+        assert!(
+            snap.views["rust"].contains("let mut counter: i64 = x + 1;"),
+            "Editing {:?} dropped `let mut` or `: i64` annotation in Rust:\n{}",
+            spoke,
+            snap.views["rust"]
+        );
+    }
+
+    // 3. Refactor `rename_symbol` rejects local variable name collisions in the same function
+    let err = eng
+        .rename_symbol("var:compute::counter", "x")
+        .expect_err("Expected renaming `counter` to existing param `x` to fail");
+    assert!(
+        err.contains("already exists in function 'compute'"),
+        "Unexpected error: {}",
+        err
+    );
+
+    // 4. WebAssembly backend compiles & executes lexicographical string ordering (`<`, `<=`, `>`, `>=`)
+    let str_order_rust = r#"
+pub fn compare_words(a: &str, b: &str) -> i64 {
+    let mut score = 0;
+    if a < b {
+        score += 1;
+    }
+    if a <= b {
+        score += 10;
+    }
+    if b > a {
+        score += 100;
+    }
+    if b >= a {
+        score += 1000;
+    }
+    return score;
+}
+
+pub fn main() {
+    println!("{}", compare_words("alpha", "beta"));
+}
+
+#[test]
+fn test_lex_order() {
+    assert_eq!(compare_words("alpha", "beta"), 1111);
+    assert_eq!(compare_words("beta", "alpha"), 0);
+    assert_eq!(compare_words("same", "same"), 1010);
+}
+"#;
+    let str_eng = StarEngine::from_source(SpokeId::Rust, str_order_rust).unwrap();
+    assert!(
+        starlang::typecheck::check_module(str_eng.hub()).is_empty(),
+        "Unexpected typecheck errors on string ordering"
+    );
+    let vm_rep = starlang::eval::eval_module(str_eng.hub(), 100_000);
+    assert!(vm_rep.ok);
+    assert_eq!(vm_rep.stdout.trim(), "1111");
+
+    let wasm_rep = starlang::wasm::run_wasm_jit(str_eng.hub());
+    assert!(
+        wasm_rep.ok,
+        "Wasm JIT failed on string ordering: {:?}",
+        wasm_rep.error
+    );
+    assert_eq!(wasm_rep.stdout.trim(), "1111");
+    assert_eq!(wasm_rep.tests_passed, 1);
+}

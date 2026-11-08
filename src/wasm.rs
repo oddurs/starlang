@@ -453,6 +453,7 @@ struct WasmCompiler<'a> {
     struct_eq_fns: HashMap<String, u32>,
     list_eq_fns: HashMap<Type, u32>,
     list_contains_fns: HashMap<Type, u32>,
+    str_cmp_fn: Option<u32>,
 }
 
 impl<'a> WasmCompiler<'a> {
@@ -538,6 +539,7 @@ impl<'a> WasmCompiler<'a> {
             struct_eq_fns: HashMap::new(),
             list_eq_fns: HashMap::new(),
             list_contains_fns: HashMap::new(),
+            str_cmp_fn: None,
         };
 
         comp.packed_true = comp.intern_str("true");
@@ -863,6 +865,116 @@ impl<'a> WasmCompiler<'a> {
 
         self.defined[def_slot].body = b;
         Ok(idx)
+    }
+
+    fn ensure_str_cmp_fn(&mut self) -> u32 {
+        if let Some(idx) = self.str_cmp_fn {
+            return idx;
+        }
+        let idx = self.next_func_idx();
+        self.str_cmp_fn = Some(idx);
+        // locals: 0=a(i64), 1=b(i64), 2=ptr_a(i32), 3=len_a(i32), 4=ptr_b(i32), 5=len_b(i32), 6=min_len(i32), 7=i(i32), 8=ca(i32), 9=cb(i32)
+        self.defined.push(DefinedFunc {
+            name: "str_cmp".to_string(),
+            export_name: None,
+            sig: FuncSig {
+                params: vec![ValType::I64, ValType::I64],
+                results: vec![ValType::I32],
+            },
+            extra_locals: vec![
+                ValType::I32,
+                ValType::I32,
+                ValType::I32,
+                ValType::I32,
+                ValType::I32,
+                ValType::I32,
+                ValType::I32,
+                ValType::I32,
+            ],
+            body: vec![
+                Instr::LocalGet(0),
+                Instr::LocalGet(1),
+                Instr::I64Eq,
+                Instr::If(BlockType::Void),
+                Instr::I32Const(0),
+                Instr::Return,
+                Instr::End,
+                Instr::LocalGet(0),
+                Instr::I32WrapI64,
+                Instr::LocalSet(2),
+                Instr::LocalGet(0),
+                Instr::I64Const(32),
+                Instr::I64ShrU,
+                Instr::I32WrapI64,
+                Instr::LocalSet(3),
+                Instr::LocalGet(1),
+                Instr::I32WrapI64,
+                Instr::LocalSet(4),
+                Instr::LocalGet(1),
+                Instr::I64Const(32),
+                Instr::I64ShrU,
+                Instr::I32WrapI64,
+                Instr::LocalSet(5),
+                Instr::LocalGet(3),
+                Instr::LocalGet(5),
+                Instr::LocalGet(3),
+                Instr::LocalGet(5),
+                Instr::I32LtS,
+                Instr::Select,
+                Instr::LocalSet(6),
+                Instr::I32Const(0),
+                Instr::LocalSet(7),
+                Instr::Block(BlockType::Void),
+                Instr::Loop(BlockType::Void),
+                Instr::LocalGet(7),
+                Instr::LocalGet(6),
+                Instr::I32GeS,
+                Instr::BrIf(1),
+                Instr::LocalGet(2),
+                Instr::LocalGet(7),
+                Instr::I32Add,
+                Instr::I32Load8U(0),
+                Instr::LocalSet(8),
+                Instr::LocalGet(4),
+                Instr::LocalGet(7),
+                Instr::I32Add,
+                Instr::I32Load8U(0),
+                Instr::LocalSet(9),
+                Instr::LocalGet(8),
+                Instr::LocalGet(9),
+                Instr::I32Ne,
+                Instr::If(BlockType::Void),
+                Instr::I32Const(-1),
+                Instr::I32Const(1),
+                Instr::LocalGet(8),
+                Instr::LocalGet(9),
+                Instr::I32LtS,
+                Instr::Select,
+                Instr::Return,
+                Instr::End,
+                Instr::LocalGet(7),
+                Instr::I32Const(1),
+                Instr::I32Add,
+                Instr::LocalSet(7),
+                Instr::Br(0),
+                Instr::End,
+                Instr::End,
+                Instr::LocalGet(3),
+                Instr::LocalGet(5),
+                Instr::I32Eq,
+                Instr::If(BlockType::Void),
+                Instr::I32Const(0),
+                Instr::Return,
+                Instr::End,
+                Instr::I32Const(-1),
+                Instr::I32Const(1),
+                Instr::LocalGet(3),
+                Instr::LocalGet(5),
+                Instr::I32LtS,
+                Instr::Select,
+            ],
+        });
+        idx
     }
 
     fn emit_val_eq_instrs(&mut self, ty: &Type, out: &mut Vec<Instr>) -> Result<(), String> {
@@ -2337,21 +2449,45 @@ impl<'a> WasmCompiler<'a> {
                     BinOp::Lt => match operand_ty {
                         Type::Int => ctx.body.push(Instr::I64LtS),
                         Type::Float => ctx.body.push(Instr::F64Lt),
+                        Type::Str => {
+                            let fidx = self.ensure_str_cmp_fn();
+                            ctx.body.push(Instr::Call(fidx));
+                            ctx.body.push(Instr::I32Const(0));
+                            ctx.body.push(Instr::I32LtS);
+                        }
                         _ => return Err(format!("unsupported '<' on {:?}", operand_ty)),
                     },
                     BinOp::Le => match operand_ty {
                         Type::Int => ctx.body.push(Instr::I64LeS),
                         Type::Float => ctx.body.push(Instr::F64Le),
+                        Type::Str => {
+                            let fidx = self.ensure_str_cmp_fn();
+                            ctx.body.push(Instr::Call(fidx));
+                            ctx.body.push(Instr::I32Const(0));
+                            ctx.body.push(Instr::I32LeS);
+                        }
                         _ => return Err(format!("unsupported '<=' on {:?}", operand_ty)),
                     },
                     BinOp::Gt => match operand_ty {
                         Type::Int => ctx.body.push(Instr::I64GtS),
                         Type::Float => ctx.body.push(Instr::F64Gt),
+                        Type::Str => {
+                            let fidx = self.ensure_str_cmp_fn();
+                            ctx.body.push(Instr::Call(fidx));
+                            ctx.body.push(Instr::I32Const(0));
+                            ctx.body.push(Instr::I32GtS);
+                        }
                         _ => return Err(format!("unsupported '>' on {:?}", operand_ty)),
                     },
                     BinOp::Ge => match operand_ty {
                         Type::Int => ctx.body.push(Instr::I64GeS),
                         Type::Float => ctx.body.push(Instr::F64Ge),
+                        Type::Str => {
+                            let fidx = self.ensure_str_cmp_fn();
+                            ctx.body.push(Instr::Call(fidx));
+                            ctx.body.push(Instr::I32Const(0));
+                            ctx.body.push(Instr::I32GeS);
+                        }
                         _ => return Err(format!("unsupported '>=' on {:?}", operand_ty)),
                     },
                     BinOp::And | BinOp::Or => unreachable!(),
@@ -2804,7 +2940,7 @@ impl FnCodegen {
 
     fn collect_list_hints(&mut self, stmts: &[Stmt], hub: &HubModule) {
         let mut tmp_env = self.flat_type_env();
-        collect_hints_rec(stmts, hub, &mut tmp_env, &mut self.list_hints);
+        collect_hints_rec(stmts, &self.ret_ty, hub, &mut tmp_env, &mut self.list_hints);
     }
 }
 
@@ -2835,6 +2971,7 @@ fn infer_hub_expr_type(expr: &Expr, env: &HashMap<String, Type>, hub: &HubModule
 
 fn collect_hints_rec(
     stmts: &[Stmt],
+    ret_ty: &Type,
     hub: &HubModule,
     env: &mut HashMap<String, Type>,
     hints: &mut HashMap<String, Type>,
@@ -2864,23 +3001,47 @@ fn collect_hints_rec(
                     }
                 }
             }
+            Stmt::Return {
+                value: Some(Expr::Var(v)),
+                ..
+            } => {
+                if let Type::List(_) = ret_ty {
+                    hints.entry(v.clone()).or_insert_with(|| ret_ty.clone());
+                }
+            }
             Stmt::If {
                 then_body,
                 else_body,
                 ..
             } => {
-                collect_hints_rec(then_body, hub, env, hints);
-                collect_hints_rec(else_body, hub, env, hints);
+                let mut then_env = env.clone();
+                collect_hints_rec(then_body, ret_ty, hub, &mut then_env, hints);
+                let mut else_env = env.clone();
+                collect_hints_rec(else_body, ret_ty, hub, &mut else_env, hints);
             }
             Stmt::Match { arms, .. } => {
                 for a in arms {
-                    collect_hints_rec(&a.body, hub, env, hints);
+                    let mut arm_env = env.clone();
+                    collect_hints_rec(&a.body, ret_ty, hub, &mut arm_env, hints);
                 }
             }
-            Stmt::While { body, .. }
-            | Stmt::ForRange { body, .. }
-            | Stmt::ForEach { body, .. } => {
-                collect_hints_rec(body, hub, env, hints);
+            Stmt::While { body, .. } => {
+                let mut body_env = env.clone();
+                collect_hints_rec(body, ret_ty, hub, &mut body_env, hints);
+            }
+            Stmt::ForRange { var, body, .. } => {
+                let mut body_env = env.clone();
+                body_env.insert(var.clone(), Type::Int);
+                collect_hints_rec(body, ret_ty, hub, &mut body_env, hints);
+            }
+            Stmt::ForEach {
+                var, iter, body, ..
+            } => {
+                let mut body_env = env.clone();
+                if let Some(Type::List(elem)) = infer_hub_expr_type(iter, env, hub) {
+                    body_env.insert(var.clone(), *elem);
+                }
+                collect_hints_rec(body, ret_ty, hub, &mut body_env, hints);
             }
             _ => {}
         }

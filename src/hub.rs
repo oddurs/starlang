@@ -613,13 +613,65 @@ fn collect_mutated_vars(stmts: &[Stmt], out: &mut HashSet<String>) {
 }
 
 fn collect_mutated_in_expr(expr: &Expr, out: &mut HashSet<String>) {
-    if let Expr::Intrinsic(intr) = expr {
-        if let Intrinsic::Push { list, value } = intr.as_ref() {
-            if let Expr::Var(v) = list {
-                out.insert(v.clone());
+    match expr {
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Push { list, value } => {
+                if let Expr::Var(v) = list {
+                    out.insert(v.clone());
+                }
+                collect_mutated_in_expr(list, out);
+                collect_mutated_in_expr(value, out);
             }
-            collect_mutated_in_expr(value, out);
+            Intrinsic::Len(e)
+            | Intrinsic::Abs(e)
+            | Intrinsic::Upper(e)
+            | Intrinsic::Lower(e)
+            | Intrinsic::ToStr(e) => collect_mutated_in_expr(e, out),
+            Intrinsic::Min(a, b) | Intrinsic::Max(a, b) => {
+                collect_mutated_in_expr(a, out);
+                collect_mutated_in_expr(b, out);
+            }
+            Intrinsic::Print(args) => {
+                for a in args {
+                    collect_mutated_in_expr(a, out);
+                }
+            }
+            Intrinsic::Contains { haystack, needle } => {
+                collect_mutated_in_expr(haystack, out);
+                collect_mutated_in_expr(needle, out);
+            }
+        },
+        Expr::List(items) => {
+            for it in items {
+                collect_mutated_in_expr(it, out);
+            }
         }
+        Expr::StructInit { fields, .. } => {
+            for (_, v) in fields {
+                collect_mutated_in_expr(v, out);
+            }
+        }
+        Expr::FieldAccess { base, .. } => collect_mutated_in_expr(base, out),
+        Expr::Index { base, index } => {
+            collect_mutated_in_expr(base, out);
+            collect_mutated_in_expr(index, out);
+        }
+        Expr::Unary { expr: inner, .. } => collect_mutated_in_expr(inner, out),
+        Expr::Binary { left, right, .. } => {
+            collect_mutated_in_expr(left, out);
+            collect_mutated_in_expr(right, out);
+        }
+        Expr::Call { args, .. } => {
+            for a in args {
+                collect_mutated_in_expr(a, out);
+            }
+        }
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Bool(_)
+        | Expr::Str(_)
+        | Expr::Var(_)
+        | Expr::EnumVariant { .. } => {}
     }
 }
 
@@ -990,6 +1042,12 @@ fn normalize_expr(
                 let rt = infer_expr_type(right, env, fn_ret_types, struct_fields, enum_names);
                 if lt == Some(Type::Int) && rt == Some(Type::Int) {
                     *op = BinOp::IntDiv;
+                }
+            } else if *op == BinOp::IntDiv {
+                let lt = infer_expr_type(left, env, fn_ret_types, struct_fields, enum_names);
+                let rt = infer_expr_type(right, env, fn_ret_types, struct_fields, enum_names);
+                if lt == Some(Type::Float) && rt == Some(Type::Float) {
+                    *op = BinOp::Div;
                 }
             }
         }

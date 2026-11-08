@@ -664,7 +664,7 @@ impl<'a, 'b> HubVm<'a, 'b> {
             Expr::Unary { op, expr: inner } => {
                 let v = self.eval_expr(inner, scopes)?;
                 match (op, v) {
-                    (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
+                    (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(n.wrapping_neg())),
                     (UnaryOp::Neg, Value::Float(n)) => Ok(Value::Float(-n)),
                     (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
                     _ => Err("invalid operand for unary operator".to_string()),
@@ -736,7 +736,7 @@ impl<'a, 'b> HubVm<'a, 'b> {
                 }
             }
             Intrinsic::Abs(a) => match self.eval_expr(a, scopes)? {
-                Value::Int(x) => Ok(Value::Int(x.abs())),
+                Value::Int(x) => Ok(Value::Int(x.wrapping_abs())),
                 Value::Float(x) => Ok(Value::Float(x.abs())),
                 _ => Err("abs() expects Int or Float".to_string()),
             },
@@ -850,7 +850,7 @@ fn eval_binop(op: BinOp, l: Value, r: Value) -> Result<Value, String> {
             if b == 0 {
                 Err("integer division by zero".to_string())
             } else {
-                Ok(Value::Int(a / b))
+                Ok(Value::Int(a.wrapping_div(b)))
             }
         }
         (BinOp::Div | BinOp::IntDiv, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
@@ -858,7 +858,7 @@ fn eval_binop(op: BinOp, l: Value, r: Value) -> Result<Value, String> {
             if b == 0 {
                 Err("modulo by zero".to_string())
             } else {
-                Ok(Value::Int(a % b))
+                Ok(Value::Int(a.wrapping_rem(b)))
             }
         }
         (BinOp::Eq, a, b) => Ok(Value::Bool(a == b)),

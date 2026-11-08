@@ -322,9 +322,28 @@ pub fn rename_symbol(
                 }
             }
         }
-        RenameTarget::LocalVar { var, .. } => {
-            if var == new_name {
-                return Ok((hub.clone(), 0));
+        RenameTarget::LocalVar { fn_name, var } => {
+            if let Some(f) = hub.find_fn(fn_name) {
+                let mut locals = BTreeSet::new();
+                for p in &f.params {
+                    locals.insert(p.name.clone());
+                }
+                collect_declared_locals(&f.body, &mut locals);
+                if !locals.contains(var) {
+                    return Err(format!(
+                        "function '{}' has no local variable '{}'",
+                        fn_name, var
+                    ));
+                }
+                if var == new_name {
+                    return Ok((hub.clone(), 0));
+                }
+                if locals.contains(new_name) {
+                    return Err(format!(
+                        "local variable '{}' already exists in function '{}'",
+                        new_name, fn_name
+                    ));
+                }
             }
         }
     }
@@ -1218,7 +1237,9 @@ fn opt_expr(expr: &mut Expr, rewrites: &mut usize) {
                     (Some(x), Some(y)) => Some(canonical_int_expr(x.max(y))),
                     _ => None,
                 },
-                Intrinsic::Abs(a) => const_int(a).map(|x| canonical_int_expr(x.abs())),
+                Intrinsic::Abs(a) => const_int(a)
+                    .and_then(|x| x.checked_abs())
+                    .map(canonical_int_expr),
                 Intrinsic::Upper(Expr::Str(s)) => Some(Expr::Str(s.to_uppercase())),
                 Intrinsic::Lower(Expr::Str(s)) => Some(Expr::Str(s.to_lowercase())),
                 Intrinsic::ToStr(e) => match const_int(e) {

@@ -61,7 +61,16 @@ impl HubChecker {
                     }
                     let mut fmap = HashMap::new();
                     for fl in &s.fields {
-                        fmap.insert(fl.name.clone(), fl.ty.clone());
+                        if fmap.insert(fl.name.clone(), fl.ty.clone()).is_some() {
+                            diags.push(SemanticDiagnostic {
+                                node_id: fl.id,
+                                context: format!("struct {}", s.name),
+                                message: format!(
+                                    "duplicate field '{}' in struct '{}'",
+                                    fl.name, s.name
+                                ),
+                            });
+                        }
                     }
                     structs.insert(s.name.clone(), fmap);
                 }
@@ -73,7 +82,19 @@ impl HubChecker {
                             message: format!("duplicate type definition '{}'", e.name),
                         });
                     }
-                    let vset: HashSet<String> = e.variants.iter().cloned().collect();
+                    let mut vset = HashSet::new();
+                    for v in &e.variants {
+                        if !vset.insert(v.clone()) {
+                            diags.push(SemanticDiagnostic {
+                                node_id: e.id,
+                                context: format!("enum {}", e.name),
+                                message: format!(
+                                    "duplicate variant '{}' in enum '{}'",
+                                    v, e.name
+                                ),
+                            });
+                        }
+                    }
                     enums.insert(e.name.clone(), vset);
                 }
                 Item::Function(f) => {
@@ -153,10 +174,73 @@ impl HubChecker {
         let mut env: HashMap<String, Type> = HashMap::new();
         for p in &f.params {
             self.validate_type_exists(&p.ty, p.id, &ctx);
-            env.insert(p.name.clone(), p.ty.clone());
+            if env.insert(p.name.clone(), p.ty.clone()).is_some() {
+                self.diags.push(SemanticDiagnostic {
+                    node_id: p.id,
+                    context: ctx.clone(),
+                    message: format!(
+                        "duplicate parameter '{}' in function '{}'",
+                        p.name, f.name
+                    ),
+                });
+            }
         }
         self.validate_type_exists(&f.ret_ty, f.id, &ctx);
         self.check_block(&f.body, &mut env, &f.ret_ty, false, &ctx);
+        if f.ret_ty != Type::Void && !self.block_guarantees_return(&f.body) {
+            self.diags.push(SemanticDiagnostic {
+                node_id: f.id,
+                context: ctx,
+                message: format!(
+                    "non-void function '{}' (returns {}) may exit without returning a value",
+                    f.name,
+                    f.ret_ty.display()
+                ),
+            });
+        }
+    }
+
+    fn block_guarantees_return(&self, stmts: &[Stmt]) -> bool {
+        stmts.iter().any(|stmt| match stmt {
+            Stmt::Return { .. } => true,
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                !else_body.is_empty()
+                    && self.block_guarantees_return(then_body)
+                    && self.block_guarantees_return(else_body)
+            }
+            Stmt::Match { arms, .. } => {
+                !arms.is_empty()
+                    && arms.iter().all(|a| self.block_guarantees_return(&a.body))
+                    && self.match_is_exhaustive(arms)
+            }
+            _ => false,
+        })
+    }
+
+    fn match_is_exhaustive(&self, arms: &[crate::hub::MatchArm]) -> bool {
+        if arms.iter().any(|a| matches!(a.pat, MatchPat::Wildcard)) {
+            return true;
+        }
+        let mut enum_target: Option<&str> = None;
+        let mut covered = HashSet::new();
+        for a in arms {
+            if let MatchPat::EnumVariant { enum_name, variant } = &a.pat {
+                enum_target = Some(enum_name.as_str());
+                covered.insert(variant.as_str());
+            } else {
+                return false;
+            }
+        }
+        if let Some(en) = enum_target {
+            if let Some(all_vars) = self.enums.get(en) {
+                return all_vars.iter().all(|v| covered.contains(v.as_str()));
+            }
+        }
+        false
     }
 
     fn check_test(&mut self, t: &TestDecl) {
@@ -842,16 +926,14 @@ impl HubChecker {
                         }
                         lt.or(rt)
                     }
-                    BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::IntDiv | BinOp::Mod => {
+                    BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::IntDiv => {
                         if let (Some(l), Some(r)) = (&lt, &rt) {
-                            if !matches!(l, Type::Int | Type::Float)
-                                || !matches!(r, Type::Int | Type::Float)
-                            {
+                            if l != r || !matches!(l, Type::Int | Type::Float) {
                                 self.diags.push(SemanticDiagnostic {
                                     node_id,
                                     context: ctx.to_string(),
                                     message: format!(
-                                        "arithmetic operator requires numbers, found {} and {}",
+                                        "arithmetic operator requires matching numeric types, found {} and {}",
                                         l.display(),
                                         r.display()
                                     ),
@@ -860,11 +942,27 @@ impl HubChecker {
                         }
                         if *op == BinOp::Div {
                             Some(Type::Float)
-                        } else if *op == BinOp::IntDiv || *op == BinOp::Mod {
+                        } else if *op == BinOp::IntDiv {
                             Some(Type::Int)
                         } else {
                             lt.or(rt)
                         }
+                    }
+                    BinOp::Mod => {
+                        if let (Some(l), Some(r)) = (&lt, &rt) {
+                            if *l != Type::Int || *r != Type::Int {
+                                self.diags.push(SemanticDiagnostic {
+                                    node_id,
+                                    context: ctx.to_string(),
+                                    message: format!(
+                                        "modulo operator '%' requires Int operands, found {} and {}",
+                                        l.display(),
+                                        r.display()
+                                    ),
+                                });
+                            }
+                        }
+                        Some(Type::Int)
                     }
                 }
             }
