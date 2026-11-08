@@ -3603,5 +3603,209 @@ def test_banner() -> None:
             r.stderr
         );
     }
+
+    // 10. Pass 14: Trace zero-ID statement numbering & recursive hotspot step accounting,
+    //     Complexity transitive callee loop depth, Polyhedral affine array map vs recurrence &
+    //     flipped/conjunctive while ranking proofs, and 3-way merge scalar metadata + loop-body logging
+    let trace_rec_star = r#"(fn fib ((param n Int)) -> Int
+  (if (<= n 1)
+    (then (return n))
+    (else (return (+ (call fib (- n 1)) (call fib (- n 2)))))))
+(fn main () -> Void
+  (let r (call fib 4))
+  (if (== r 999)
+    (then (print "dead")))
+  (print r))
+"#;
+    let mut tr_hub = StarEngine::from_source(SpokeId::Star, trace_rec_star)
+        .unwrap()
+        .hub()
+        .clone();
+    // Zero out all statement NodeIds to simulate freshly constructed ASTs
+    for item in &mut tr_hub.items {
+        if let starlang::hub::Item::Function(f) = item {
+            for stmt in &mut f.body {
+                match stmt {
+                    starlang::hub::Stmt::Let { id, .. }
+                    | starlang::hub::Stmt::Expr { id, .. } => *id = 0,
+                    starlang::hub::Stmt::If {
+                        id,
+                        then_body,
+                        else_body,
+                        ..
+                    } => {
+                        *id = 0;
+                        for s in then_body {
+                            if let starlang::hub::Stmt::Return { id: rid, .. }
+                            | starlang::hub::Stmt::Expr { id: rid, .. } = s
+                            {
+                                *rid = 0;
+                            }
+                        }
+                        for s in else_body {
+                            if let starlang::hub::Stmt::Return { id: rid, .. }
+                            | starlang::hub::Stmt::Expr { id: rid, .. } = s
+                            {
+                                *rid = 0;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let tr_rep = starlang::trace::trace_module_default(&tr_hub);
+    assert!(tr_rep.ok);
+    assert_eq!(
+        tr_rep.uncovered.len(),
+        1,
+        "Expected dead `print \"dead\"` with id=0 to remain uncovered, got: {:?}",
+        tr_rep.uncovered
+    );
+    let fib_hot = tr_rep.hotspots.iter().find(|h| h.name == "fib").unwrap();
+    let main_hot = tr_rep.hotspots.iter().find(|h| h.name == "main").unwrap();
+    assert!(
+        fib_hot.total_steps <= main_hot.total_steps,
+        "Recursive fib total_steps ({}) must not exceed caller main total_steps ({}) via recursive double-counting",
+        fib_hot.total_steps,
+        main_hot.total_steps
+    );
+
+    // Complexity analyzer: composed transitive callee loop depth
+    let comp_star = r#"(fn inner_linear ((param xs (List Int))) -> Int
+  (let-mut s 0)
+  (for-each x xs
+    (add! s x))
+  (return s))
+(fn outer_quad ((param xs (List Int))) -> Int
+  (let-mut total 0)
+  (for-each x xs
+    (add! total (+ x (call inner_linear xs))))
+  (return total))
+(fn main () -> Void
+  (print (call outer_quad (list 1 2 3))))
+"#;
+    let comp_eng = StarEngine::from_source(SpokeId::Star, comp_star).unwrap();
+    let comp_rep = comp_eng.complexity();
+    let outer_fc = comp_rep
+        .functions
+        .iter()
+        .find(|f| f.name == "outer_quad")
+        .unwrap();
+    assert_eq!(
+        outer_fc.max_loop_depth, 2,
+        "Expected outer_quad calling inner_linear inside loop to have composed loop depth 2"
+    );
+    assert_eq!(outer_fc.static_big_o, "O(N^2)");
+    assert_eq!(outer_fc.empirical_big_o, "O(N^2)");
+
+    // Polyhedral & Termination/WCET: affine array ParallelMap vs recurrence, flipped/conjunctive while ranking, and static-trip outer loop wrapping parametric inner loop
+    let poly_star = r#"(fn affine_map_and_recurrence ((param xs (List Int)) (param n Int) (param active Bool)) -> Int
+  (let-mut out (list 0 0 0 0))
+  (for-range i 0 n
+    (set! (index out i) (* (index xs i) 2)))
+  (let-mut dp (list 0 0 0 0))
+  (for-range j 1 n
+    (set! (index dp j) (+ (index dp (- j 1)) (index xs j))))
+  (let-mut k 0)
+  (while (and (> n k) active)
+    (add! k 1))
+  (let-mut acc 0)
+  (for-range pass 0 4
+    (for-each x xs
+      (add! acc (+ x pass))))
+  (return (+ (+ (index out 0) (index dp 0)) (+ k acc))))
+"#;
+    let poly_eng = StarEngine::from_source(SpokeId::Star, poly_star).unwrap();
+    let poly_rep = poly_eng.polyhedral();
+    let i_loop = poly_rep
+        .loops
+        .iter()
+        .find(|l| l.induction_var == "i")
+        .unwrap();
+    assert!(
+        i_loop.simd_vectorizable && i_loop.classification == "ParallelMap",
+        "Expected disjoint affine indexed write `out[i] = xs[i] * 2` to be SIMD-vectorizable ParallelMap, got: {:?}",
+        i_loop
+    );
+    let j_loop = poly_rep
+        .loops
+        .iter()
+        .find(|l| l.induction_var == "j")
+        .unwrap();
+    assert!(
+        !j_loop.simd_vectorizable && j_loop.classification == "SequentialStateMachine",
+        "Expected recurrence `dp[j] = dp[j - 1] + xs[j]` to block SIMD, got: {:?}",
+        j_loop
+    );
+    let wcet_rep = poly_eng.termination_wcet();
+    assert!(
+        wcet_rep.all_terminating,
+        "Expected all loops including `while (n > k && active)` to be proven terminating: {:?}",
+        wcet_rep.functions[0].loop_proofs
+    );
+    assert!(
+        wcet_rep.functions[0].wcet_symbolic.contains("·N"),
+        "Expected parametric ·N term in WCET formula, got: {}",
+        wcet_rep.functions[0].wcet_symbolic
+    );
+
+    // 3-Way Merge: orthogonal metadata edit vs core Let value edit + granular while-body change log
+    let merge_base_star = r#"(fn step_loop ((param n Int)) -> Int
+  (let-mut acc 1)
+  (let-mut i 0)
+  (while (< i n)
+    (add! acc 1)
+    (add! i 1))
+  (return acc))
+"#;
+    let merge_left_star = r#"(fn step_loop ((param n Int)) -> Int
+  (let-mut acc 1)
+  (let-mut i 0)
+  (while (< i n)
+    (add! acc 2)
+    (add! i 1))
+  (return acc))
+"#;
+    let merge_right_star = r#"(fn step_loop ((param n Int)) -> Int
+  (let-mut acc 10)
+  (let-mut i 0)
+  (while (< i n)
+    (add! acc 1)
+    (add! i 1))
+  (return acc))
+"#;
+    let merge_base_eng = StarEngine::from_source(SpokeId::Star, merge_base_star).unwrap();
+    let mut merge_left_hub = StarEngine::from_source(SpokeId::Star, merge_left_star)
+        .unwrap()
+        .hub()
+        .clone();
+    if let starlang::hub::Item::Function(f) = &mut merge_left_hub.items[0] {
+        if let starlang::hub::Stmt::Let { meta, .. } = &mut f.body[0] {
+            meta.insert("role".to_string(), "accumulator".to_string());
+        }
+    }
+    let merge_right_eng = StarEngine::from_source(SpokeId::Star, merge_right_star).unwrap();
+    let m_res = starlang::merge::merge_hub_modules(
+        merge_base_eng.hub(),
+        SpokeId::Star,
+        &merge_left_hub,
+        SpokeId::Star,
+        merge_right_eng.hub(),
+    );
+    assert!(
+        m_res.clean && m_res.conflicts.is_empty(),
+        "Expected orthogonal metadata + value edit on `let-mut acc` to merge cleanly, conflicts: {:?}",
+        m_res.conflicts
+    );
+    assert!(
+        m_res
+            .applied_changes
+            .iter()
+            .any(|c| c.scope.contains("[while]") && c.summary.contains("acc += 2")),
+        "Expected granular `[while]` change log for one-sided while-body edit, got: {:?}",
+        m_res.applied_changes
+    );
 }
 

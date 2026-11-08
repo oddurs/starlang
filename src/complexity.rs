@@ -453,6 +453,7 @@ fn analyze_single_fn(
         &f.body,
         &f.name,
         0,
+        hub,
         call_graph,
         &mut decision_points,
         &mut max_loop_depth,
@@ -503,6 +504,7 @@ fn walk_stmts_metrics(
     stmts: &[Stmt],
     fn_name: &str,
     cur_loop_depth: usize,
+    hub: &HubModule,
     call_graph: &HashMap<String, HashSet<String>>,
     decision_points: &mut usize,
     max_loop_depth: &mut usize,
@@ -518,6 +520,7 @@ fn walk_stmts_metrics(
                     value,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -531,6 +534,7 @@ fn walk_stmts_metrics(
                         index,
                         fn_name,
                         cur_loop_depth,
+                        hub,
                         call_graph,
                         decision_points,
                         max_loop_depth,
@@ -542,6 +546,7 @@ fn walk_stmts_metrics(
                     value,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -560,6 +565,7 @@ fn walk_stmts_metrics(
                     cond,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -570,6 +576,7 @@ fn walk_stmts_metrics(
                     then_body,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -580,6 +587,7 @@ fn walk_stmts_metrics(
                     else_body,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -593,6 +601,7 @@ fn walk_stmts_metrics(
                     expr,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -604,6 +613,7 @@ fn walk_stmts_metrics(
                         &a.body,
                         fn_name,
                         cur_loop_depth,
+                        hub,
                         call_graph,
                         decision_points,
                         max_loop_depth,
@@ -618,6 +628,7 @@ fn walk_stmts_metrics(
                     cond,
                     fn_name,
                     cur_loop_depth + 1,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -628,6 +639,7 @@ fn walk_stmts_metrics(
                     body,
                     fn_name,
                     cur_loop_depth + 1,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -641,6 +653,7 @@ fn walk_stmts_metrics(
                     iter,
                     fn_name,
                     cur_loop_depth + 1,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -651,6 +664,7 @@ fn walk_stmts_metrics(
                     body,
                     fn_name,
                     cur_loop_depth + 1,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -666,6 +680,7 @@ fn walk_stmts_metrics(
                     start,
                     fn_name,
                     cur_loop_depth + 1,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -676,6 +691,7 @@ fn walk_stmts_metrics(
                     end,
                     fn_name,
                     cur_loop_depth + 1,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -686,6 +702,7 @@ fn walk_stmts_metrics(
                     body,
                     fn_name,
                     cur_loop_depth + 1,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -698,6 +715,7 @@ fn walk_stmts_metrics(
                     v,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -711,6 +729,7 @@ fn walk_stmts_metrics(
                     left,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -721,6 +740,7 @@ fn walk_stmts_metrics(
                     right,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -737,6 +757,7 @@ fn walk_expr_metrics(
     e: &Expr,
     fn_name: &str,
     cur_loop_depth: usize,
+    hub: &HubModule,
     call_graph: &HashMap<String, HashSet<String>>,
     decision_points: &mut usize,
     max_loop_depth: &mut usize,
@@ -751,6 +772,7 @@ fn walk_expr_metrics(
                     item,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -766,6 +788,7 @@ fn walk_expr_metrics(
                     v,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -779,6 +802,7 @@ fn walk_expr_metrics(
                 base,
                 fn_name,
                 cur_loop_depth,
+                hub,
                 call_graph,
                 decision_points,
                 max_loop_depth,
@@ -791,6 +815,7 @@ fn walk_expr_metrics(
                 base,
                 fn_name,
                 cur_loop_depth,
+                hub,
                 call_graph,
                 decision_points,
                 max_loop_depth,
@@ -801,6 +826,7 @@ fn walk_expr_metrics(
                 index,
                 fn_name,
                 cur_loop_depth,
+                hub,
                 call_graph,
                 decision_points,
                 max_loop_depth,
@@ -816,6 +842,7 @@ fn walk_expr_metrics(
                 left,
                 fn_name,
                 cur_loop_depth,
+                hub,
                 call_graph,
                 decision_points,
                 max_loop_depth,
@@ -826,6 +853,7 @@ fn walk_expr_metrics(
                 right,
                 fn_name,
                 cur_loop_depth,
+                hub,
                 call_graph,
                 decision_points,
                 max_loop_depth,
@@ -836,14 +864,22 @@ fn walk_expr_metrics(
         Expr::Call { func, args } => {
             if func == fn_name {
                 *direct_self_calls += 1;
+            } else if cur_loop_depth > 0 {
+                // If callee itself has loops, account for composed loop depth
+                let mut visited = HashSet::new();
+                visited.insert(fn_name.to_string());
+                let callee_depth = callee_transitive_loop_depth(func, hub, &mut visited);
+                if callee_depth > 0 {
+                    *max_loop_depth = (*max_loop_depth).max(cur_loop_depth + callee_depth);
+                }
             }
-            // If callee itself has loops, account for composed loop depth
             let _ = call_graph;
             for a in args {
                 walk_expr_metrics(
                     a,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -859,6 +895,7 @@ fn walk_expr_metrics(
                     list,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -869,6 +906,7 @@ fn walk_expr_metrics(
                     value,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -883,6 +921,7 @@ fn walk_expr_metrics(
                     haystack,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -893,6 +932,7 @@ fn walk_expr_metrics(
                     needle,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -906,6 +946,7 @@ fn walk_expr_metrics(
                     a,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -918,6 +959,7 @@ fn walk_expr_metrics(
                     a,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -930,6 +972,7 @@ fn walk_expr_metrics(
                     a,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -940,6 +983,7 @@ fn walk_expr_metrics(
                     b,
                     fn_name,
                     cur_loop_depth,
+                    hub,
                     call_graph,
                     decision_points,
                     max_loop_depth,
@@ -953,12 +997,158 @@ fn walk_expr_metrics(
                         a,
                         fn_name,
                         cur_loop_depth,
+                        hub,
                         call_graph,
                         decision_points,
                         max_loop_depth,
                         heap_alloc_sites,
                         direct_self_calls,
                     );
+                }
+            }
+        },
+        _ => {}
+    }
+}
+
+fn callee_transitive_loop_depth(
+    fn_name: &str,
+    hub: &HubModule,
+    visited: &mut HashSet<String>,
+) -> usize {
+    if !visited.insert(fn_name.to_string()) {
+        return 0;
+    }
+    let Some(f) = hub.find_fn(fn_name) else {
+        return 0;
+    };
+    let mut max_d = 0usize;
+    walk_callee_stmts_loop_depth(&f.body, 0, hub, visited, &mut max_d);
+    visited.remove(fn_name);
+    max_d
+}
+
+fn walk_callee_stmts_loop_depth(
+    stmts: &[Stmt],
+    cur_depth: usize,
+    hub: &HubModule,
+    visited: &mut HashSet<String>,
+    max_d: &mut usize,
+) {
+    *max_d = (*max_d).max(cur_depth);
+    for s in stmts {
+        match s {
+            Stmt::Let { value, .. } => {
+                walk_callee_expr_loop_depth(value, cur_depth, hub, visited, max_d);
+            }
+            Stmt::Assign { target, value, .. } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    walk_callee_expr_loop_depth(index, cur_depth, hub, visited, max_d);
+                }
+                walk_callee_expr_loop_depth(value, cur_depth, hub, visited, max_d);
+            }
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+                ..
+            } => {
+                walk_callee_expr_loop_depth(cond, cur_depth, hub, visited, max_d);
+                walk_callee_stmts_loop_depth(then_body, cur_depth, hub, visited, max_d);
+                walk_callee_stmts_loop_depth(else_body, cur_depth, hub, visited, max_d);
+            }
+            Stmt::Match { expr, arms, .. } => {
+                walk_callee_expr_loop_depth(expr, cur_depth, hub, visited, max_d);
+                for arm in arms {
+                    walk_callee_stmts_loop_depth(&arm.body, cur_depth, hub, visited, max_d);
+                }
+            }
+            Stmt::While { cond, body, .. } => {
+                walk_callee_expr_loop_depth(cond, cur_depth + 1, hub, visited, max_d);
+                walk_callee_stmts_loop_depth(body, cur_depth + 1, hub, visited, max_d);
+            }
+            Stmt::ForEach { iter, body, .. } => {
+                walk_callee_expr_loop_depth(iter, cur_depth + 1, hub, visited, max_d);
+                walk_callee_stmts_loop_depth(body, cur_depth + 1, hub, visited, max_d);
+            }
+            Stmt::ForRange {
+                start, end, body, ..
+            } => {
+                walk_callee_expr_loop_depth(start, cur_depth + 1, hub, visited, max_d);
+                walk_callee_expr_loop_depth(end, cur_depth + 1, hub, visited, max_d);
+                walk_callee_stmts_loop_depth(body, cur_depth + 1, hub, visited, max_d);
+            }
+            Stmt::Return { value: Some(v), .. }
+            | Stmt::Assert { cond: v, .. }
+            | Stmt::Expr { expr: v, .. } => {
+                walk_callee_expr_loop_depth(v, cur_depth, hub, visited, max_d);
+            }
+            Stmt::AssertEq { left, right, .. } => {
+                walk_callee_expr_loop_depth(left, cur_depth, hub, visited, max_d);
+                walk_callee_expr_loop_depth(right, cur_depth, hub, visited, max_d);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn walk_callee_expr_loop_depth(
+    e: &Expr,
+    cur_depth: usize,
+    hub: &HubModule,
+    visited: &mut HashSet<String>,
+    max_d: &mut usize,
+) {
+    match e {
+        Expr::Call { func, args } => {
+            let sub = callee_transitive_loop_depth(func, hub, visited);
+            if sub > 0 {
+                *max_d = (*max_d).max(cur_depth + sub);
+            }
+            for a in args {
+                walk_callee_expr_loop_depth(a, cur_depth, hub, visited, max_d);
+            }
+        }
+        Expr::List(items) => {
+            for i in items {
+                walk_callee_expr_loop_depth(i, cur_depth, hub, visited, max_d);
+            }
+        }
+        Expr::StructInit { fields, .. } => {
+            for (_, v) in fields {
+                walk_callee_expr_loop_depth(v, cur_depth, hub, visited, max_d);
+            }
+        }
+        Expr::FieldAccess { base, .. } | Expr::Unary { expr: base, .. } => {
+            walk_callee_expr_loop_depth(base, cur_depth, hub, visited, max_d);
+        }
+        Expr::Index { base, index }
+        | Expr::Binary {
+            left: base,
+            right: index,
+            ..
+        } => {
+            walk_callee_expr_loop_depth(base, cur_depth, hub, visited, max_d);
+            walk_callee_expr_loop_depth(index, cur_depth, hub, visited, max_d);
+        }
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Contains { haystack, needle } => {
+                *max_d = (*max_d).max(cur_depth + 1);
+                walk_callee_expr_loop_depth(haystack, cur_depth, hub, visited, max_d);
+                walk_callee_expr_loop_depth(needle, cur_depth, hub, visited, max_d);
+            }
+            Intrinsic::Len(a)
+            | Intrinsic::Abs(a)
+            | Intrinsic::Upper(a)
+            | Intrinsic::Lower(a)
+            | Intrinsic::ToStr(a) => walk_callee_expr_loop_depth(a, cur_depth, hub, visited, max_d),
+            Intrinsic::Min(a, b) | Intrinsic::Max(a, b) | Intrinsic::Push { list: a, value: b } => {
+                walk_callee_expr_loop_depth(a, cur_depth, hub, visited, max_d);
+                walk_callee_expr_loop_depth(b, cur_depth, hub, visited, max_d);
+            }
+            Intrinsic::Print(args) => {
+                for a in args {
+                    walk_callee_expr_loop_depth(a, cur_depth, hub, visited, max_d);
                 }
             }
         },
@@ -1255,8 +1445,12 @@ fn build_call_graph(hub: &HubModule) -> HashMap<String, HashSet<String>> {
 fn collect_callees_stmts(stmts: &[Stmt], out: &mut HashSet<String>) {
     for s in stmts {
         match s {
-            Stmt::Let { value, .. } | Stmt::Assign { value, .. } => {
-                collect_callees_expr(value, out)
+            Stmt::Let { value, .. } => collect_callees_expr(value, out),
+            Stmt::Assign { target, value, .. } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    collect_callees_expr(index, out);
+                }
+                collect_callees_expr(value, out);
             }
             Stmt::If {
                 cond,

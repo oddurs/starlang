@@ -46,8 +46,11 @@ pub fn trace_module_default(hub: &HubModule) -> TraceReport {
 }
 
 pub fn trace_module(hub: &HubModule, max_steps: usize) -> TraceReport {
+    let mut traced_hub = hub.clone();
+    ensure_trace_stmt_ids(&mut traced_hub);
+
     let mut catalog: Vec<(NodeId, String, String)> = Vec::new();
-    for item in &hub.items {
+    for item in &traced_hub.items {
         if let Item::Function(f) = item {
             collect_fn_stmts(&f.body, &f.name, &mut catalog);
         }
@@ -57,10 +60,11 @@ pub fn trace_module(hub: &HubModule, max_steps: usize) -> TraceReport {
         visited: HashSet::new(),
         call_counts: BTreeMap::new(),
         call_steps: BTreeMap::new(),
+        active_depth: BTreeMap::new(),
         call_trace: Vec::new(),
     };
 
-    let run_res = eval_with_observer(hub, max_steps, &mut collector);
+    let run_res = eval_with_observer(&traced_hub, max_steps, &mut collector);
 
     let total_stmts = catalog.len();
     let mut covered_stmts = 0usize;
@@ -111,6 +115,7 @@ struct Collector {
     visited: HashSet<NodeId>,
     call_counts: BTreeMap<String, usize>,
     call_steps: BTreeMap<String, usize>,
+    active_depth: BTreeMap<String, usize>,
     call_trace: Vec<CallTraceEntry>,
 }
 
@@ -121,6 +126,7 @@ impl VmObserver for Collector {
 
     fn on_call_enter(&mut self, depth: usize, name: &str, args: &[Value]) -> Option<usize> {
         *self.call_counts.entry(name.to_string()).or_insert(0) += 1;
+        *self.active_depth.entry(name.to_string()).or_insert(0) += 1;
         if self.call_trace.len() < MAX_RECORDED_CALLS {
             let idx = self.call_trace.len();
             let args_str: Vec<String> = args.iter().map(compact_value).collect();
@@ -138,12 +144,132 @@ impl VmObserver for Collector {
     }
 
     fn on_call_exit(&mut self, slot: Option<usize>, name: &str, ret: &Value, steps_delta: usize) {
-        // Record inclusive step cost for top-level / leaf hotspot ranking
-        *self.call_steps.entry(name.to_string()).or_insert(0) += steps_delta;
+        let active = self.active_depth.entry(name.to_string()).or_insert(1);
+        *active = active.saturating_sub(1);
+        // Record inclusive step cost at outermost call boundary for recursive-safe hotspot ranking
+        if *active == 0 {
+            *self.call_steps.entry(name.to_string()).or_insert(0) += steps_delta;
+        }
         if let Some(idx) = slot {
             if let Some(entry) = self.call_trace.get_mut(idx) {
                 entry.result = compact_value(ret);
                 entry.steps = steps_delta;
+            }
+        }
+    }
+}
+
+fn ensure_trace_stmt_ids(hub: &mut HubModule) {
+    let mut max_id: NodeId = 0;
+    for item in &hub.items {
+        match item {
+            Item::Function(f) => scan_max_stmt_id(&f.body, &mut max_id),
+            Item::Test(t) => scan_max_stmt_id(&t.body, &mut max_id),
+            _ => {}
+        }
+    }
+    let mut next_id = max_id + 1;
+    let mut seen = HashSet::new();
+    for item in &mut hub.items {
+        match item {
+            Item::Function(f) => assign_unique_stmt_ids(&mut f.body, &mut seen, &mut next_id),
+            Item::Test(t) => assign_unique_stmt_ids(&mut t.body, &mut seen, &mut next_id),
+            _ => {}
+        }
+    }
+}
+
+fn scan_max_stmt_id(stmts: &[Stmt], max_id: &mut NodeId) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Comment { id, .. }
+            | Stmt::Let { id, .. }
+            | Stmt::Assign { id, .. }
+            | Stmt::Break { id }
+            | Stmt::Continue { id }
+            | Stmt::Return { id, .. }
+            | Stmt::Assert { id, .. }
+            | Stmt::AssertEq { id, .. }
+            | Stmt::Expr { id, .. } => {
+                *max_id = (*max_id).max(*id);
+            }
+            Stmt::If {
+                id,
+                then_body,
+                else_body,
+                ..
+            } => {
+                *max_id = (*max_id).max(*id);
+                scan_max_stmt_id(then_body, max_id);
+                scan_max_stmt_id(else_body, max_id);
+            }
+            Stmt::Match { id, arms, .. } => {
+                *max_id = (*max_id).max(*id);
+                for arm in arms {
+                    scan_max_stmt_id(&arm.body, max_id);
+                }
+            }
+            Stmt::While { id, body, .. }
+            | Stmt::ForEach { id, body, .. }
+            | Stmt::ForRange { id, body, .. } => {
+                *max_id = (*max_id).max(*id);
+                scan_max_stmt_id(body, max_id);
+            }
+        }
+    }
+}
+
+fn assign_unique_stmt_ids(stmts: &mut [Stmt], seen: &mut HashSet<NodeId>, next_id: &mut NodeId) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Comment { id, .. }
+            | Stmt::Let { id, .. }
+            | Stmt::Assign { id, .. }
+            | Stmt::Break { id }
+            | Stmt::Continue { id }
+            | Stmt::Return { id, .. }
+            | Stmt::Assert { id, .. }
+            | Stmt::AssertEq { id, .. }
+            | Stmt::Expr { id, .. } => {
+                if *id == 0 || !seen.insert(*id) {
+                    *id = *next_id;
+                    *next_id += 1;
+                    seen.insert(*id);
+                }
+            }
+            Stmt::If {
+                id,
+                then_body,
+                else_body,
+                ..
+            } => {
+                if *id == 0 || !seen.insert(*id) {
+                    *id = *next_id;
+                    *next_id += 1;
+                    seen.insert(*id);
+                }
+                assign_unique_stmt_ids(then_body, seen, next_id);
+                assign_unique_stmt_ids(else_body, seen, next_id);
+            }
+            Stmt::Match { id, arms, .. } => {
+                if *id == 0 || !seen.insert(*id) {
+                    *id = *next_id;
+                    *next_id += 1;
+                    seen.insert(*id);
+                }
+                for arm in arms {
+                    assign_unique_stmt_ids(&mut arm.body, seen, next_id);
+                }
+            }
+            Stmt::While { id, body, .. }
+            | Stmt::ForEach { id, body, .. }
+            | Stmt::ForRange { id, body, .. } => {
+                if *id == 0 || !seen.insert(*id) {
+                    *id = *next_id;
+                    *next_id += 1;
+                    seen.insert(*id);
+                }
+                assign_unique_stmt_ids(body, seen, next_id);
             }
         }
     }

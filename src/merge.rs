@@ -1323,6 +1323,7 @@ fn same_stmt_anchor(a: &Stmt, b: &Stmt) -> bool {
         (Stmt::Assign { target: t1, .. }, Stmt::Assign { target: t2, .. }) => t1 == t2,
         (Stmt::ForEach { var: v1, .. }, Stmt::ForEach { var: v2, .. }) => v1 == v2,
         (Stmt::ForRange { var: v1, .. }, Stmt::ForRange { var: v2, .. }) => v1 == v2,
+        (Stmt::While { cond: c1, .. }, Stmt::While { cond: c2, .. }) => c1 == c2,
         (Stmt::If { cond: c1, .. }, Stmt::If { cond: c2, .. }) => c1 == c2,
         (Stmt::Match { expr: e1, .. }, Stmt::Match { expr: e2, .. }) => e1 == e2,
         _ => false,
@@ -1980,6 +1981,59 @@ fn merge_single_stmt_3way(
             }
         }
         _ => {
+            if let (Some(bm), Some(lm), Some(rm)) =
+                (stmt_meta(base), stmt_meta(left), stmt_meta(right))
+            {
+                let l_core_same = sem_eq_stmt_core(base, left);
+                let r_core_same = sem_eq_stmt_core(base, right);
+                if l_core_same || r_core_same || sem_eq_stmt_core(left, right) {
+                    let mut chosen = if !l_core_same && r_core_same {
+                        changes.push(AppliedChange {
+                            spoke: left_spoke,
+                            scope: scope.to_string(),
+                            summary: format!(
+                                "Modified `{}` -> `{}`",
+                                summarize_stmt(base),
+                                summarize_stmt(left)
+                            ),
+                        });
+                        left.clone()
+                    } else if l_core_same && !r_core_same {
+                        changes.push(AppliedChange {
+                            spoke: right_spoke,
+                            scope: scope.to_string(),
+                            summary: format!(
+                                "Modified `{}` -> `{}`",
+                                summarize_stmt(base),
+                                summarize_stmt(right)
+                            ),
+                        });
+                        right.clone()
+                    } else {
+                        if !l_core_same {
+                            changes.push(AppliedChange {
+                                spoke: left_spoke,
+                                scope: scope.to_string(),
+                                summary: format!("Modified `{}` (convergent)", summarize_stmt(left)),
+                            });
+                        }
+                        left.clone()
+                    };
+                    let merged_meta = merge_meta_3way(
+                        bm,
+                        lm,
+                        rm,
+                        stmt_id(base),
+                        scope,
+                        left_spoke,
+                        right_spoke,
+                        changes,
+                        conflicts,
+                    );
+                    set_stmt_meta(&mut chosen, merged_meta);
+                    return chosen;
+                }
+            }
             conflicts.push(MergeConflict {
                 node_id: stmt_id(base),
                 scope: scope.to_string(),
@@ -2098,6 +2152,176 @@ fn merge_compound_for_log(
                 le,
                 re,
                 &format!("{} [else]", scope),
+                left_spoke,
+                right_spoke,
+                changes,
+                conflicts,
+            );
+        }
+        (
+            Stmt::While {
+                id,
+                cond: bc,
+                body: bb,
+                ..
+            },
+            Stmt::While {
+                cond: lc, body: lb, ..
+            },
+            Stmt::While {
+                cond: rc, body: rb, ..
+            },
+        ) => {
+            let _ = merge_scalar_3way(
+                bc,
+                lc,
+                rc,
+                *id,
+                scope,
+                "while condition",
+                summarize_expr,
+                left_spoke,
+                right_spoke,
+                changes,
+                conflicts,
+            );
+            let _ = merge_stmt_lists(
+                bb,
+                lb,
+                rb,
+                &format!("{} [while]", scope),
+                left_spoke,
+                right_spoke,
+                changes,
+                conflicts,
+            );
+        }
+        (
+            Stmt::ForEach {
+                id,
+                var: bv,
+                iter: bi,
+                body: bb,
+                ..
+            },
+            Stmt::ForEach {
+                var: lv,
+                iter: li,
+                body: lb,
+                ..
+            },
+            Stmt::ForEach {
+                var: rv,
+                iter: ri,
+                body: rb,
+                ..
+            },
+        ) => {
+            let var = merge_scalar_3way(
+                bv,
+                lv,
+                rv,
+                *id,
+                scope,
+                "loop variable",
+                |s| s.clone(),
+                left_spoke,
+                right_spoke,
+                changes,
+                conflicts,
+            );
+            let _ = merge_scalar_3way(
+                bi,
+                li,
+                ri,
+                *id,
+                scope,
+                "loop iterable",
+                summarize_expr,
+                left_spoke,
+                right_spoke,
+                changes,
+                conflicts,
+            );
+            let _ = merge_stmt_lists(
+                bb,
+                lb,
+                rb,
+                &format!("{} [for {}]", scope, var),
+                left_spoke,
+                right_spoke,
+                changes,
+                conflicts,
+            );
+        }
+        (
+            Stmt::ForRange {
+                id,
+                var: bv,
+                start: bs,
+                end: be,
+                body: bb,
+                ..
+            },
+            Stmt::ForRange {
+                var: lv,
+                start: ls,
+                end: le,
+                body: lb,
+                ..
+            },
+            Stmt::ForRange {
+                var: rv,
+                start: rs,
+                end: re,
+                body: rb,
+                ..
+            },
+        ) => {
+            let var = merge_scalar_3way(
+                bv,
+                lv,
+                rv,
+                *id,
+                scope,
+                "range variable",
+                |s| s.clone(),
+                left_spoke,
+                right_spoke,
+                changes,
+                conflicts,
+            );
+            let _ = merge_scalar_3way(
+                bs,
+                ls,
+                rs,
+                *id,
+                scope,
+                "range start",
+                summarize_expr,
+                left_spoke,
+                right_spoke,
+                changes,
+                conflicts,
+            );
+            let _ = merge_scalar_3way(
+                be,
+                le,
+                re,
+                *id,
+                scope,
+                "range end",
+                summarize_expr,
+                left_spoke,
+                right_spoke,
+                changes,
+                conflicts,
+            );
+            let _ = merge_stmt_lists(
+                bb,
+                lb,
+                rb,
+                &format!("{} [range {}]", scope, var),
                 left_spoke,
                 right_spoke,
                 changes,
@@ -2443,6 +2667,119 @@ fn diff_stmt_lists(old_s: &[Stmt], new_s: &[Stmt], scope: &str, deltas: &mut Vec
                             diff_stmt_lists(t1, t2, &format!("{} [then]", scope), deltas);
                             diff_stmt_lists(e1, e2, &format!("{} [else]", scope), deltas);
                         }
+                        (
+                            Stmt::While {
+                                cond: c1, body: b1, ..
+                            },
+                            Stmt::While {
+                                cond: c2, body: b2, ..
+                            },
+                        ) => {
+                            if c1 != c2 {
+                                deltas.push(SemanticDelta {
+                                    kind: "modified",
+                                    scope: scope.to_string(),
+                                    summary: format!(
+                                        "While condition: `{}` -> `{}`",
+                                        summarize_expr(c1),
+                                        summarize_expr(c2)
+                                    ),
+                                });
+                            }
+                            diff_stmt_lists(b1, b2, &format!("{} [while]", scope), deltas);
+                        }
+                        (
+                            Stmt::ForEach {
+                                var: v1,
+                                iter: i1,
+                                body: b1,
+                                ..
+                            },
+                            Stmt::ForEach {
+                                var: v2,
+                                iter: i2,
+                                body: b2,
+                                ..
+                            },
+                        ) => {
+                            if v1 != v2 || i1 != i2 {
+                                deltas.push(SemanticDelta {
+                                    kind: "modified",
+                                    scope: scope.to_string(),
+                                    summary: format!(
+                                        "ForEach header: `for {} in {}` -> `for {} in {}`",
+                                        v1,
+                                        summarize_expr(i1),
+                                        v2,
+                                        summarize_expr(i2)
+                                    ),
+                                });
+                            }
+                            diff_stmt_lists(b1, b2, &format!("{} [for {}]", scope, v2), deltas);
+                        }
+                        (
+                            Stmt::ForRange {
+                                var: v1,
+                                start: s1,
+                                end: e1,
+                                body: b1,
+                                ..
+                            },
+                            Stmt::ForRange {
+                                var: v2,
+                                start: s2,
+                                end: e2,
+                                body: b2,
+                                ..
+                            },
+                        ) => {
+                            if v1 != v2 || s1 != s2 || e1 != e2 {
+                                deltas.push(SemanticDelta {
+                                    kind: "modified",
+                                    scope: scope.to_string(),
+                                    summary: format!(
+                                        "ForRange header: `for {} in {}..{}` -> `for {} in {}..{}`",
+                                        v1,
+                                        summarize_expr(s1),
+                                        summarize_expr(e1),
+                                        v2,
+                                        summarize_expr(s2),
+                                        summarize_expr(e2)
+                                    ),
+                                });
+                            }
+                            diff_stmt_lists(b1, b2, &format!("{} [range {}]", scope, v2), deltas);
+                        }
+                        (
+                            Stmt::Match {
+                                expr: e1, arms: a1, ..
+                            },
+                            Stmt::Match {
+                                expr: e2, arms: a2, ..
+                            },
+                        ) if a1.len() == a2.len()
+                            && a1.iter().zip(a2).all(|(x, y)| x.pat == y.pat) =>
+                        {
+                            if e1 != e2 {
+                                deltas.push(SemanticDelta {
+                                    kind: "modified",
+                                    scope: scope.to_string(),
+                                    summary: format!(
+                                        "Match scrutinee: `{}` -> `{}`",
+                                        summarize_expr(e1),
+                                        summarize_expr(e2)
+                                    ),
+                                });
+                            }
+                            for (arm1, arm2) in a1.iter().zip(a2) {
+                                diff_stmt_lists(
+                                    &arm1.body,
+                                    &arm2.body,
+                                    &format!("{} [case {}]", scope, summarize_pat(&arm2.pat)),
+                                    deltas,
+                                );
+                            }
+                        }
                         _ => deltas.push(SemanticDelta {
                             kind: "modified",
                             scope: scope.to_string(),
@@ -2717,6 +3054,81 @@ fn stmt_id(s: &Stmt) -> NodeId {
         | Stmt::Assert { id, .. }
         | Stmt::AssertEq { id, .. }
         | Stmt::Expr { id, .. } => *id,
+    }
+}
+
+fn stmt_meta(s: &Stmt) -> Option<&Metadata> {
+    match s {
+        Stmt::Let { meta, .. }
+        | Stmt::Assign { meta, .. }
+        | Stmt::Return { meta, .. }
+        | Stmt::Assert { meta, .. }
+        | Stmt::AssertEq { meta, .. }
+        | Stmt::Expr { meta, .. } => Some(meta),
+        _ => None,
+    }
+}
+
+fn set_stmt_meta(s: &mut Stmt, new_meta: Metadata) {
+    match s {
+        Stmt::Let { meta, .. }
+        | Stmt::Assign { meta, .. }
+        | Stmt::Return { meta, .. }
+        | Stmt::Assert { meta, .. }
+        | Stmt::AssertEq { meta, .. }
+        | Stmt::Expr { meta, .. } => *meta = new_meta,
+        _ => {}
+    }
+}
+
+fn sem_eq_stmt_core(a: &Stmt, b: &Stmt) -> bool {
+    match (a, b) {
+        (
+            Stmt::Let {
+                name: n1,
+                mutable: m1,
+                ty: ty1,
+                value: v1,
+                ..
+            },
+            Stmt::Let {
+                name: n2,
+                mutable: m2,
+                ty: ty2,
+                value: v2,
+                ..
+            },
+        ) => n1 == n2 && m1 == m2 && ty1 == ty2 && v1 == v2,
+        (
+            Stmt::Assign {
+                target: t1,
+                op: o1,
+                value: v1,
+                ..
+            },
+            Stmt::Assign {
+                target: t2,
+                op: o2,
+                value: v2,
+                ..
+            },
+        ) => t1 == t2 && o1 == o2 && v1 == v2,
+        (Stmt::Return { value: v1, .. }, Stmt::Return { value: v2, .. }) => v1 == v2,
+        (Stmt::Assert { cond: c1, .. }, Stmt::Assert { cond: c2, .. }) => c1 == c2,
+        (
+            Stmt::AssertEq {
+                left: l1,
+                right: r1,
+                ..
+            },
+            Stmt::AssertEq {
+                left: l2,
+                right: r2,
+                ..
+            },
+        ) => l1 == l2 && r1 == r2,
+        (Stmt::Expr { expr: e1, .. }, Stmt::Expr { expr: e2, .. }) => e1 == e2,
+        _ => false,
     }
 }
 

@@ -240,6 +240,7 @@ struct LoopBodyScan {
     local_lets: BTreeSet<String>,
     reads: BTreeSet<String>,
     writes: BTreeMap<String, Vec<(AssignOp, Expr)>>,
+    indexed_writes: BTreeMap<String, Vec<(AssignOp, Expr, i64, i64)>>,
     reads_inside_cond: BTreeSet<String>,
     has_early_exit: bool,
     has_list_push: Option<(String, String)>, // (list_name, pushed_expr)
@@ -276,6 +277,15 @@ fn scan_loop_body(
                     AssignTarget::Index { base, index } => {
                         scan_expr_reads(index, induction_var, false, scan);
                         let (stride, offset) = affine_coeffs(index, induction_var);
+                        if matches!(op, AssignOp::AddAssign | AssignOp::SubAssign) {
+                            scan.accesses.push(AffineAccess {
+                                array_or_var: base.clone(),
+                                access_kind: "Read".to_string(),
+                                index_expr: format_expr_compact(index),
+                                stride,
+                                offset,
+                            });
+                        }
                         scan.accesses.push(AffineAccess {
                             array_or_var: base.clone(),
                             access_kind: "Write".to_string(),
@@ -283,12 +293,15 @@ fn scan_loop_body(
                             stride,
                             offset,
                         });
-                        scan.writes
+                        scan.indexed_writes
                             .entry(base.clone())
                             .or_default()
-                            .push((*op, value.clone()));
+                            .push((*op, value.clone(), stride, offset));
                     }
                     AssignTarget::Field { base, .. } => {
+                        if matches!(op, AssignOp::AddAssign | AssignOp::SubAssign) {
+                            scan.reads.insert(base.clone());
+                        }
                         scan.writes
                             .entry(base.clone())
                             .or_default()
@@ -591,7 +604,7 @@ fn analyze_single_loop(
         }
     }
 
-    if scan.has_early_exit {
+        if scan.has_early_exit {
         dependences.push(LoopDependenceEdge {
             variable: "control_pc".to_string(),
             kind: "Control Dependence (Early Exit)".to_string(),
@@ -604,8 +617,52 @@ fn analyze_single_loop(
         });
     }
 
+    let mut has_parallel_indexed_write = false;
+    for (arr, idx_ops) in &scan.indexed_writes {
+        if scan.local_lets.contains(arr) {
+            continue;
+        }
+        let all_disjoint_affine = idx_ops.iter().all(|(_, _, stride, _)| *stride != 0);
+        let has_cross_iter_read = scan.accesses.iter().any(|acc| {
+            acc.array_or_var == *arr
+                && acc.access_kind == "Read"
+                && idx_ops
+                    .iter()
+                    .any(|(_, _, w_stride, w_offset)| acc.stride != *w_stride || acc.offset != *w_offset)
+        });
+        if all_disjoint_affine && !has_cross_iter_read {
+            has_parallel_indexed_write = true;
+            dependences.push(LoopDependenceEdge {
+                variable: arr.clone(),
+                kind: "WAW/RAW (Disjoint Affine Index)".to_string(),
+                distance: "0 (loop-independent)".to_string(),
+                is_reduction: false,
+                reduction_monoid: None,
+                blocks_simd: false,
+                note: format!(
+                    "Indexed writes to `{}` address disjoint elements per iteration (`stride != 0`)",
+                    arr
+                ),
+            });
+        } else {
+            has_sequential_carried_dep = true;
+            dependences.push(LoopDependenceEdge {
+                variable: arr.clone(),
+                kind: "RAW (Loop-Carried Array Recurrence)".to_string(),
+                distance: "+1 (sequential)".to_string(),
+                is_reduction: false,
+                reduction_monoid: None,
+                blocks_simd: true,
+                note: format!(
+                    "Indexed writes to `{}` overlap across iterations (`stride == 0` or shifted read offset)",
+                    arr
+                ),
+            });
+        }
+    }
+
     let classification = if !has_sequential_carried_dep {
-        if reductions.is_empty() && scan.has_list_push.is_some() {
+        if reductions.is_empty() && (scan.has_list_push.is_some() || has_parallel_indexed_write) {
             "ParallelMap".to_string()
         } else if scan.filter_conds.is_empty() {
             "AssociativeMapReduce".to_string()
@@ -964,7 +1021,11 @@ fn ipet_stmts_cycles(
             Stmt::Assign {
                 target, op, value, ..
             } => {
-                let c = expr_cycle_cost(value) + 1;
+                let idx_c = match target {
+                    AssignTarget::Index { index, .. } => expr_cycle_cost(index),
+                    _ => 0,
+                };
+                let c = idx_c + expr_cycle_cost(value) + 1;
                 bc_c0 += c;
                 wc_c0 += c;
                 let op_str = match op {
@@ -1088,8 +1149,10 @@ fn ipet_stmts_cycles(
 
                 if let (Some(lo), Some(hi)) = (const_int_lit(start), const_int_lit(end)) {
                     let trip = (hi - lo).max(0) as u64;
-                    bc_c0 += 2 + trip * iter_bc;
-                    wc_c0 += 2 + trip * iter_wc;
+                    bc_c0 += 2 + trip * (bb_c0 + 3);
+                    bc_c1 += trip * bb_c1;
+                    wc_c0 += 2 + trip * (bw_c0 + 3);
+                    wc_c1 += trip * bw_c1;
                     wcep.push(format!(
                         "loop for {} in {}..{} ({} static trips × {}c)",
                         var, lo, hi, trip, iter_wc
@@ -1255,11 +1318,35 @@ fn synthesize_while_ranking_proof(
     let mut scan = LoopBodyScan::default();
     scan_loop_body(body, "", false, &mut scan);
 
-    // Check for `while v < bound` or `while v <= bound` with positive increment on `v`,
-    // or `while v > bound` / `while v >= bound` with decrement on `v`.
+    // Check for `while v < bound` or `while v <= bound` (or flipped `bound > v` / `bound >= v`)
+    // with positive increment on `v`, or `while v > bound` / `while v >= bound`
+    // (or flipped `bound < v` / `bound <= v`) with decrement on `v`.
     if let Expr::Binary { op, left, right } = cond {
-        match (op, left.as_ref(), right.as_ref()) {
-            (BinOp::Lt | BinOp::Le, Expr::Var(v), bound) => {
+        if *op == BinOp::And {
+            let l_proof = synthesize_while_ranking_proof(stmt_id, fn_name, left, body);
+            if l_proof.proven_terminating {
+                return LoopTerminationProof {
+                    loop_header: format!("while {}", format_expr_compact(cond)),
+                    ..l_proof
+                };
+            }
+            let r_proof = synthesize_while_ranking_proof(stmt_id, fn_name, right, body);
+            if r_proof.proven_terminating {
+                return LoopTerminationProof {
+                    loop_header: format!("while {}", format_expr_compact(cond)),
+                    ..r_proof
+                };
+            }
+        }
+        let normalized_cmp = match (op, left.as_ref(), right.as_ref()) {
+            (BinOp::Lt | BinOp::Le, Expr::Var(v), bound)
+            | (BinOp::Gt | BinOp::Ge, bound, Expr::Var(v)) => Some((true, v, bound)),
+            (BinOp::Gt | BinOp::Ge, Expr::Var(v), bound)
+            | (BinOp::Lt | BinOp::Le, bound, Expr::Var(v)) => Some((false, v, bound)),
+            _ => None,
+        };
+        if let Some((is_upper_bound, v, bound)) = normalized_cmp {
+            if is_upper_bound {
                 let bound_s = format_expr_compact(bound);
                 let bound_invariant = !scan
                     .writes
@@ -1312,8 +1399,7 @@ fn synthesize_while_ranking_proof(
                         ),
                     };
                 }
-            }
-            (BinOp::Gt | BinOp::Ge, Expr::Var(v), bound) => {
+            } else {
                 let bound_s = format_expr_compact(bound);
                 let bound_invariant = !scan
                     .writes
@@ -1389,7 +1475,6 @@ fn synthesize_while_ranking_proof(
                     };
                 }
             }
-            _ => {}
         }
     }
 
