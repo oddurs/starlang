@@ -350,6 +350,7 @@ impl ZigFormatter {
                         u.need_str_contains = true;
                     } else {
                         u.need_list = true;
+                        u.need_eql = true;
                     }
                 }
                 Intrinsic::Upper(x) => {
@@ -560,7 +561,7 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
         } else if (T == f64 or T == comptime_float) {
             _ = printf("%.15g", @as(f64, arg));
         } else if (T == bool) {
-            _ = printf("%s", if (arg) "true" else "false");
+            _ = printf("%s", if (arg) @as([*:0]const u8, "true") else @as([*:0]const u8, "false"));
         } else {
             const s: []const u8 = arg;
             _ = printf("%.*s", @as(c_int, @intCast(s.len)), s.ptr);

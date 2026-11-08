@@ -195,7 +195,7 @@ pub fn run_fuzz_suite(seed: u64, count: usize) -> FuzzReport {
             }
         }
 
-        // 4. Optimizer soundness + 7-spoke GetPut on optimized AST
+        // 4. Optimizer + E-Graph + Wasm soundness & 13-spoke GetPut on optimized AST
         let (opt_hub, _) = optimize_module(&hub);
         optimizer_checks += 1;
         let opt_diags = check_module(&opt_hub);
@@ -215,14 +215,63 @@ pub fn run_fuzz_suite(seed: u64, count: usize) -> FuzzReport {
         for spoke in SpokeId::ALL {
             let lens = lens_for(spoke);
             let code = lens.get(&opt_hub);
-            if let Err(e) = lens.put(&code, &opt_hub) {
-                failures.push(format!(
-                    "program #{} [{}]: optimized Hub failed GetPut parse: {}",
-                    prog_idx,
-                    spoke.display_name(),
-                    e
-                ));
+            match lens.put(&code, &opt_hub) {
+                Ok(lifted_opt) => {
+                    if lifted_opt != opt_hub {
+                        failures.push(format!(
+                            "program #{} [{}]: optimized Hub failed GetPut equality",
+                            prog_idx,
+                            spoke.display_name()
+                        ));
+                    }
+                }
+                Err(e) => {
+                    failures.push(format!(
+                        "program #{} [{}]: optimized Hub failed GetPut parse: {}",
+                        prog_idx,
+                        spoke.display_name(),
+                        e
+                    ));
+                }
             }
+        }
+
+        let eg_rep = crate::egraph::superoptimize_egraph(&hub);
+        if !eg_rep.translation_validated {
+            failures.push(format!(
+                "program #{}: superoptimize_egraph failed translation validation",
+                prog_idx
+            ));
+        }
+        for spoke in SpokeId::ALL {
+            let lens = lens_for(spoke);
+            let code = lens.get(&eg_rep.optimized_hub);
+            match lens.put(&code, &eg_rep.optimized_hub) {
+                Ok(lifted_eg) => {
+                    if lifted_eg != eg_rep.optimized_hub {
+                        failures.push(format!(
+                            "program #{} [{}]: egraph optimized Hub failed GetPut equality",
+                            prog_idx,
+                            spoke.display_name()
+                        ));
+                    }
+                }
+                Err(e) => {
+                    failures.push(format!(
+                        "program #{} [{}]: egraph optimized Hub failed GetPut parse: {}",
+                        prog_idx,
+                        spoke.display_name(),
+                        e
+                    ));
+                }
+            }
+        }
+
+        if let Err(e) = crate::wasm::compile_wasm(&hub) {
+            failures.push(format!(
+                "program #{}: compile_wasm failed: {}",
+                prog_idx, e
+            ));
         }
     }
 

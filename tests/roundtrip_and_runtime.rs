@@ -2978,3 +2978,255 @@ def main() -> None:
         star_after_ad
     );
 }
+
+#[test]
+fn reference_based_starlang_differential_validation_and_14_engine_torture_suite() {
+    // 1. Canonical Star S-Expr Reference Torture Program exercising structs, enums, negative/positive/string
+    //    pattern matching, compound boolean & arithmetic precedence, range/foreach/while loops with break/continue,
+    //    negative compound step (`i += -1`), list indexing & mutation, and all core intrinsics.
+    let ref_star = r#"(struct PacketFrame
+  (field id Int)
+  (field weight Int)
+  (field tag Str))
+
+(enum RouteMode Direct Relay Drop)
+
+(fn classify_code ((param code Int) (param mode RouteMode)) -> Int
+  (let-mut base 0)
+  (match mode
+    (case RouteMode::Direct
+      (set! base 100))
+    (case RouteMode::Relay
+      (set! base 50))
+    (case RouteMode::Drop
+      (return (neg 1))))
+  (match code
+    (case -5
+      (return (- base 25)))
+    (case 0
+      (return base))
+    (case 10
+      (return (+ base 15)))
+    (case _
+      (return (+ base (abs code))))))
+
+(fn decode_tag ((param label Str)) -> Int
+  (match (lower label)
+    (case "alpha"
+      (return 10))
+    (case "beta"
+      (return 20))
+    (case _
+      (return 5))))
+
+(fn score_batch ((param items (List Int)) (param mode RouteMode) (param label Str)) -> PacketFrame
+  (let-mut acc :type (List Int) (list))
+  (for-each x items
+    (if (== x (neg 99))
+      (then
+        (break)))
+    (if (< x (neg 10))
+      (then
+        (continue)))
+    (push! acc (call classify_code x mode)))
+  (let-mut total 0)
+  (for-range i 0 (len acc)
+    (add! total (index acc i)))
+  (let-mut countdown 3)
+  (while (> countdown 0)
+    (add! total countdown)
+    (add! countdown (neg 1)))
+  (let tag_bonus (call decode_tag label))
+  (let clamped (max (min (+ total tag_bonus) 500) (neg 100)))
+  (return (make PacketFrame (id (len acc)) (weight clamped) (tag (upper label)))))
+
+(fn main () -> Void
+  (let batch (list (neg 5) 0 10 (neg 20) 7 (neg 99) 50))
+  (let pkt (call score_batch batch RouteMode::Direct "Alpha"))
+  (let has_ten (contains batch 10))
+  (let has_al (contains (get-field pkt tag) "AL"))
+  (let-mut flag_score 0)
+  (if (and (and has_ten has_al) (not (contains batch 999)))
+    (then
+      (set! flag_score 11)))
+  (print (get-field pkt id) (get-field pkt weight) (get-field pkt tag) flag_score (to-str (- 100 (- 30 10)))))
+
+(test reference_oracle_invariants
+  (let batch (list (neg 5) 0 10 (neg 20) 7))
+  (let pkt (call score_batch batch RouteMode::Relay "Beta"))
+  (assert-eq (get-field pkt id) 4)
+  (assert-eq (get-field pkt weight) 223)
+  (assert-eq (get-field pkt tag) "BETA")
+  (assert (contains batch (neg 5)))
+  (assert (not (contains batch 999))))
+"#;
+
+    let engine = StarEngine::from_source(SpokeId::Star, ref_star)
+        .expect("Reference Star S-Expr program must parse cleanly");
+    let ref_hub = engine.hub().clone();
+
+    // Verify 0 semantic diagnostics on reference Hub AST
+    let ref_diags = check_module(&ref_hub);
+    assert!(
+        ref_diags.is_empty(),
+        "Reference Hub AST had unexpected semantic diagnostics: {:?}",
+        ref_diags
+    );
+
+    // Ground-truth Hub VM reference oracle
+    let ref_snap = engine.snapshot();
+    assert!(ref_snap.live_eval.ok, "{:?}", ref_snap.live_eval.error);
+    let expected_stdout = "4 413 ALPHA 11 80";
+    assert_eq!(ref_snap.live_eval.stdout.trim(), expected_stdout);
+    assert_eq!(ref_snap.test_results.len(), 1);
+    assert!(
+        ref_snap.test_results[0].passed,
+        "Reference unit test failed: {:?}",
+        ref_snap.test_results[0]
+    );
+
+    // 2. Validate Warm GetPut, Cold Put (from empty HubModule), and full 13x13=169 Cross-Spoke Matrix
+    for spoke_a in SpokeId::ALL {
+        let lens_a = lens_for(spoke_a);
+        let code_a = lens_a.get(&ref_hub);
+
+        // Warm GetPut
+        let warm_a = lens_a.put(&code_a, &ref_hub).unwrap_or_else(|e| {
+            panic!(
+                "Reference Warm GetPut failed on {:?}: {}\nCode:\n{}",
+                spoke_a, e, code_a
+            )
+        });
+        assert_eq!(
+            warm_a, ref_hub,
+            "Reference Warm GetPut AST mismatch on {:?}\nCode:\n{}",
+            spoke_a, code_a
+        );
+
+        // Cold Put from empty HubModule
+        let cold_a = lens_a
+            .put(&code_a, &starlang::hub::HubModule::new())
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Reference Cold Put failed on {:?}: {}\nCode:\n{}",
+                    spoke_a, e, code_a
+                )
+            });
+        let cold_diags = check_module(&cold_a);
+        assert!(
+            cold_diags.is_empty(),
+            "Cold Put on {:?} introduced typecheck diagnostics: {:?}",
+            spoke_a,
+            cold_diags
+        );
+        let cold_ev = eval_module(&cold_a, 50_000);
+        assert!(cold_ev.ok, "Cold Put VM failed on {:?}: {:?}", spoke_a, cold_ev.error);
+        assert_eq!(
+            cold_ev.stdout.trim(),
+            expected_stdout,
+            "Cold Put stdout mismatch on {:?}",
+            spoke_a
+        );
+
+        // Cross-Spoke PutGetPut across all 13 target spokes
+        for spoke_b in SpokeId::ALL {
+            let lens_b = lens_for(spoke_b);
+            let code_b = lens_b.get(&warm_a);
+            let warm_ab = lens_b.put(&code_b, &warm_a).unwrap_or_else(|e| {
+                panic!(
+                    "Cross-spoke {:?} -> {:?} failed parse: {}\nCode:\n{}",
+                    spoke_a, spoke_b, e, code_b
+                )
+            });
+            assert_eq!(
+                warm_ab, ref_hub,
+                "Cross-spoke {:?} -> {:?} AST drift",
+                spoke_a, spoke_b
+            );
+        }
+    }
+
+    // 3. Validate all 14 native/JIT execution engines against the Hub VM reference oracle
+    let run_report = run_all_spokes(&engine);
+    assert_eq!(run_report.results.len(), 14);
+    for r in &run_report.results {
+        assert!(
+            r.ok,
+            "Reference torture program failed on engine {}:\nstdout: {}\nstderr: {}",
+            r.language, r.stdout, r.stderr
+        );
+        assert_eq!(
+            r.stdout.trim(),
+            expected_stdout,
+            "Engine {} diverged from Hub VM reference oracle",
+            r.language
+        );
+    }
+    assert!(run_report.outputs_match);
+
+    // 4. Validate E-Graph string concatenation non-commutativity, negative constant reassociation,
+    //    side-effecting call preservation, and dead post-return statement pruning across all 14 engines!
+    let pass_torture_py = r#"def side_effect_probe(x: int) -> int:
+    print("probe", x)
+    return x + 10
+
+def compute_banner(prefix: str, suffix: str, n: int) -> str:
+    reassoc = (n + 2) - 5
+    keep_calls = side_effect_probe(n) - side_effect_probe(n)
+    msg = prefix + str(1 + 2) + suffix
+    if True:
+        return msg + ":" + str(reassoc + keep_calls)
+    return "unreachable_tail"
+
+def main() -> None:
+    s = "-end"
+    p = "start-"
+    print(compute_banner(p, s, 10))
+
+def test_banner() -> None:
+    assert compute_banner("a", "b", 5) == "a3b:2"
+"#;
+    let mut pass_eng = StarEngine::from_source(SpokeId::Python, pass_torture_py).unwrap();
+    let expected_banner_out = "probe 10\nprobe 10\nstart-3-end:7\n";
+    assert_eq!(pass_eng.snapshot().live_eval.stdout, expected_banner_out);
+
+    // Run E-Graph superoptimizer:
+    // - `str(1 + 2)` folds to `"3"`, while `prefix + "3" + suffix` MUST NOT commute string operands!
+    // - `(n + 2) - 5` reassociates and simplifies to `n - 3`!
+    // - `side_effect_probe(n) - side_effect_probe(n)` MUST NOT cancel to `0` because `side_effect_probe` is a function call!
+    // - `if True: return ...` prunes the trailing `return "unreachable_tail"` so `javac` compiles cleanly!
+    let (eg_rep, eg_snap_opt) = pass_eng.egraph(true);
+    assert!(eg_rep.translation_validated, "{:?}", eg_rep);
+    let eg_snap = eg_snap_opt.unwrap();
+    assert_eq!(eg_snap.live_eval.stdout, expected_banner_out);
+    assert!(eg_snap.views["rust"].contains("n - 3"), "{}", eg_snap.views["rust"]);
+    assert!(
+        !eg_snap.views["java"].contains("unreachable_tail"),
+        "Trailing statement after flattened `if True: return` must be pruned for Java compatibility:\n{}",
+        eg_snap.views["java"]
+    );
+    for spoke in SpokeId::ALL {
+        let lens = lens_for(spoke);
+        let code = lens.get(pass_eng.hub());
+        assert_eq!(lens.put(&code, pass_eng.hub()).unwrap(), *pass_eng.hub());
+    }
+    let pass_run = run_all_spokes(&pass_eng);
+    assert!(
+        pass_run.outputs_match,
+        "14-engine execution after E-Graph optimization diverged: {:?}",
+        pass_run.results
+    );
+    assert_eq!(pass_run.results[0].stdout, expected_banner_out);
+
+    // 5. Multi-seed property-based fuzzer sweep validating GetPut, Cold Put, Optimizer, E-Graph & Wasm
+    for seed in [0x000A_11CE_0001_u64, 0x0B0B_0002_u64, 0xCAFE_F00D_u64] {
+        let fuzz = run_fuzz_suite(seed, 20);
+        assert!(
+            fuzz.ok(),
+            "Fuzzer seed {:#x} found failures:\n{}",
+            seed,
+            fuzz.failures.join("\n\n")
+        );
+    }
+}
+

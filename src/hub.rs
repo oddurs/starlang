@@ -852,7 +852,10 @@ fn normalize_block(
                     env.insert(name.clone(), t);
                 }
             }
-            Stmt::Assign { value, .. } => {
+            Stmt::Assign { target, value, .. } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    normalize_expr(index, env, fn_ret_types, struct_fields, enum_names);
+                }
                 normalize_expr(value, env, fn_ret_types, struct_fields, enum_names);
             }
             Stmt::If {

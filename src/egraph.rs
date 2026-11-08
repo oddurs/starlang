@@ -184,9 +184,21 @@ impl ENode {
 
     pub fn base_cost(&self) -> u64 {
         match self {
-            ENode::Int(_)
-            | ENode::FloatBits(_)
-            | ENode::Bool(_)
+            ENode::Int(v) => {
+                if *v < 0 && *v > i64::MIN {
+                    2
+                } else {
+                    1
+                }
+            }
+            ENode::FloatBits(b) => {
+                if f64::from_bits(*b) < 0.0 {
+                    2
+                } else {
+                    1
+                }
+            }
+            ENode::Bool(_)
             | ENode::Str(_)
             | ENode::Var(_)
             | ENode::EnumVariant { .. } => 1,
@@ -247,6 +259,7 @@ pub struct EGraph {
     pub rules_fired: BTreeMap<String, usize>,
     pub total_unions: usize,
     pub iterations: usize,
+    pub non_numeric_vars: BTreeSet<String>,
 }
 
 impl Default for EGraph {
@@ -265,6 +278,7 @@ impl EGraph {
             rules_fired: BTreeMap::new(),
             total_unions: 0,
             iterations: 0,
+            non_numeric_vars: BTreeSet::new(),
         }
     }
 
@@ -557,6 +571,111 @@ impl EGraph {
         self.classes.get(&root).and_then(|c| c.const_val.clone())
     }
 
+    pub fn is_numeric_class(&self, id: EClassId) -> bool {
+        let root = self.find(id);
+        if matches!(
+            self.const_of(root),
+            Some(ConstDatum::Str(_) | ConstDatum::Bool(_))
+        ) {
+            return false;
+        }
+        let Some(cls) = self.classes.get(&root) else {
+            return false;
+        };
+        let mut has_numeric = matches!(
+            self.const_of(root),
+            Some(ConstDatum::Int(_) | ConstDatum::Float(_))
+        );
+        for n in &cls.nodes {
+            match n {
+                ENode::Str(_)
+                | ENode::Bool(_)
+                | ENode::Upper(_)
+                | ENode::Lower(_)
+                | ENode::ToStr(_)
+                | ENode::List(_)
+                | ENode::StructInit { .. }
+                | ENode::EnumVariant { .. } => return false,
+                ENode::Var(v) if self.non_numeric_vars.contains(v) => return false,
+                ENode::Int(_)
+                | ENode::FloatBits(_)
+                | ENode::Unary {
+                    op: EUnaryOp::Neg, ..
+                }
+                | ENode::Binary {
+                    op:
+                        EBinOp::Sub
+                        | EBinOp::Mul
+                        | EBinOp::Div
+                        | EBinOp::IntDiv
+                        | EBinOp::Mod,
+                    ..
+                }
+                | ENode::Len(_)
+                | ENode::Min(_, _)
+                | ENode::Max(_, _)
+                | ENode::Abs(_)
+                | ENode::Var(_) => {
+                    has_numeric = true;
+                }
+                _ => {}
+            }
+        }
+        has_numeric
+    }
+
+    pub fn is_pure_class(&self, id: EClassId) -> bool {
+        let mut visited = BTreeSet::new();
+        self.is_pure_class_rec(id, &mut visited)
+    }
+
+    fn is_pure_class_rec(&self, id: EClassId, visited: &mut BTreeSet<EClassId>) -> bool {
+        let root = self.find(id);
+        if self.const_of(root).is_some() {
+            return true;
+        }
+        if !visited.insert(root) {
+            return false;
+        }
+        let Some(cls) = self.classes.get(&root) else {
+            visited.remove(&root);
+            return false;
+        };
+        for n in &cls.nodes {
+            let ok = match n {
+                ENode::Int(_)
+                | ENode::FloatBits(_)
+                | ENode::Bool(_)
+                | ENode::Str(_)
+                | ENode::Var(_)
+                | ENode::EnumVariant { .. } => true,
+                ENode::Call { .. }
+                | ENode::Push { .. }
+                | ENode::Print(_)
+                | ENode::Index { .. } => false,
+                ENode::Binary {
+                    op: EBinOp::Div | EBinOp::IntDiv | EBinOp::Mod,
+                    left,
+                    right,
+                } => {
+                    let nz = matches!(self.const_of(*right), Some(ConstDatum::Int(v)) if v != 0)
+                        || matches!(self.const_of(*right), Some(ConstDatum::Float(f)) if f != 0.0);
+                    nz && self.is_pure_class_rec(*left, visited)
+                }
+                other => other
+                    .children()
+                    .into_iter()
+                    .all(|c| self.is_pure_class_rec(c, visited)),
+            };
+            if ok {
+                visited.remove(&root);
+                return true;
+            }
+        }
+        visited.remove(&root);
+        false
+    }
+
     fn try_eval_const_node(&self, node: &ENode) -> Option<ENode> {
         match node {
             ENode::Unary { op, arg } => match (op, self.const_of(*arg)?) {
@@ -758,12 +877,14 @@ impl EGraph {
 
                             match op {
                                 EBinOp::Add => {
-                                    let comm = self.add(ENode::Binary {
-                                        op: EBinOp::Add,
-                                        left: r,
-                                        right: l,
-                                    });
-                                    pending_merges.push((cid, comm, "comm-add"));
+                                    if self.is_numeric_class(l) && self.is_numeric_class(r) {
+                                        let comm = self.add(ENode::Binary {
+                                            op: EBinOp::Add,
+                                            left: r,
+                                            right: l,
+                                        });
+                                        pending_merges.push((cid, comm, "comm-add"));
+                                    }
 
                                     if matches!(r_const, Some(ConstDatum::Int(0))) {
                                         pending_merges.push((cid, l, "add-zero"));
@@ -771,7 +892,10 @@ impl EGraph {
                                     if matches!(l_const, Some(ConstDatum::Int(0))) {
                                         pending_merges.push((cid, r, "add-zero"));
                                     }
-                                    if l == r {
+                                    if l == r
+                                        && self.is_numeric_class(l)
+                                        && self.is_pure_class(l)
+                                    {
                                         let two = self.add(ENode::Int(2));
                                         let mul2 = self.add(ENode::Binary {
                                             op: EBinOp::Mul,
@@ -789,7 +913,9 @@ impl EGraph {
                                                     op: EBinOp::Sub,
                                                     left: x,
                                                     right: y,
-                                                } if self.find(*y) == r => {
+                                                } if self.find(*y) == r
+                                                    && self.is_pure_class(r) =>
+                                                {
                                                     pending_merges.push((cid, *x, "cancel-sub-add"));
                                                 }
                                                 ENode::Binary {
@@ -854,7 +980,9 @@ impl EGraph {
                                                                 right: b2,
                                                             } = rnode
                                                             {
-                                                                if self.find(*a1) == self.find(*a2) {
+                                                                if self.find(*a1) == self.find(*a2)
+                                                                    && self.is_pure_class(*a1)
+                                                                {
                                                                     let sum_b =
                                                                         self.add(ENode::Binary {
                                                                             op: EBinOp::Add,
@@ -883,6 +1011,17 @@ impl EGraph {
                                     }
 
                                     // x + (-y) => x - y
+                                    if let Some(ConstDatum::Int(v)) = r_const {
+                                        if v < 0 && v > i64::MIN {
+                                            let pos_id = self.add(ENode::Int(-v));
+                                            let sub_id = self.add(ENode::Binary {
+                                                op: EBinOp::Sub,
+                                                left: l,
+                                                right: pos_id,
+                                            });
+                                            pending_merges.push((cid, sub_id, "add-neg-to-sub"));
+                                        }
+                                    }
                                     if let Some(rcls) = self.classes.get(&r).cloned() {
                                         for rnode in &rcls.nodes {
                                             if let ENode::Unary {
@@ -905,7 +1044,7 @@ impl EGraph {
                                     if matches!(r_const, Some(ConstDatum::Int(0))) {
                                         pending_merges.push((cid, l, "sub-zero"));
                                     }
-                                    if l == r {
+                                    if l == r && self.is_pure_class(l) {
                                         let zero = self.add(ENode::Int(0));
                                         pending_merges.push((cid, zero, "sub-self"));
                                     }
@@ -919,11 +1058,11 @@ impl EGraph {
                                                     left: x,
                                                     right: y,
                                                 } => {
-                                                    if self.find(*y) == r {
+                                                    if self.find(*y) == r && self.is_pure_class(r) {
                                                         pending_merges
                                                             .push((cid, *x, "cancel-add-sub"));
                                                     }
-                                                    if self.find(*x) == r {
+                                                    if self.find(*x) == r && self.is_pure_class(r) {
                                                         pending_merges
                                                             .push((cid, *y, "cancel-add-sub"));
                                                     }
@@ -976,6 +1115,17 @@ impl EGraph {
                                     }
 
                                     // x - (-y) => x + y
+                                    if let Some(ConstDatum::Int(v)) = r_const {
+                                        if v < 0 && v > i64::MIN {
+                                            let pos_id = self.add(ENode::Int(-v));
+                                            let add_id = self.add(ENode::Binary {
+                                                op: EBinOp::Add,
+                                                left: l,
+                                                right: pos_id,
+                                            });
+                                            pending_merges.push((cid, add_id, "sub-neg-to-add"));
+                                        }
+                                    }
                                     if let Some(rcls) = self.classes.get(&r).cloned() {
                                         for rnode in &rcls.nodes {
                                             if let ENode::Unary {
@@ -1008,13 +1158,17 @@ impl EGraph {
                                     if matches!(l_const, Some(ConstDatum::Int(1))) {
                                         pending_merges.push((cid, r, "mul-one"));
                                     }
-                                    if matches!(r_const, Some(ConstDatum::Int(0)))
-                                        || matches!(l_const, Some(ConstDatum::Int(0)))
+                                    if (matches!(r_const, Some(ConstDatum::Int(0)))
+                                        && self.is_pure_class(l))
+                                        || (matches!(l_const, Some(ConstDatum::Int(0)))
+                                            && self.is_pure_class(r))
                                     {
                                         let zero = self.add(ENode::Int(0));
                                         pending_merges.push((cid, zero, "mul-zero"));
                                     }
-                                    if matches!(r_const, Some(ConstDatum::Int(2))) {
+                                    if matches!(r_const, Some(ConstDatum::Int(2)))
+                                        && self.is_pure_class(l)
+                                    {
                                         let add_self = self.add(ENode::Binary {
                                             op: EBinOp::Add,
                                             left: l,
@@ -1075,7 +1229,9 @@ impl EGraph {
                                     }
                                 }
                                 EBinOp::Mod => {
-                                    if matches!(r_const, Some(ConstDatum::Int(1))) {
+                                    if matches!(r_const, Some(ConstDatum::Int(1)))
+                                        && self.is_pure_class(l)
+                                    {
                                         let zero = self.add(ENode::Int(0));
                                         pending_merges.push((cid, zero, "mod-one"));
                                     }
@@ -1087,7 +1243,7 @@ impl EGraph {
                                         right: l,
                                     });
                                     pending_merges.push((cid, comm, "comm-eq"));
-                                    if l == r {
+                                    if l == r && self.is_pure_class(l) {
                                         let t = self.add(ENode::Bool(true));
                                         pending_merges.push((cid, t, "refl-eq"));
                                     }
@@ -1099,25 +1255,25 @@ impl EGraph {
                                         right: l,
                                     });
                                     pending_merges.push((cid, comm, "comm-ne"));
-                                    if l == r {
+                                    if l == r && self.is_pure_class(l) {
                                         let f = self.add(ENode::Bool(false));
                                         pending_merges.push((cid, f, "refl-ne"));
                                     }
                                 }
                                 EBinOp::Lt | EBinOp::Gt => {
-                                    if l == r {
+                                    if l == r && self.is_pure_class(l) {
                                         let f = self.add(ENode::Bool(false));
                                         pending_merges.push((cid, f, "irrefl-lt-gt"));
                                     }
                                 }
                                 EBinOp::Le | EBinOp::Ge => {
-                                    if l == r {
+                                    if l == r && self.is_pure_class(l) {
                                         let t = self.add(ENode::Bool(true));
                                         pending_merges.push((cid, t, "refl-le-ge"));
                                     }
                                 }
                                 EBinOp::And => {
-                                    if l == r {
+                                    if l == r && self.is_pure_class(l) {
                                         pending_merges.push((cid, l, "idemp-and"));
                                     }
                                     if matches!(r_const, Some(ConstDatum::Bool(true))) {
@@ -1126,15 +1282,17 @@ impl EGraph {
                                     if matches!(l_const, Some(ConstDatum::Bool(true))) {
                                         pending_merges.push((cid, r, "and-true"));
                                     }
-                                    if matches!(r_const, Some(ConstDatum::Bool(false)))
-                                        || matches!(l_const, Some(ConstDatum::Bool(false)))
+                                    if (matches!(r_const, Some(ConstDatum::Bool(false)))
+                                        && self.is_pure_class(l))
+                                        || (matches!(l_const, Some(ConstDatum::Bool(false)))
+                                            && self.is_pure_class(r))
                                     {
                                         let f = self.add(ENode::Bool(false));
                                         pending_merges.push((cid, f, "and-false"));
                                     }
                                 }
                                 EBinOp::Or => {
-                                    if l == r {
+                                    if l == r && self.is_pure_class(l) {
                                         pending_merges.push((cid, l, "idemp-or"));
                                     }
                                     if matches!(r_const, Some(ConstDatum::Bool(false))) {
@@ -1143,8 +1301,10 @@ impl EGraph {
                                     if matches!(l_const, Some(ConstDatum::Bool(false))) {
                                         pending_merges.push((cid, r, "or-false"));
                                     }
-                                    if matches!(r_const, Some(ConstDatum::Bool(true)))
-                                        || matches!(l_const, Some(ConstDatum::Bool(true)))
+                                    if (matches!(r_const, Some(ConstDatum::Bool(true)))
+                                        && self.is_pure_class(l))
+                                        || (matches!(l_const, Some(ConstDatum::Bool(true)))
+                                            && self.is_pure_class(r))
                                     {
                                         let t = self.add(ENode::Bool(true));
                                         pending_merges.push((cid, t, "or-true"));
@@ -1157,13 +1317,13 @@ impl EGraph {
                             let rb = self.find(*b);
                             let comm = self.add(ENode::Min(rb, la));
                             pending_merges.push((cid, comm, "comm-min"));
-                            if la == rb {
+                            if la == rb && self.is_pure_class(la) {
                                 pending_merges.push((cid, la, "idemp-min"));
                             }
                             if let Some(bcls) = self.classes.get(&rb).cloned() {
                                 for bnode in &bcls.nodes {
-                                    if let ENode::Max(x, _) = bnode {
-                                        if self.find(*x) == la {
+                                    if let ENode::Max(x, y) = bnode {
+                                        if self.find(*x) == la && self.is_pure_class(*y) {
                                             pending_merges.push((cid, la, "absorb-min-max"));
                                         }
                                     }
@@ -1175,13 +1335,13 @@ impl EGraph {
                             let rb = self.find(*b);
                             let comm = self.add(ENode::Max(rb, la));
                             pending_merges.push((cid, comm, "comm-max"));
-                            if la == rb {
+                            if la == rb && self.is_pure_class(la) {
                                 pending_merges.push((cid, la, "idemp-max"));
                             }
                             if let Some(bcls) = self.classes.get(&rb).cloned() {
                                 for bnode in &bcls.nodes {
-                                    if let ENode::Min(x, _) = bnode {
-                                        if self.find(*x) == la {
+                                    if let ENode::Min(x, y) = bnode {
+                                        if self.find(*x) == la && self.is_pure_class(*y) {
                                             pending_merges.push((cid, la, "absorb-max-min"));
                                         }
                                     }
@@ -1618,7 +1778,14 @@ pub fn superoptimize_egraph(hub: &HubModule) -> EGraphReport {
     // 1. Seed the E-Graph with all expressions in the module
     for item in &hub.items {
         match item {
-            Item::Function(f) => seed_stmts_in_egraph(&mut eg, &f.body),
+            Item::Function(f) => {
+                for p in &f.params {
+                    if !matches!(p.ty, crate::hub::Type::Int | crate::hub::Type::Float) {
+                        eg.non_numeric_vars.insert(p.name.clone());
+                    }
+                }
+                seed_stmts_in_egraph(&mut eg, &f.body);
+            }
             Item::Test(t) => seed_stmts_in_egraph(&mut eg, &t.body),
             _ => {}
         }
@@ -1667,6 +1834,10 @@ pub fn superoptimize_egraph(hub: &HubModule) -> EGraphReport {
         }
     }
 
+    if !rewrites.is_empty() || dead_branches_pruned > 0 {
+        crate::hub::normalize_module(&mut optimized_hub);
+    }
+
     // 4. Translation Validation: verify identical VM stdout & unit test results
     let ev_before = eval_module_default(hub);
     let ev_after = eval_module_default(&optimized_hub);
@@ -1708,7 +1879,33 @@ fn seed_stmts_in_egraph(eg: &mut EGraph, stmts: &[Stmt]) {
     for stmt in stmts {
         match stmt {
             Stmt::Comment { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => {}
-            Stmt::Let { value, .. } => {
+            Stmt::Let {
+                name, ty, value, ..
+            } => {
+                if let Some(t) = ty {
+                    if !matches!(t, crate::hub::Type::Int | crate::hub::Type::Float) {
+                        eg.non_numeric_vars.insert(name.clone());
+                    }
+                } else if matches!(
+                    value,
+                    Expr::Str(_)
+                        | Expr::Bool(_)
+                        | Expr::List(_)
+                        | Expr::StructInit { .. }
+                        | Expr::EnumVariant { .. }
+                ) || matches!(
+                    value,
+                    Expr::Intrinsic(intr)
+                        if matches!(
+                            intr.as_ref(),
+                            Intrinsic::Upper(_)
+                                | Intrinsic::Lower(_)
+                                | Intrinsic::ToStr(_)
+                                | Intrinsic::Contains { .. }
+                        )
+                ) {
+                    eg.non_numeric_vars.insert(name.clone());
+                }
                 eg.add_expr(value);
             }
             Stmt::Assign { target, value, .. } => {
@@ -1780,7 +1977,10 @@ fn extract_stmts_from_egraph(
 ) -> Vec<Stmt> {
     let mut out = Vec::new();
     for stmt in stmts {
-        if matches!(out.last(), Some(Stmt::Return { .. })) {
+        if matches!(
+            out.last(),
+            Some(Stmt::Return { .. } | Stmt::Break { .. } | Stmt::Continue { .. })
+        ) {
             break;
         }
         match stmt {
@@ -2393,7 +2593,10 @@ fn peval_stmts(
 ) -> Vec<Stmt> {
     let mut out = Vec::new();
     for stmt in stmts {
-        if matches!(out.last(), Some(Stmt::Return { .. })) {
+        if matches!(
+            out.last(),
+            Some(Stmt::Return { .. } | Stmt::Break { .. } | Stmt::Continue { .. })
+        ) {
             break;
         }
         match stmt {

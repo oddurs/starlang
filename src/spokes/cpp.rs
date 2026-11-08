@@ -763,6 +763,9 @@ impl CppFmtCtx {
         let s = self.fmt_expr(expr);
         match expr {
             Expr::Binary { .. } | Expr::Unary { .. } => format!("({})", s),
+            Expr::Intrinsic(intr) if matches!(intr.as_ref(), Intrinsic::Contains { .. }) => {
+                format!("({})", s)
+            }
             _ => s,
         }
     }
@@ -771,6 +774,9 @@ impl CppFmtCtx {
         match expr {
             Expr::Str(s) => format!("\"{}\"", escape_str(s)),
             Expr::Binary { op, .. } if binop_prec(*op) <= 3 => format!("({})", self.fmt_expr(expr)),
+            Expr::Intrinsic(intr) if matches!(intr.as_ref(), Intrinsic::Contains { .. }) => {
+                format!("({})", self.fmt_expr(expr))
+            }
             _ => self.fmt_clean_int(expr),
         }
     }
@@ -813,6 +819,11 @@ impl CppFmtCtx {
                     Expr::Binary { .. } | Expr::Unary { .. } => {
                         format!("{}({})", sym, self.fmt_expr(inner))
                     }
+                    Expr::Intrinsic(intr)
+                        if matches!(intr.as_ref(), Intrinsic::Contains { .. }) =>
+                    {
+                        format!("{}({})", sym, self.fmt_expr(inner))
+                    }
                     _ => format!("{}{}", sym, self.fmt_expr(inner)),
                 }
             }
@@ -829,14 +840,24 @@ impl CppFmtCtx {
                     }
                     None
                 };
+                let is_cpp_contains = |e: &Expr| {
+                    matches!(
+                        e,
+                        Expr::Intrinsic(intr) if matches!(intr.as_ref(), Intrinsic::Contains { .. })
+                    )
+                };
                 let l_raw = fmt_cmp_empty_list(left, right).unwrap_or_else(|| self.fmt_clean_int(left));
                 let r_raw = fmt_cmp_empty_list(right, left).unwrap_or_else(|| self.fmt_clean_int(right));
-                let l_str = if needs_parens(left, *op, false) {
+                let l_str = if needs_parens(left, *op, false)
+                    || (is_cpp_contains(left) && binop_prec(*op) >= 3)
+                {
                     format!("({})", l_raw)
                 } else {
                     l_raw
                 };
-                let r_str = if needs_parens(right, *op, true) {
+                let r_str = if needs_parens(right, *op, true)
+                    || (is_cpp_contains(right) && binop_prec(*op) >= 3)
+                {
                     format!("({})", r_raw)
                 } else {
                     r_raw

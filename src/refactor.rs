@@ -839,6 +839,13 @@ pub fn optimize_module(hub: &HubModule) -> (HubModule, usize) {
 fn opt_block(stmts: Vec<Stmt>, rewrites: &mut usize) -> Vec<Stmt> {
     let mut result = Vec::with_capacity(stmts.len());
     for stmt in stmts {
+        if matches!(
+            result.last(),
+            Some(Stmt::Return { .. } | Stmt::Break { .. } | Stmt::Continue { .. })
+        ) {
+            *rewrites += 1;
+            break;
+        }
         match stmt {
             Stmt::Let {
                 id,
