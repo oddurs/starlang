@@ -151,8 +151,9 @@ impl VmObserver for Collector {
 
 fn compact_value(v: &Value) -> String {
     let s = v.display_str();
-    if s.len() > 48 {
-        format!("{}...", &s[..45])
+    if s.chars().count() > 48 {
+        let prefix: String = s.chars().take(45).collect();
+        format!("{}...", prefix)
     } else {
         s
     }

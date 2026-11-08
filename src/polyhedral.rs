@@ -494,9 +494,10 @@ fn analyze_single_loop(
         if scan.local_lets.contains(var) {
             continue;
         }
-        let all_additive = ops
-            .iter()
-            .all(|(op, _)| matches!(op, AssignOp::AddAssign | AssignOp::SubAssign));
+        let all_additive = ops.iter().all(|(op, val)| {
+            matches!(op, AssignOp::AddAssign | AssignOp::SubAssign)
+                && !expr_mentions_var(val, var)
+        });
         let all_minmax = ops.iter().all(|(op, val)| {
             if *op != AssignOp::Set {
                 return false;
@@ -1025,6 +1026,9 @@ fn ipet_stmts_cycles(
                     "V({} + 1) = ({} - ({} + 1)) = V({}) - 1 < V({})",
                     var, end_s, var, var, var
                 );
+                let mut range_scan = LoopBodyScan::default();
+                scan_loop_body(body, var, false, &mut range_scan);
+                let mutates_induction = range_scan.writes.contains_key(var);
                 loop_proofs.push(LoopTerminationProof {
                     stmt_id: *id,
                     fn_name: fn_name.to_string(),
@@ -1032,8 +1036,12 @@ fn ipet_stmts_cycles(
                     ranking_function: rank_fn,
                     bounded_below_vc: bounded_vc,
                     strict_decrease_vc: dec_vc,
-                    proven_terminating: true,
-                    status: "Terminating (Well-Founded Ranking)".to_string(),
+                    proven_terminating: !mutates_induction,
+                    status: if !mutates_induction {
+                        "Terminating (Well-Founded Ranking)".to_string()
+                    } else {
+                        "Unproven (Induction Variable Mutated)".to_string()
+                    },
                     witness_or_note: format!(
                         "Induction variable `{}` strictly increments by +1 toward upper bound `{}`",
                         var, end_s
@@ -1041,10 +1049,10 @@ fn ipet_stmts_cycles(
                 });
 
                 let mut body_path = Vec::new();
-                let (bb_c0, _bb_c1, bw_c0, _bw_c1) =
+                let (bb_c0, bb_c1, bw_c0, bw_c1) =
                     ipet_stmts_cycles(fn_name, body, loop_proofs, &mut body_path);
-                let iter_wc = bw_c0 + 3;
-                let iter_bc = bb_c0 + 3;
+                let iter_wc = bw_c0 + bw_c1 * 64 + 3;
+                let iter_bc = bb_c0 + bb_c1 * 64 + 3;
 
                 if let (Expr::Int(lo), Expr::Int(hi)) = (start, end) {
                     let trip = (*hi - *lo).max(0) as u64;
@@ -1099,10 +1107,10 @@ fn ipet_stmts_cycles(
                 });
 
                 let mut body_path = Vec::new();
-                let (bb_c0, _bb_c1, bw_c0, _bw_c1) =
+                let (bb_c0, bb_c1, bw_c0, bw_c1) =
                     ipet_stmts_cycles(fn_name, body, loop_proofs, &mut body_path);
-                let iter_wc = bw_c0 + 3;
-                let iter_bc = bb_c0 + 3;
+                let iter_wc = bw_c0 + bw_c1 * 64 + 3;
+                let iter_bc = bb_c0 + bb_c1 * 64 + 3;
                 bc_c0 += 2;
                 bc_c1 += iter_bc;
                 wc_c0 += 2;
@@ -1118,10 +1126,10 @@ fn ipet_stmts_cycles(
                 loop_proofs.push(proof);
 
                 let mut body_path = Vec::new();
-                let (bb_c0, _bb_c1, bw_c0, _bw_c1) =
+                let (bb_c0, bb_c1, bw_c0, bw_c1) =
                     ipet_stmts_cycles(fn_name, body, loop_proofs, &mut body_path);
-                let iter_wc = bw_c0 + expr_cycle_cost(cond) + 2;
-                let iter_bc = bb_c0 + expr_cycle_cost(cond) + 2;
+                let iter_wc = bw_c0 + bw_c1 * 64 + expr_cycle_cost(cond) + 2;
+                let iter_bc = bb_c0 + bb_c1 * 64 + expr_cycle_cost(cond) + 2;
                 bc_c0 += 2;
                 bc_c1 += iter_bc;
                 wc_c0 += 2;
@@ -1170,6 +1178,42 @@ fn ipet_stmts_cycles(
     (bc_c0, bc_c1, wc_c0, wc_c1)
 }
 
+fn expr_mentions_var(expr: &Expr, target: &str) -> bool {
+    match expr {
+        Expr::Var(v) => v == target,
+        Expr::Binary { left, right, .. } => {
+            expr_mentions_var(left, target) || expr_mentions_var(right, target)
+        }
+        Expr::Unary { expr: inner, .. } => expr_mentions_var(inner, target),
+        Expr::Call { args, .. } | Expr::List(args) => {
+            args.iter().any(|a| expr_mentions_var(a, target))
+        }
+        Expr::Index { base, index } => {
+            expr_mentions_var(base, target) || expr_mentions_var(index, target)
+        }
+        Expr::FieldAccess { base, .. } => expr_mentions_var(base, target),
+        Expr::StructInit { fields, .. } => fields.iter().any(|(_, e)| expr_mentions_var(e, target)),
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Len(a)
+            | Intrinsic::Abs(a)
+            | Intrinsic::Upper(a)
+            | Intrinsic::Lower(a)
+            | Intrinsic::ToStr(a) => expr_mentions_var(a, target),
+            Intrinsic::Min(a, b) | Intrinsic::Max(a, b) => {
+                expr_mentions_var(a, target) || expr_mentions_var(b, target)
+            }
+            Intrinsic::Push { list, value } => {
+                expr_mentions_var(list, target) || expr_mentions_var(value, target)
+            }
+            Intrinsic::Contains { haystack, needle } => {
+                expr_mentions_var(haystack, target) || expr_mentions_var(needle, target)
+            }
+            Intrinsic::Print(args) => args.iter().any(|a| expr_mentions_var(a, target)),
+        },
+        _ => false,
+    }
+}
+
 fn synthesize_while_ranking_proof(
     stmt_id: NodeId,
     fn_name: &str,
@@ -1185,22 +1229,30 @@ fn synthesize_while_ranking_proof(
         match (op, left.as_ref(), right.as_ref()) {
             (BinOp::Lt | BinOp::Le, Expr::Var(v), bound) => {
                 let bound_s = format_expr_compact(bound);
-                let increments = scan.writes.get(v).is_some_and(|ops| {
-                    ops.iter().any(|(aop, val)| match (aop, val) {
-                        (AssignOp::AddAssign, Expr::Int(k)) => *k > 0,
-                        (
-                            AssignOp::Set,
-                            Expr::Binary {
-                                op: BinOp::Add,
-                                left: l,
-                                right: r,
-                            },
-                        ) => {
-                            matches!((l.as_ref(), r.as_ref()), (Expr::Var(vn), Expr::Int(k)) if vn == v && *k > 0)
-                        }
-                        _ => false,
-                    })
-                });
+                let bound_invariant = !scan
+                    .writes
+                    .keys()
+                    .any(|w| expr_mentions_var(bound, w));
+                let increments = bound_invariant
+                    && scan.writes.get(v).is_some_and(|ops| {
+                        ops.iter().any(|(aop, val)| match (aop, val) {
+                            (AssignOp::AddAssign, Expr::Int(k)) => *k > 0,
+                            (
+                                AssignOp::Set,
+                                Expr::Binary {
+                                    op: BinOp::Add,
+                                    left: l,
+                                    right: r,
+                                },
+                            ) => {
+                                matches!((l.as_ref(), r.as_ref()), (Expr::Var(vn), Expr::Int(k)) if vn == v && *k > 0)
+                            }
+                            _ => false,
+                        }) && !ops.iter().any(|(aop, val)| {
+                            matches!((aop, val), (AssignOp::SubAssign, Expr::Int(k)) if *k > 0)
+                                || matches!((aop, val), (AssignOp::AddAssign, Expr::Int(k)) if *k <= 0)
+                        })
+                    });
                 if increments {
                     return LoopTerminationProof {
                         stmt_id,
@@ -1225,32 +1277,40 @@ fn synthesize_while_ranking_proof(
             }
             (BinOp::Gt | BinOp::Ge, Expr::Var(v), bound) => {
                 let bound_s = format_expr_compact(bound);
-                let decrements = scan.writes.get(v).is_some_and(|ops| {
-                    ops.iter().any(|(aop, val)| match (aop, val) {
-                        (AssignOp::SubAssign, Expr::Int(k)) => *k > 0,
-                        (
-                            AssignOp::Set,
-                            Expr::Binary {
-                                op: BinOp::Sub,
-                                left: l,
-                                right: r,
-                            },
-                        ) => {
-                            matches!((l.as_ref(), r.as_ref()), (Expr::Var(vn), Expr::Int(k)) if vn == v && *k > 0)
-                        }
-                        (
-                            AssignOp::Set,
-                            Expr::Binary {
-                                op: BinOp::Div | BinOp::IntDiv,
-                                left: l,
-                                right: r,
-                            },
-                        ) => {
-                            matches!((l.as_ref(), r.as_ref()), (Expr::Var(vn), Expr::Int(k)) if vn == v && *k > 1)
-                        }
-                        _ => false,
-                    })
-                });
+                let bound_invariant = !scan
+                    .writes
+                    .keys()
+                    .any(|w| expr_mentions_var(bound, w));
+                let decrements = bound_invariant
+                    && scan.writes.get(v).is_some_and(|ops| {
+                        ops.iter().any(|(aop, val)| match (aop, val) {
+                            (AssignOp::SubAssign, Expr::Int(k)) => *k > 0,
+                            (
+                                AssignOp::Set,
+                                Expr::Binary {
+                                    op: BinOp::Sub,
+                                    left: l,
+                                    right: r,
+                                },
+                            ) => {
+                                matches!((l.as_ref(), r.as_ref()), (Expr::Var(vn), Expr::Int(k)) if vn == v && *k > 0)
+                            }
+                            (
+                                AssignOp::Set,
+                                Expr::Binary {
+                                    op: BinOp::Div | BinOp::IntDiv,
+                                    left: l,
+                                    right: r,
+                                },
+                            ) => {
+                                matches!((l.as_ref(), r.as_ref()), (Expr::Var(vn), Expr::Int(k)) if vn == v && *k > 1)
+                            }
+                            _ => false,
+                        }) && !ops.iter().any(|(aop, val)| {
+                            matches!((aop, val), (AssignOp::AddAssign, Expr::Int(k)) if *k > 0)
+                                || matches!((aop, val), (AssignOp::SubAssign, Expr::Int(k)) if *k <= 0)
+                        })
+                    });
                 if decrements {
                     return LoopTerminationProof {
                         stmt_id,

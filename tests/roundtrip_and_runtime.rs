@@ -2677,4 +2677,93 @@ pub fn main() {
         "Expected Add/add conflict on newly_added, got: {:?}",
         mrep.conflicts
     );
+
+    // 7. Alpha-equivalence distinguishes struct field targets (`p.a = 1` vs `p.b = 1`) and normalizes intrinsics
+    let eq_src_a = "\
+pub struct Pair {
+    pub a: i64,
+    pub b: i64,
+}
+pub fn tweak(mut p: Pair, x: i64) -> i64 {
+    p.a = x.min(10);
+    return p.a + p.b;
+}
+fn main() {
+    let p: Pair = Pair { a: 1, b: 2 };
+    println!(\"{}\", tweak(p, 5));
+}
+";
+    let eq_src_b_renamed = "\
+pub struct Pair {
+    pub a: i64,
+    pub b: i64,
+}
+pub fn tweak(mut q: Pair, y: i64) -> i64 {
+    q.a = y.min(10);
+    return q.a + q.b;
+}
+fn main() {
+    let p: Pair = Pair { a: 1, b: 2 };
+    println!(\"{}\", tweak(p, 5));
+}
+";
+    let eq_src_c_wrong_field = "\
+pub struct Pair {
+    pub a: i64,
+    pub b: i64,
+}
+pub fn tweak(mut p: Pair, x: i64) -> i64 {
+    p.b = x.min(10);
+    return p.a + p.b;
+}
+fn main() {
+    let p: Pair = Pair { a: 1, b: 2 };
+    println!(\"{}\", tweak(p, 5));
+}
+";
+    let eq_eng = StarEngine::from_source(SpokeId::Rust, eq_src_a).unwrap();
+    let rep_renamed = eq_eng
+        .equiv_with(SpokeId::Rust, eq_src_b_renamed, 16)
+        .unwrap();
+    let f_tweak_ren = rep_renamed
+        .functions
+        .iter()
+        .find(|f| f.name == "tweak")
+        .unwrap();
+    assert!(
+        f_tweak_ren.alpha_equivalent,
+        "Alpha-renamed function with `FieldAccess` and `Intrinsic::Min` should be alpha_equivalent"
+    );
+    let rep_wrong_field = eq_eng
+        .equiv_with(SpokeId::Rust, eq_src_c_wrong_field, 16)
+        .unwrap();
+    let f_tweak_wrong = rep_wrong_field
+        .functions
+        .iter()
+        .find(|f| f.name == "tweak")
+        .unwrap();
+    assert!(
+        !f_tweak_wrong.alpha_equivalent,
+        "`p.a = ...` and `p.b = ...` must not be alpha_equivalent"
+    );
+
+    // 8. Polyhedral loop analyzer rejects self-referential `acc += acc` as a parallel reduction
+    let self_ref_loop = "\
+pub fn exp_double(n: i64) -> i64 {
+    let mut acc: i64 = 1;
+    for i in 0..n {
+        acc += acc;
+    }
+    return acc;
+}
+fn main() {
+    println!(\"{}\", exp_double(4));
+}
+";
+    let poly_eng = StarEngine::from_source(SpokeId::Rust, self_ref_loop).unwrap();
+    let poly_rep = poly_eng.polyhedral();
+    assert_eq!(
+        poly_rep.vectorizable_loops, 0,
+        "Self-referential `acc += acc` is exponential doubling, not a parallel monoid reduction"
+    );
 }

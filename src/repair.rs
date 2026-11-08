@@ -5,7 +5,8 @@ use crate::complexity::collect_seed_call_args;
 use crate::debugger::{compute_stmt_spoke_lines, record_time_travel_default};
 use crate::eval::{eval_fn_with_values, eval_tests_default, Value};
 use crate::hub::{
-    AssignOp, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, NodeId, Stmt,
+    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, MatchPat, NodeId,
+    Stmt,
 };
 use crate::lens::SpokeId;
 use crate::quickcheck::{run_quickcheck, shrink_failing_call, MinimizedCounterexample};
@@ -225,12 +226,35 @@ pub fn check_module_equivalence(
     let mut alpha_identical_count = 0usize;
     let mut total_trials = 0usize;
 
+    let left_fn_count = left_hub
+        .items
+        .iter()
+        .filter(|i| matches!(i, Item::Function(_)))
+        .count();
+    let right_fn_count = right_hub
+        .items
+        .iter()
+        .filter(|i| matches!(i, Item::Function(_)))
+        .count();
+    if left_fn_count != right_fn_count {
+        all_equivalent = false;
+    }
+
     for item in &left_hub.items {
         if let Item::Function(f_left) = item {
             let Some(f_right) = right_hub.find_fn(&f_left.name) else {
+                all_equivalent = false;
                 continue;
             };
-            if f_left.params.len() != f_right.params.len() {
+            if f_left.params.len() != f_right.params.len()
+                || f_left.ret_ty != f_right.ret_ty
+                || f_left
+                    .params
+                    .iter()
+                    .zip(&f_right.params)
+                    .any(|(a, b)| a.ty != b.ty)
+            {
+                all_equivalent = false;
                 continue;
             }
 
@@ -313,9 +337,13 @@ fn shrink_bisim_counterexample(
     fn_name: &str,
     initial_args: &[Value],
 ) -> MinimizedCounterexample {
-    // Use `shrink_failing_call` if right_hub crashes, otherwise shrink directly toward minimal divergence
-    if let Some(shrunk) = shrink_failing_call(right_hub, fn_name, initial_args) {
-        return shrunk;
+    // Use `shrink_failing_call` if right_hub crashes while left_hub succeeds
+    if eval_fn_with_values(left_hub, fn_name, initial_args.to_vec(), 20_000).is_ok()
+        && eval_fn_with_values(right_hub, fn_name, initial_args.to_vec(), 20_000).is_err()
+    {
+        if let Some(shrunk) = shrink_failing_call(right_hub, fn_name, initial_args) {
+            return shrunk;
+        }
     }
     let mut current = initial_args.to_vec();
     let mut shrink_steps = 0usize;
@@ -323,15 +351,20 @@ fn shrink_bisim_counterexample(
         let mut improved = false;
         for idx in 0..current.len() {
             if let Value::Int(v) = current[idx] {
-                for cand in [0, v / 2, if v > 0 { v - 1 } else { v + 1 }] {
+                for cand in [0, v / 2, if v > 0 { v - 1 } else { v.saturating_add(1) }] {
                     if cand == v {
                         continue;
                     }
                     let mut next = current.clone();
                     next[idx] = Value::Int(cand);
-                    let r1 = eval_fn_with_values(left_hub, fn_name, next.clone(), 20_000).ok();
-                    let r2 = eval_fn_with_values(right_hub, fn_name, next.clone(), 20_000).ok();
-                    if r1.as_ref().map(|x| (&x.0, &x.1)) != r2.as_ref().map(|x| (&x.0, &x.1)) {
+                    let r1 = eval_fn_with_values(left_hub, fn_name, next.clone(), 20_000);
+                    let r2 = eval_fn_with_values(right_hub, fn_name, next.clone(), 20_000);
+                    let same = match (&r1, &r2) {
+                        (Ok((v1, s1, _)), Ok((v2, s2, _))) => v1 == v2 && s1 == s2,
+                        (Err(_), Err(_)) => true,
+                        _ => false,
+                    };
+                    if !same {
                         current = next;
                         shrink_steps += 1;
                         improved = true;
@@ -389,11 +422,13 @@ fn gen_bisim_args(
 
 fn normalize_fn_alpha(f: &FnDecl) -> String {
     let mut var_map: HashMap<String, String> = HashMap::new();
+    let mut sig = Vec::new();
     for (idx, p) in f.params.iter().enumerate() {
         var_map.insert(p.name.clone(), format!("$v{}", idx));
+        sig.push(format!("{:?}", p.ty));
     }
     let mut counter = f.params.len();
-    let mut out = String::new();
+    let mut out = format!("fn({})->{:?}:", sig.join(","), f.ret_ty);
     normalize_stmts_alpha(&f.body, &mut var_map, &mut counter, &mut out);
     out
 }
@@ -417,14 +452,29 @@ fn normalize_stmts_alpha(
             Stmt::Assign {
                 target, op, value, ..
             } => {
-                let root = target.root_var();
-                let canon = var_map
-                    .get(root)
-                    .cloned()
-                    .unwrap_or_else(|| root.to_string());
+                let tgt_str = match target {
+                    AssignTarget::Var(v) => var_map
+                        .get(v)
+                        .cloned()
+                        .unwrap_or_else(|| v.to_string()),
+                    AssignTarget::Field { base, field } => {
+                        let b = var_map
+                            .get(base)
+                            .cloned()
+                            .unwrap_or_else(|| base.to_string());
+                        format!("{}.{}", b, field)
+                    }
+                    AssignTarget::Index { base, index } => {
+                        let b = var_map
+                            .get(base)
+                            .cloned()
+                            .unwrap_or_else(|| base.to_string());
+                        format!("{}[{}]", b, normalize_expr_alpha(index, var_map))
+                    }
+                };
                 out.push_str(&format!(
                     "(assign {} {:?} {});",
-                    canon,
+                    tgt_str,
                     op,
                     normalize_expr_alpha(value, var_map)
                 ));
@@ -441,6 +491,24 @@ fn normalize_stmts_alpha(
                 out.push_str("] [");
                 let mut else_map = var_map.clone();
                 normalize_stmts_alpha(else_body, &mut else_map, counter, out);
+                out.push_str("]);");
+            }
+            Stmt::Match { expr, arms, .. } => {
+                out.push_str(&format!("(match {} [", normalize_expr_alpha(expr, var_map)));
+                for arm in arms {
+                    let pat_str = match &arm.pat {
+                        MatchPat::EnumVariant { enum_name, variant } => {
+                            format!("{}::{}", enum_name, variant)
+                        }
+                        MatchPat::Int(v) => v.to_string(),
+                        MatchPat::Str(s) => format!("{:?}", s),
+                        MatchPat::Wildcard => "_".to_string(),
+                    };
+                    out.push_str(&format!("({} => [", pat_str));
+                    let mut arm_map = var_map.clone();
+                    normalize_stmts_alpha(&arm.body, &mut arm_map, counter, out);
+                    out.push_str("])");
+                }
                 out.push_str("]);");
             }
             Stmt::While { cond, body, .. } => {
@@ -478,6 +546,8 @@ fn normalize_stmts_alpha(
                 normalize_stmts_alpha(body, &mut body_map, counter, out);
                 out.push_str("]);");
             }
+            Stmt::Break { .. } => out.push_str("(break);"),
+            Stmt::Continue { .. } => out.push_str("(continue);"),
             Stmt::Return { value, .. } => {
                 let v = value
                     .as_ref()
@@ -485,7 +555,19 @@ fn normalize_stmts_alpha(
                     .unwrap_or_default();
                 out.push_str(&format!("(ret {});", v));
             }
-            _ => {}
+            Stmt::Assert { cond, .. } => {
+                out.push_str(&format!("(assert {});", normalize_expr_alpha(cond, var_map)));
+            }
+            Stmt::AssertEq { left, right, .. } => {
+                out.push_str(&format!(
+                    "(assert-eq {} {});",
+                    normalize_expr_alpha(left, var_map),
+                    normalize_expr_alpha(right, var_map)
+                ));
+            }
+            Stmt::Expr { expr, .. } => {
+                out.push_str(&format!("(expr {});", normalize_expr_alpha(expr, var_map)));
+            }
         }
     }
 }
@@ -525,7 +607,54 @@ fn normalize_expr_alpha(e: &Expr, var_map: &HashMap<String, String>) -> String {
         Expr::FieldAccess { base, field } => {
             format!("(fld {} {})", normalize_expr_alpha(base, var_map), field)
         }
-        _ => format!("{:?}", e),
+        Expr::List(items) => {
+            let p: Vec<String> = items
+                .iter()
+                .map(|x| normalize_expr_alpha(x, var_map))
+                .collect();
+            format!("(list [{}])", p.join(","))
+        }
+        Expr::StructInit { name, fields } => {
+            let p: Vec<String> = fields
+                .iter()
+                .map(|(fname, fval)| format!("{}:{}", fname, normalize_expr_alpha(fval, var_map)))
+                .collect();
+            format!("(struct {} {{{}}})", name, p.join(","))
+        }
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Len(a) => format!("(len {})", normalize_expr_alpha(a, var_map)),
+            Intrinsic::Min(a, b) => format!(
+                "(min {} {})",
+                normalize_expr_alpha(a, var_map),
+                normalize_expr_alpha(b, var_map)
+            ),
+            Intrinsic::Max(a, b) => format!(
+                "(max {} {})",
+                normalize_expr_alpha(a, var_map),
+                normalize_expr_alpha(b, var_map)
+            ),
+            Intrinsic::Abs(a) => format!("(abs {})", normalize_expr_alpha(a, var_map)),
+            Intrinsic::Push { list, value } => format!(
+                "(push {} {})",
+                normalize_expr_alpha(list, var_map),
+                normalize_expr_alpha(value, var_map)
+            ),
+            Intrinsic::Contains { haystack, needle } => format!(
+                "(contains {} {})",
+                normalize_expr_alpha(haystack, var_map),
+                normalize_expr_alpha(needle, var_map)
+            ),
+            Intrinsic::Upper(a) => format!("(upper {})", normalize_expr_alpha(a, var_map)),
+            Intrinsic::Lower(a) => format!("(lower {})", normalize_expr_alpha(a, var_map)),
+            Intrinsic::ToStr(a) => format!("(to-str {})", normalize_expr_alpha(a, var_map)),
+            Intrinsic::Print(args) => {
+                let p: Vec<String> = args
+                    .iter()
+                    .map(|x| normalize_expr_alpha(x, var_map))
+                    .collect();
+                format!("(print [{}])", p.join(","))
+            }
+        },
     }
 }
 
@@ -553,7 +682,14 @@ fn localize_faults(
             runtime_error,
         } = &ob.status
         {
-            let ob_nid = ob.id as NodeId;
+            let mut matched_sids = Vec::new();
+            if let Some(f) = numbered.find_fn(&ob.func) {
+                collect_fn_stmt_ids(&f.body, &mut matched_sids);
+            }
+            let ob_nid = matched_sids.first().copied().unwrap_or(ob.id as NodeId);
+            for sid in matched_sids {
+                priority_ids.insert(sid);
+            }
             priority_ids.insert(ob_nid);
             faults.push(FaultLocation {
                 stmt_id: ob_nid,
@@ -779,6 +915,36 @@ fn replace_stmt_at_path(stmts: &mut [Stmt], path: &[usize], replacement: Stmt) -
     }
 }
 
+fn collect_fn_stmt_ids(stmts: &[Stmt], out: &mut Vec<NodeId>) {
+    for s in stmts {
+        let sid = stmt_id_of(s);
+        if sid > 0 {
+            out.push(sid);
+        }
+        match s {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_fn_stmt_ids(then_body, out);
+                collect_fn_stmt_ids(else_body, out);
+            }
+            Stmt::Match { arms, .. } => {
+                for a in arms {
+                    collect_fn_stmt_ids(&a.body, out);
+                }
+            }
+            Stmt::While { body, .. }
+            | Stmt::ForEach { body, .. }
+            | Stmt::ForRange { body, .. } => {
+                collect_fn_stmt_ids(body, out);
+            }
+            _ => {}
+        }
+    }
+}
+
 fn mutate_single_stmt_for_repair(stmt: &Stmt) -> Vec<(String, String, String, Stmt)> {
     let mut out = Vec::new();
     match stmt {
@@ -799,6 +965,26 @@ fn mutate_single_stmt_for_repair(stmt: &Stmt) -> Vec<(String, String, String, St
                         cond: new_cond,
                         then_body: then_body.clone(),
                         else_body: else_body.clone(),
+                        meta: meta.clone(),
+                    },
+                ));
+            }
+        }
+        Stmt::While {
+            id,
+            cond,
+            body,
+            meta,
+        } => {
+            for (kind, b_str, a_str, new_cond) in mutate_expr_for_repair(cond) {
+                out.push((
+                    kind,
+                    format!("while ({})", b_str),
+                    format!("while ({})", a_str),
+                    Stmt::While {
+                        id: *id,
+                        cond: new_cond,
+                        body: body.clone(),
                         meta: meta.clone(),
                     },
                 ));
@@ -973,6 +1159,36 @@ fn mutate_expr_for_repair(expr: &Expr) -> Vec<(String, String, String, Expr)> {
                 ));
             }
         }
+        Expr::Unary { op, expr: inner } => {
+            for (kind, b_s, a_s, ni) in mutate_expr_for_repair(inner) {
+                out.push((
+                    kind,
+                    b_s,
+                    a_s,
+                    Expr::Unary {
+                        op: *op,
+                        expr: Box::new(ni),
+                    },
+                ));
+            }
+        }
+        Expr::Call { func, args } => {
+            for (idx, arg) in args.iter().enumerate() {
+                for (kind, b_s, a_s, na) in mutate_expr_for_repair(arg) {
+                    let mut new_args = args.clone();
+                    new_args[idx] = na;
+                    out.push((
+                        kind,
+                        b_s,
+                        a_s,
+                        Expr::Call {
+                            func: func.clone(),
+                            args: new_args,
+                        },
+                    ));
+                }
+            }
+        }
         Expr::Intrinsic(intr) => match intr.as_ref() {
             Intrinsic::Min(a, b) => {
                 out.push((
@@ -981,6 +1197,22 @@ fn mutate_expr_for_repair(expr: &Expr) -> Vec<(String, String, String, Expr)> {
                     "max(a, b)".to_string(),
                     Expr::Intrinsic(Box::new(Intrinsic::Max(a.clone(), b.clone()))),
                 ));
+                for (kind, b_s, a_s, na) in mutate_expr_for_repair(a) {
+                    out.push((
+                        kind,
+                        b_s,
+                        a_s,
+                        Expr::Intrinsic(Box::new(Intrinsic::Min(na, b.clone()))),
+                    ));
+                }
+                for (kind, b_s, a_s, nb) in mutate_expr_for_repair(b) {
+                    out.push((
+                        kind,
+                        b_s,
+                        a_s,
+                        Expr::Intrinsic(Box::new(Intrinsic::Min(a.clone(), nb))),
+                    ));
+                }
             }
             Intrinsic::Max(a, b) => {
                 out.push((
@@ -989,6 +1221,32 @@ fn mutate_expr_for_repair(expr: &Expr) -> Vec<(String, String, String, Expr)> {
                     "min(a, b)".to_string(),
                     Expr::Intrinsic(Box::new(Intrinsic::Min(a.clone(), b.clone()))),
                 ));
+                for (kind, b_s, a_s, na) in mutate_expr_for_repair(a) {
+                    out.push((
+                        kind,
+                        b_s,
+                        a_s,
+                        Expr::Intrinsic(Box::new(Intrinsic::Max(na, b.clone()))),
+                    ));
+                }
+                for (kind, b_s, a_s, nb) in mutate_expr_for_repair(b) {
+                    out.push((
+                        kind,
+                        b_s,
+                        a_s,
+                        Expr::Intrinsic(Box::new(Intrinsic::Max(a.clone(), nb))),
+                    ));
+                }
+            }
+            Intrinsic::Abs(a) => {
+                for (kind, b_s, a_s, na) in mutate_expr_for_repair(a) {
+                    out.push((
+                        kind,
+                        b_s,
+                        a_s,
+                        Expr::Intrinsic(Box::new(Intrinsic::Abs(na))),
+                    ));
+                }
             }
             _ => {}
         },

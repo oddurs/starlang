@@ -184,7 +184,7 @@ impl L1DataCacheSim {
             let tag = way_list.remove(pos);
             way_list.push(tag);
             // Trigger next-line hardware stream prefetcher on sequential stride
-            if self.last_line_by_stream.get(stream) == Some(&line_addr.saturating_sub(1)) {
+            if line_addr > 0 && self.last_line_by_stream.get(stream) == Some(&(line_addr - 1)) {
                 self.prefetch_queue.insert(line_addr + 1);
             }
             self.last_line_by_stream.insert(stream.to_string(), line_addr);
@@ -705,7 +705,7 @@ fn sim_stmts_microarch(
                     mem_cyc += c;
                 }
                 acc.mem_uops += trips;
-                acc.l1_hits += hits + pref_hits;
+                acc.l1_hits += hits;
                 acc.l1_misses += misses;
                 acc.mem_cycles += mem_cyc;
                 cache_sites.push(CacheSiteProfile {
@@ -1074,26 +1074,29 @@ fn schedule_fn_instructions(f: &FnDecl) -> FunctionScheduleReport {
 
     for i in 0..n {
         for j in (i + 1)..n {
-            // Control barrier ordering
-            if raw_insts[i].is_barrier || raw_insts[j].is_barrier {
-                add_edge(i, j, "Barrier", 1, "pc");
-                continue;
-            }
+            let mut added_data_dep = false;
             // RAW (True Flow dependence): i defines x, j uses x
             for d in &raw_insts[i].defs {
                 if raw_insts[j].uses.contains(d) {
                     add_edge(i, j, "RAW", raw_insts[i].latency, d);
+                    added_data_dep = true;
                 }
                 // WAW (Output dependence): i defines x, j defines x
                 if raw_insts[j].defs.contains(d) {
                     add_edge(i, j, "WAW", 1, d);
+                    added_data_dep = true;
                 }
             }
             // WAR (Anti dependence): i uses x, j defines x
             for u in &raw_insts[i].uses {
                 if raw_insts[j].defs.contains(u) {
                     add_edge(i, j, "WAR", 1, u);
+                    added_data_dep = true;
                 }
+            }
+            // Control barrier ordering (when not already constrained by a data hazard)
+            if !added_data_dep && (raw_insts[i].is_barrier || raw_insts[j].is_barrier) {
+                add_edge(i, j, "Barrier", 1, "pc");
             }
         }
     }
@@ -1103,10 +1106,10 @@ fn schedule_fn_instructions(f: &FnDecl) -> FunctionScheduleReport {
     for u in (0..n).rev() {
         let max_succ = succs[u]
             .iter()
-            .map(|(v, edge_lat)| edge_lat.saturating_sub(raw_insts[u].latency) + heights[*v])
+            .map(|(v, edge_lat)| *edge_lat + heights[*v])
             .max()
             .unwrap_or(0);
-        heights[u] = raw_insts[u].latency + max_succ;
+        heights[u] = raw_insts[u].latency.max(max_succ);
     }
     let critical_path_cycles = heights.iter().copied().max().unwrap_or(1);
 
@@ -1276,6 +1279,9 @@ fn lower_stmts_for_scheduling(
             Stmt::Assign {
                 target, op, value, ..
             } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    let _ = lower_expr_for_scheduling(index, None, out, tmp_counter);
+                }
                 let dst = match target {
                     AssignTarget::Var(v) => v.clone(),
                     AssignTarget::Index { base, .. } | AssignTarget::Field { base, .. } => {

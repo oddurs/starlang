@@ -445,10 +445,13 @@ fn extract_cdfg_ops_from_stmts(
                     depends_on_prev: !out.is_empty(),
                     is_loop_carried: in_loop,
                 });
-                for extra in then_ops.into_iter().skip(1) {
+                for mut extra in then_ops.into_iter().skip(1) {
+                    extra.rtl_assign = format!("if ({}) begin {} end", cond_rhs, extra.rtl_assign);
                     out.push(extra);
                 }
-                for extra in else_ops.into_iter().skip(1) {
+                for mut extra in else_ops.into_iter().skip(1) {
+                    extra.rtl_assign =
+                        format!("if (!({})) begin {} end", cond_rhs, extra.rtl_assign);
                     out.push(extra);
                 }
             }
@@ -690,15 +693,13 @@ pub fn compile_hls_rtl(hub: &HubModule) -> HlsRtlReport {
                 format!("{}_r <= {}_i;", s, s)
             })
             .collect();
+        let mut idle_rtl = vec!["done_o <= 1'b0;".to_string()];
+        idle_rtl.extend(param_latches);
         fsmd_states.push(HlsFsmdState {
             state_id: 0,
             state_name: "S_IDLE".to_string(),
             active_ops: vec!["WAIT_START_HANDSHAKE".to_string()],
-            datapath_rtl: if param_latches.is_empty() {
-                vec!["done_o <= 1'b0;".to_string()]
-            } else {
-                param_latches
-            },
+            datapath_rtl: idle_rtl,
             next_state_rule: "if (start_i) state_q <= S_STAGE_1;".to_string(),
             stage_delay_ns: 0.75,
         });

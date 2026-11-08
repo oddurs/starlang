@@ -196,12 +196,8 @@ impl FheBuilder {
         level_drop: usize,
         src: String,
     ) {
-        self.cur_noise_bits = ((self.cur_noise_bits + noise_delta) * 10.0).round() / 10.0;
-        if level_drop > 0 && self.cur_level > level_drop {
-            self.cur_level -= level_drop;
-        }
-        // If noise budget drops below 32 bits, insert a Programmable Bootstrap (PBS) refresh!
-        if self.total_budget_bits - self.cur_noise_bits < 32.0 {
+        // If noise budget would drop below 32 bits, insert a Programmable Bootstrap (PBS) refresh first!
+        if self.total_budget_bits - (self.cur_noise_bits + noise_delta) < 32.0 {
             self.bootstrap_count += 1;
             self.cur_noise_bits = 14.0;
             self.cur_level = self.cur_level.max(5);
@@ -216,6 +212,10 @@ impl FheBuilder {
                 remaining_budget_bits: rem_boot,
                 source_expr: "auto-bootstrap noise refresh".to_string(),
             });
+        }
+        self.cur_noise_bits = ((self.cur_noise_bits + noise_delta) * 10.0).round() / 10.0;
+        if level_drop > 0 && self.cur_level >= level_drop {
+            self.cur_level = (self.cur_level - level_drop).max(1);
         }
         let rem = self.remaining();
         self.gates.push(FheGateOp {
@@ -584,11 +584,8 @@ pub fn compile_fhe_circuit(hub: &HubModule) -> FheCircuitReport {
         let c_enc = (a_mask * sk_s + t_mod * small_err + m_norm).rem_euclid(q_mod);
         let phase = (c_enc - a_mask * sk_s).rem_euclid(q_mod);
         let m_dec = (phase % t_mod) as i64;
-        let sample_decrypted_out = if sample_plaintext_out < 0 {
-            sample_plaintext_out
-        } else {
-            m_dec
-        };
+        let sample_decrypted_out =
+            ((sample_plaintext_out as i128).div_euclid(t_mod) * t_mod + (m_dec as i128)) as i64;
         let final_budget = builder.remaining();
         let decryption_verified =
             sample_decrypted_out == sample_plaintext_out && final_budget > 0.0;
@@ -965,8 +962,11 @@ fn walk_seplogic_stmts(
                     post_spatial_heap: pre,
                     disjointness_verified: true,
                 });
+                let saved_len = active_preds.len();
                 walk_seplogic_stmts(then_body, cells, steps, active_preds);
+                active_preds.truncate(saved_len);
                 walk_seplogic_stmts(else_body, cells, steps, active_preds);
+                active_preds.truncate(saved_len);
             }
             Stmt::While { cond, body, .. } => {
                 let pre = format!("{} * R_caller", active_preds.join(" * "));
@@ -979,7 +979,9 @@ fn walk_seplogic_stmts(
                     post_spatial_heap: pre,
                     disjointness_verified: true,
                 });
+                let saved_len = active_preds.len();
                 walk_seplogic_stmts(body, cells, steps, active_preds);
+                active_preds.truncate(saved_len);
             }
             Stmt::ForEach {
                 var, iter, body, ..
@@ -998,7 +1000,9 @@ fn walk_seplogic_stmts(
                     post_spatial_heap: pre,
                     disjointness_verified: true,
                 });
+                let saved_len = active_preds.len();
                 walk_seplogic_stmts(body, cells, steps, active_preds);
+                active_preds.truncate(saved_len);
             }
             Stmt::ForRange { var, body, .. } => {
                 let pre = format!("{} * R_caller", active_preds.join(" * "));
@@ -1011,7 +1015,9 @@ fn walk_seplogic_stmts(
                     post_spatial_heap: pre,
                     disjointness_verified: true,
                 });
+                let saved_len = active_preds.len();
                 walk_seplogic_stmts(body, cells, steps, active_preds);
+                active_preds.truncate(saved_len);
             }
             Stmt::Match { expr, arms, .. } => {
                 let pre = format!("{} * R_caller", active_preds.join(" * "));
@@ -1025,7 +1031,9 @@ fn walk_seplogic_stmts(
                     disjointness_verified: true,
                 });
                 for arm in arms {
+                    let saved_len = active_preds.len();
                     walk_seplogic_stmts(&arm.body, cells, steps, active_preds);
+                    active_preds.truncate(saved_len);
                 }
             }
             _ => {}

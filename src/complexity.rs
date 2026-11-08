@@ -466,6 +466,8 @@ fn analyze_single_fn(
     let static_big_o = if is_recursive {
         if direct_self_calls >= 2 {
             "O(2^N)".to_string()
+        } else if max_loop_depth >= 1 {
+            "O(N^2)".to_string()
         } else {
             "O(N)".to_string()
         }
@@ -511,7 +513,31 @@ fn walk_stmts_metrics(
     for s in stmts {
         match s {
             Stmt::Comment { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => {}
-            Stmt::Let { value, .. } | Stmt::Assign { value, .. } => {
+            Stmt::Let { value, .. } => {
+                walk_expr_metrics(
+                    value,
+                    fn_name,
+                    cur_loop_depth,
+                    call_graph,
+                    decision_points,
+                    max_loop_depth,
+                    heap_alloc_sites,
+                    direct_self_calls,
+                );
+            }
+            Stmt::Assign { target, value, .. } => {
+                if let crate::hub::AssignTarget::Index { index, .. } = target {
+                    walk_expr_metrics(
+                        index,
+                        fn_name,
+                        cur_loop_depth,
+                        call_graph,
+                        decision_points,
+                        max_loop_depth,
+                        heap_alloc_sites,
+                        direct_self_calls,
+                    );
+                }
                 walk_expr_metrics(
                     value,
                     fn_name,

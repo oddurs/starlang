@@ -633,7 +633,7 @@ fn learn_fn_minimal_dfa(f: &FnDecl) -> FunctionDfaReport {
     let mut t0 = BTreeMap::new();
     t0.insert("σ_Zero".to_string(), 0);
     t0.insert("σ_Valid".to_string(), 1);
-    t0.insert("σ_Burst".to_string(), 2);
+    t0.insert("σ_Burst".to_string(), 3);
     t0.insert("σ_OverCap".to_string(), 3);
 
     let mut t1 = BTreeMap::new();
@@ -650,7 +650,7 @@ fn learn_fn_minimal_dfa(f: &FnDecl) -> FunctionDfaReport {
 
     let mut t3 = BTreeMap::new();
     t3.insert("σ_Zero".to_string(), 3);
-    t3.insert("σ_Valid".to_string(), 1);
+    t3.insert("σ_Valid".to_string(), 3);
     t3.insert("σ_Burst".to_string(), 3);
     t3.insert("σ_OverCap".to_string(), 3);
 
@@ -707,9 +707,9 @@ fn learn_fn_minimal_dfa(f: &FnDecl) -> FunctionDfaReport {
         MyhillNerodeWitness {
             state_a: "q0_IdleInit".to_string(),
             state_b: "q1_ActiveStream".to_string(),
-            distinguishing_suffix: "σ_Zero".to_string(),
-            outcome_a: "δ(q0, σ_Zero) = q0 (Idle)".to_string(),
-            outcome_b: "δ(q1, σ_Zero) = q1 (Active)".to_string(),
+            distinguishing_suffix: "σ_Burst".to_string(),
+            outcome_a: "δ(q0, σ_Burst) = q3 (Reject)".to_string(),
+            outcome_b: "δ(q1, σ_Burst) = q2 (Accept)".to_string(),
         },
         MyhillNerodeWitness {
             state_a: "q2_SaturatedBoundary".to_string(),

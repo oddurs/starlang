@@ -1971,7 +1971,10 @@ impl CParser {
             let mut body = self.parse_block()?;
 
             if fn_name.starts_with("test_") && params.is_empty() && ret_ty == Type::Void {
-                let tname = fn_name.trim_start_matches("test_").to_string();
+                let tname = fn_name
+                    .strip_prefix("test_")
+                    .unwrap_or(&fn_name)
+                    .to_string();
                 items.push(Item::Test(TestDecl {
                     id: 0,
                     name: tname,

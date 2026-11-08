@@ -707,9 +707,31 @@ fn refine_expr(
                     }
                     (lo, hi, qs)
                 }
+                BinOp::Sub => {
+                    let lo = llo.zip(rhi).map(|(a, b)| a.saturating_sub(b));
+                    let hi = lhi.zip(rlo).map(|(a, b)| a.saturating_sub(b));
+                    let mut qs = vec![format!("ν == {}", compact)];
+                    if let Some(l) = lo {
+                        qs.push(format!("ν >= {}", l));
+                    }
+                    (lo, hi, qs)
+                }
                 BinOp::Mul => {
-                    let lo = llo.zip(rlo).map(|(a, b)| a.saturating_mul(b));
-                    let hi = lhi.zip(rhi).map(|(a, b)| a.saturating_mul(b));
+                    let (lo, hi) = match (llo, lhi, rlo, rhi) {
+                        (Some(a), Some(b), Some(c), Some(d)) => {
+                            let corners = [
+                                a.saturating_mul(c),
+                                a.saturating_mul(d),
+                                b.saturating_mul(c),
+                                b.saturating_mul(d),
+                            ];
+                            (
+                                corners.iter().copied().min(),
+                                corners.iter().copied().max(),
+                            )
+                        }
+                        _ => (None, None),
+                    };
                     (lo, hi, vec![format!("ν == {}", compact)])
                 }
                 BinOp::Div | BinOp::IntDiv => (
@@ -937,9 +959,9 @@ fn run_fn_mcmc_and_entropy(
             let r = splitmix64(&mut rng_state);
             let val = match &p.ty {
                 Type::Int => {
-                    let v = ((r % 64) as i64) - 8;
-                    in_hash = in_hash.wrapping_mul(31).wrapping_add(v / 4);
-                    Value::Int(v.max(1))
+                    let v = (((r % 64) as i64) - 8).max(1);
+                    in_hash = in_hash.wrapping_mul(31).wrapping_add(v);
+                    Value::Int(v)
                 }
                 Type::Bool => {
                     let b = (r & 1) == 1;
@@ -952,7 +974,7 @@ fn run_fn_mcmc_and_entropy(
                     for _ in 0..len {
                         let er = splitmix64(&mut rng_state);
                         let ev = ((er % 40) as i64) - 4;
-                        in_hash = in_hash.wrapping_mul(17).wrapping_add(ev / 8);
+                        in_hash = in_hash.wrapping_mul(17).wrapping_add(ev);
                         elems.push(Value::Int(ev));
                     }
                     Value::List(elems)
@@ -966,7 +988,9 @@ fn run_fn_mcmc_and_entropy(
                             variant: vars[idx].clone(),
                         }
                     } else {
-                        Value::Int((pi + step) as i64)
+                        let iv = (pi + step) as i64;
+                        in_hash = in_hash.wrapping_mul(31).wrapping_add(iv);
+                        Value::Int(iv)
                     }
                 }
                 _ => Value::Str("sample".to_string()),
@@ -1197,7 +1221,7 @@ fn build_histogram(sorted: &[i64], total: usize) -> Vec<HistogramBucket> {
             ascii_bar: "████████████████████".to_string(),
         }];
     }
-    let bins = 4usize;
+    let bins = ((max_v - min_v + 1) as usize).clamp(1, 4);
     let span = ((max_v - min_v) as f64 / bins as f64).max(1.0);
     let mut buckets = Vec::with_capacity(bins);
     for b in 0..bins {

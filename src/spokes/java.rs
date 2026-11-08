@@ -1651,14 +1651,41 @@ impl JavaParser {
                 let val_expr = self.parse_expr()?;
                 self.expect(&JavaTokKind::RParen, "')'")?;
                 self.expect(&JavaTokKind::Semi, "';'")?;
+                let (op, actual_val) = match &val_expr {
+                    Expr::Binary {
+                        op: bin_op @ (BinOp::Add | BinOp::Sub),
+                        left,
+                        right,
+                    } => {
+                        if let Expr::Index {
+                            base: gbase,
+                            index: gidx,
+                        } = left.as_ref()
+                        {
+                            if **gbase == Expr::Var(base_name.clone()) && **gidx == idx_expr {
+                                let aop = if *bin_op == BinOp::Add {
+                                    AssignOp::AddAssign
+                                } else {
+                                    AssignOp::SubAssign
+                                };
+                                (aop, (**right).clone())
+                            } else {
+                                (AssignOp::Set, val_expr)
+                            }
+                        } else {
+                            (AssignOp::Set, val_expr)
+                        }
+                    }
+                    _ => (AssignOp::Set, val_expr),
+                };
                 return Ok(Some(Stmt::Assign {
                     id: 0,
                     target: AssignTarget::Index {
                         base: base_name,
                         index: idx_expr,
                     },
-                    op: AssignOp::Set,
-                    value: val_expr,
+                    op,
+                    value: actual_val,
                     meta: Metadata::new(),
                 }));
             }

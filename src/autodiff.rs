@@ -153,6 +153,11 @@ impl WengertTape {
             adj[out_idx] = 1.0;
         }
         let mut param_grads: BTreeMap<String, f64> = BTreeMap::new();
+        for (op, _, _) in &self.nodes {
+            if let TapeOp::Input(name) = op {
+                param_grads.entry(name.clone()).or_insert(0.0);
+            }
+        }
 
         for i in (0..n).rev() {
             let g = adj[i];
@@ -428,6 +433,14 @@ fn eval_stmts_on_tape(
     tape: &mut WengertTape,
     env: &mut BTreeMap<String, (usize, f64)>,
 ) -> usize {
+    eval_stmts_on_tape_inner(stmts, tape, env).0
+}
+
+fn eval_stmts_on_tape_inner(
+    stmts: &[Stmt],
+    tape: &mut WengertTape,
+    env: &mut BTreeMap<String, (usize, f64)>,
+) -> (usize, bool) {
     let mut last_idx = tape.push(TapeOp::Const, "0".to_string(), 0.0);
     for s in stmts {
         match s {
@@ -483,15 +496,25 @@ fn eval_stmts_on_tape(
                 ..
             } => {
                 let (_, cond_v) = eval_expr_on_tape(cond, tape, env);
-                if cond_v != 0.0 {
-                    last_idx = eval_stmts_on_tape(then_body, tape, env);
+                let (idx, ret) = if cond_v != 0.0 {
+                    eval_stmts_on_tape_inner(then_body, tape, env)
                 } else if !else_body.is_empty() {
-                    last_idx = eval_stmts_on_tape(else_body, tape, env);
+                    eval_stmts_on_tape_inner(else_body, tape, env)
+                } else {
+                    (last_idx, false)
+                };
+                last_idx = idx;
+                if ret {
+                    return (last_idx, true);
                 }
             }
             Stmt::Match { arms, .. } => {
                 if let Some(first) = arms.first() {
-                    last_idx = eval_stmts_on_tape(&first.body, tape, env);
+                    let (idx, ret) = eval_stmts_on_tape_inner(&first.body, tape, env);
+                    last_idx = idx;
+                    if ret {
+                        return (last_idx, true);
+                    }
                 }
             }
             Stmt::ForRange { var, body, .. } | Stmt::ForEach { var, body, .. } => {
@@ -499,11 +522,19 @@ fn eval_stmts_on_tape(
                     let v = step as f64;
                     let idx = tape.push(TapeOp::Const, format!("{}={}", var, step), v);
                     env.insert(var.clone(), (idx, v));
-                    last_idx = eval_stmts_on_tape(body, tape, env);
+                    let (b_idx, ret) = eval_stmts_on_tape_inner(body, tape, env);
+                    last_idx = b_idx;
+                    if ret {
+                        return (last_idx, true);
+                    }
                 }
             }
             Stmt::While { body, .. } => {
-                last_idx = eval_stmts_on_tape(body, tape, env);
+                let (idx, ret) = eval_stmts_on_tape_inner(body, tape, env);
+                last_idx = idx;
+                if ret {
+                    return (last_idx, true);
+                }
             }
             Stmt::Return { value: Some(v), .. } => {
                 let (idx, val) = eval_expr_on_tape(v, tape, env);
@@ -512,16 +543,16 @@ fn eval_stmts_on_tape(
                     format!("return {}", format_expr_compact(v)),
                     val,
                 );
-                return ret_idx;
+                return (ret_idx, true);
+            }
+            Stmt::Expr { expr, .. } => {
+                let (idx, _) = eval_expr_on_tape(expr, tape, env);
+                last_idx = idx;
             }
             _ => {}
         }
     }
-    if let Some((_, &(idx, _))) = env.iter().last() {
-        idx
-    } else {
-        last_idx
-    }
+    (last_idx, false)
 }
 
 fn eval_expr_on_tape(
@@ -573,7 +604,12 @@ fn eval_expr_on_tape(
                 }
                 BinOp::Mod => {
                     let denom = if rv.abs() < 1e-9 { 1.0 } else { rv };
-                    (tape.push(TapeOp::Scale(li, 1.0), lbl, lv % denom), lv % denom)
+                    let q = (lv / denom).trunc();
+                    let q_rhs = tape.push(TapeOp::Scale(ri, q), format!("q*{}", rv), q * denom);
+                    (
+                        tape.push(TapeOp::Sub(li, q_rhs), lbl, lv % denom),
+                        lv % denom,
+                    )
                 }
                 BinOp::Lt => (
                     tape.push(TapeOp::Const, lbl, if lv < rv { 1.0 } else { 0.0 }),
@@ -782,7 +818,8 @@ fn eval_expr_dual(expr: &Expr, env: &BTreeMap<String, Dual>) -> Dual {
                 }
                 BinOp::Mod => {
                     let denom = if r.val.abs() < 1e-9 { 1.0 } else { r.val };
-                    Dual::variable(l.val % denom, l.dot)
+                    let q = (l.val / denom).trunc();
+                    Dual::variable(l.val % denom, l.dot - q * r.dot)
                 }
                 BinOp::Lt => Dual::constant(if l.val < r.val { 1.0 } else { 0.0 }),
                 BinOp::Le => Dual::constant(if l.val <= r.val { 1.0 } else { 0.0 }),
@@ -965,7 +1002,7 @@ fn render_grad_snippets_across_spokes(
     let mut out = BTreeMap::new();
     let slope_int = partials
         .first()
-        .map(|p| (p.forward_dual_deriv.round() as i64).max(1))
+        .map(|p| p.forward_dual_deriv.round() as i64)
         .unwrap_or(1);
     let p0 = partials
         .first()
@@ -1039,7 +1076,7 @@ fn synthesize_hub_grad_fn_and_test(
     let slope_int = prof
         .partials
         .first()
-        .map(|p| (p.forward_dual_deriv.round() as i64).max(1))
+        .map(|p| p.forward_dual_deriv.round() as i64)
         .unwrap_or(1);
     let param_name = prof
         .partials

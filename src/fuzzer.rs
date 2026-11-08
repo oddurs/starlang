@@ -55,8 +55,11 @@ impl SplitMix64 {
     }
 
     fn range_i64(&mut self, low: i64, high_incl: i64) -> i64 {
-        let span = (high_incl - low + 1) as u64;
-        low + (self.next_u64() % span) as i64
+        if high_incl <= low {
+            return low;
+        }
+        let span = (high_incl as i128 - low as i128 + 1) as u128;
+        (low as i128 + ((self.next_u64() as u128) % span) as i128) as i64
     }
 
     fn coin(&mut self) -> bool {

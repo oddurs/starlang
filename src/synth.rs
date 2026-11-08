@@ -427,6 +427,7 @@ pub fn synthesize_from_examples(spec: &SynthSpec) -> SynthReport {
             }),
         );
     }
+    crate::hub::normalize_module(&mut synth_hub);
 
     let mut views_by_spoke = BTreeMap::new();
     for spoke in SpokeId::ALL {
@@ -1025,6 +1026,7 @@ fn build_function_cfg(f: &FnDecl) -> FunctionCfg {
     let mut builder = CfgBuilder {
         fn_name: &f.name,
         blocks: Vec::new(),
+        loop_stack: Vec::new(),
     };
     let entry = builder.new_block("Entry", "entry");
     let exit = builder.new_block("Exit", "exit");
@@ -1114,7 +1116,11 @@ fn build_function_cfg(f: &FnDecl) -> FunctionCfg {
     }
     dot.push_str("}\n");
 
-    let natural_loops = back_edges.len();
+    let natural_loops = back_edges
+        .iter()
+        .map(|(_, h)| *h)
+        .collect::<BTreeSet<_>>()
+        .len();
     FunctionCfg {
         fn_name: f.name.clone(),
         signature,
@@ -1130,6 +1136,7 @@ struct CfgBuilder<'a> {
     #[allow(dead_code)]
     fn_name: &'a str,
     blocks: Vec<CfgBasicBlock>,
+    loop_stack: Vec<(usize, usize)>,
 }
 
 impl<'a> CfgBuilder<'a> {
@@ -1178,10 +1185,16 @@ impl<'a> CfgBuilder<'a> {
                 }
                 Stmt::Break { .. } => {
                     self.blocks[cur].stmts.push("break".to_string());
+                    if let Some(&(_, after_bb)) = self.loop_stack.last() {
+                        self.add_edge(cur, after_bb, "break");
+                    }
                     return None;
                 }
                 Stmt::Continue { .. } => {
                     self.blocks[cur].stmts.push("continue".to_string());
+                    if let Some(&(hdr_bb, _)) = self.loop_stack.last() {
+                        self.add_edge(cur, hdr_bb, "continue");
+                    }
                     return None;
                 }
                 Stmt::If {
@@ -1241,11 +1254,11 @@ impl<'a> CfgBuilder<'a> {
                     self.add_edge(cur, hdr_bb, "");
                     self.add_edge(hdr_bb, body_bb, "loop");
                     self.add_edge(hdr_bb, after_bb, "done");
+                    self.loop_stack.push((hdr_bb, after_bb));
                     if let Some(b_end) = self.lower_stmts(body, body_bb, exit) {
                         self.add_edge(b_end, hdr_bb, "back");
-                    } else {
-                        self.add_edge(body_bb, hdr_bb, "back");
                     }
+                    self.loop_stack.pop();
                     cur = after_bb;
                 }
             }

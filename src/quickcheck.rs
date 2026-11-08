@@ -325,7 +325,9 @@ fn shrink_value_candidates(val: &Value) -> Vec<Value> {
             if *v != 0 {
                 out.push(Value::Int(0));
                 if *v < 0 {
-                    out.push(Value::Int(-*v));
+                    if let Some(neg) = v.checked_neg() {
+                        out.push(Value::Int(neg));
+                    }
                     if *v < -1 {
                         out.push(Value::Int(-1));
                     }
@@ -533,7 +535,8 @@ fn infer_invariants(
                                             if let (Some(Value::Int(v1)), Some(Value::Int(v2))) =
                                                 (fields.get(f1), fields.get(f2))
                                             {
-                                                return (*v1 + *v2) == (items.len() as i64);
+                                                return v1.checked_add(*v2)
+                                                    == Some(items.len() as i64);
                                             }
                                         }
                                         false
@@ -774,7 +777,7 @@ impl QcRng {
         if hi <= lo {
             return lo;
         }
-        let span = (hi - lo + 1) as u64;
-        lo + ((self.next_u64() % span) as i64)
+        let span = (hi as i128 - lo as i128 + 1) as u128;
+        (lo as i128 + ((self.next_u64() as u128) % span) as i128) as i64
     }
 }

@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::egraph::format_expr_compact;
-use crate::hub::{AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, Stmt};
+use crate::hub::{
+    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, Stmt, UnaryOp,
+};
 use crate::lens::SpokeId;
 
 /// Prime field modulus p = 2^61 - 1 (Mersenne prime M_61) for exact 128-bit modular arithmetic.
@@ -440,6 +442,15 @@ fn compile_stmts_r1cs(
     last_idx
 }
 
+fn fp_to_signed(v: i64) -> i64 {
+    let half = (ZK_FIELD_MODULUS / 2) as i64;
+    if v > half {
+        v - (ZK_FIELD_MODULUS as i64)
+    } else {
+        v
+    }
+}
+
 fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut usize) -> usize {
     match expr {
         Expr::Int(n) => {
@@ -451,11 +462,40 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
             b.alloc_wire(&sym, "IntermediateGate", if *bv { 1 } else { 0 })
         }
         Expr::Var(name) => b.wire_by_name.get(name).copied().unwrap_or(0),
+        Expr::Unary { op, expr: inner } => {
+            let ii = compile_expr_r1cs(inner, b, private_witnesses);
+            let iv = b.wire_val(ii);
+            let res = match op {
+                UnaryOp::Neg => mod_fp(-(iv as i128)),
+                UnaryOp::Not => {
+                    if iv == 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
+            };
+            let sym = format!("un_{}", b.wires.len());
+            let out_idx = b.alloc_wire(&sym, "IntermediateGate", res);
+            b.add_constraint(
+                "LinearEq",
+                b.wire_sym(out_idx),
+                "w0(1)".to_string(),
+                b.wire_sym(out_idx),
+                res,
+                1,
+                res,
+                format!("Unary gadget for {}", format_expr_compact(expr)),
+            );
+            out_idx
+        }
         Expr::Binary { op, left, right } => {
             let li = compile_expr_r1cs(left, b, private_witnesses);
             let ri = compile_expr_r1cs(right, b, private_witnesses);
             let lv = b.wire_val(li);
             let rv = b.wire_val(ri);
+            let slv = fp_to_signed(lv);
+            let srv = fp_to_signed(rv);
             match op {
                 BinOp::Mul => {
                     let prod = mod_fp((lv as i128) * (rv as i128));
@@ -475,13 +515,17 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
                     out_idx
                 }
                 BinOp::Div | BinOp::IntDiv => {
-                    let denom = if rv == 0 { 1 } else { rv };
-                    let q = lv / denom;
-                    let rem = lv - q * denom;
+                    let denom_s = if srv == 0 { 1 } else { srv };
+                    let q_s = slv.wrapping_div(denom_s);
+                    let rem_s = slv.wrapping_sub(q_s.wrapping_mul(denom_s));
                     let q_sym = format!("quot_{}", b.wires.len());
-                    let q_idx = b.alloc_wire(&q_sym, "PrivateWitness", q);
+                    let q_idx = b.alloc_wire(&q_sym, "PrivateWitness", q_s);
                     let r_sym = format!("rem_{}", b.wires.len());
-                    let r_idx = b.alloc_wire(&r_sym, "PrivateWitness", rem);
+                    let r_idx = b.alloc_wire(&r_sym, "PrivateWitness", rem_s);
+                    let q_fp = b.wire_val(q_idx);
+                    let r_fp = b.wire_val(r_idx);
+                    let denom_fp = mod_fp(denom_s as i128);
+                    let diff_fp = mod_fp(lv as i128 - r_fp as i128);
                     *private_witnesses += 2;
                     b.mul_depth += 1;
                     // Euclidean division constraint: q * denom = lv - rem
@@ -490,9 +534,9 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
                         b.wire_sym(q_idx),
                         b.wire_sym(ri),
                         format!("({} - {})", b.wire_sym(li), b.wire_sym(r_idx)),
-                        q,
-                        denom,
-                        lv - rem,
+                        q_fp,
+                        denom_fp,
+                        diff_fp,
                         format!(
                             "Euclidean division witness q*d + r == n for {}",
                             format_expr_compact(expr)
@@ -503,19 +547,41 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
                 BinOp::Add => {
                     let s = mod_fp(lv as i128 + rv as i128);
                     let sym = format!("add_{}", b.wires.len());
-                    b.alloc_wire(&sym, "IntermediateGate", s)
+                    let out_idx = b.alloc_wire(&sym, "IntermediateGate", s);
+                    b.add_constraint(
+                        "LinearEq",
+                        format!("({} + {})", b.wire_sym(li), b.wire_sym(ri)),
+                        "w0(1)".to_string(),
+                        b.wire_sym(out_idx),
+                        s,
+                        1,
+                        s,
+                        format!("R1CS linear addition {}", format_expr_compact(expr)),
+                    );
+                    out_idx
                 }
                 BinOp::Sub => {
                     let d = mod_fp(lv as i128 - rv as i128);
                     let sym = format!("sub_{}", b.wires.len());
-                    b.alloc_wire(&sym, "IntermediateGate", d)
+                    let out_idx = b.alloc_wire(&sym, "IntermediateGate", d);
+                    b.add_constraint(
+                        "LinearEq",
+                        format!("({} - {})", b.wire_sym(li), b.wire_sym(ri)),
+                        "w0(1)".to_string(),
+                        b.wire_sym(out_idx),
+                        d,
+                        1,
+                        d,
+                        format!("R1CS linear subtraction {}", format_expr_compact(expr)),
+                    );
+                    out_idx
                 }
                 _ => {
                     let bit = match op {
-                        BinOp::Lt => lv < rv,
-                        BinOp::Le => lv <= rv,
-                        BinOp::Gt => lv > rv,
-                        BinOp::Ge => lv >= rv,
+                        BinOp::Lt => slv < srv,
+                        BinOp::Le => slv <= srv,
+                        BinOp::Gt => slv > srv,
+                        BinOp::Ge => slv >= srv,
                         BinOp::Eq => lv == rv,
                         BinOp::Ne => lv != rv,
                         BinOp::And => lv != 0 && rv != 0,
@@ -563,8 +629,8 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
             Intrinsic::Max(a, c) | Intrinsic::Min(a, c) => {
                 let ai = compile_expr_r1cs(a, b, private_witnesses);
                 let ci = compile_expr_r1cs(c, b, private_witnesses);
-                let av = b.wire_val(ai);
-                let cv = b.wire_val(ci);
+                let av = fp_to_signed(b.wire_val(ai));
+                let cv = fp_to_signed(b.wire_val(ci));
                 let pick = if matches!(intr.as_ref(), Intrinsic::Max(_, _)) {
                     av.max(cv)
                 } else {

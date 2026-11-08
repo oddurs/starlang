@@ -274,12 +274,10 @@ fn collect_actor_vars(stmts: &[Stmt], has_loop: &mut bool, vars: &mut Vec<String
                     vars.push(name.clone());
                 }
             }
-            Stmt::Assign {
-                target: AssignTarget::Var(name),
-                ..
-            } => {
-                if !vars.contains(name) {
-                    vars.push(name.clone());
+            Stmt::Assign { target, .. } => {
+                let root = target.root_var().to_string();
+                if !vars.contains(&root) {
+                    vars.push(root);
                 }
             }
             Stmt::If {
@@ -596,8 +594,11 @@ fn synthesize_tla_plus_spec(
         };
         actions.push(format!("Step_{} ==\n  /\\ pc /= \"Done\"\n  /\\ {}", idx, act_summary));
     }
-    if actions.is_empty() {
-        actions.push("Step_0 == pc' = \"Done\"".to_string());
+    if !actions.iter().any(|a| a.contains("pc' = \"Done\"")) {
+        actions.push(format!(
+            "Step_{} ==\n  /\\ pc /= \"Done\"\n  /\\ pc' = \"Done\"",
+            actions.len()
+        ));
     }
 
     let step_names: Vec<String> = (0..actions.len()).map(|i| format!("Step_{}", i)).collect();

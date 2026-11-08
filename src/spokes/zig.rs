@@ -1061,7 +1061,7 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
                 }
             }
             Expr::Binary { op, left, right } => {
-                let lty = self.expr_ty(left);
+                let lty = self.expr_ty(left).or_else(|| self.expr_ty(right));
                 match op {
                     BinOp::Add if lty == Some(Type::Str) => {
                         return format!(
