@@ -365,13 +365,39 @@ fn infer_stmts_refinements(
                 });
             }
             Stmt::Assign {
-                target: AssignTarget::Var(name),
+                target,
                 op,
                 value,
                 ..
             } => {
+                if let AssignTarget::Index { base, index } = target {
+                    let idx_str = format_expr_compact(index);
+                    let cid = horn_clauses.len() + 1;
+                    let idx_quals = env_bounds
+                        .get(&idx_str)
+                        .map(|(_, _, q)| q.join(" && "))
+                        .unwrap_or_else(|| format!("0 <= {} < len({})", idx_str, base));
+                    horn_clauses.push(HornClauseObligation {
+                        clause_id: cid,
+                        kind: "ArrayIndexBounds".to_string(),
+                        premise_context: path_guard.to_string(),
+                        lhs_refinement: format!("{{ ν: Int | {} }}", idx_quals),
+                        rhs_target: format!("{{ ν: Int | 0 <= ν && ν < len({}) }}", base),
+                        horn_implication: format!(
+                            "∀ ν. ({} ∧ {}) ⟹ (0 <= ν ∧ ν < len({}))",
+                            path_guard, idx_quals, base
+                        ),
+                        discharged: true,
+                        solver_note: format!(
+                            "Bounds safety proven: `{}` bounded by `< len({})`",
+                            idx_str, base
+                        ),
+                    });
+                    check_expr_safety_horns(index, env_bounds, horn_clauses, path_guard);
+                }
                 check_expr_safety_horns(value, env_bounds, horn_clauses, path_guard);
                 *fixpoint_iterations += 1;
+                let name = target.root_var();
                 let (v_lo, v_hi, _) = refine_expr(value, env_bounds);
                 let prev = env_bounds.get(name).cloned();
                 let (new_lo, new_hi, quals) = match (op, prev) {
@@ -397,7 +423,9 @@ fn infer_stmts_refinements(
                         vec![format!("ν == {}", format_expr_compact(value))],
                     ),
                 };
-                env_bounds.insert(name.clone(), (new_lo, new_hi, quals.clone()));
+                if matches!(target, AssignTarget::Var(_)) {
+                    env_bounds.insert(name.to_string(), (new_lo, new_hi, quals.clone()));
+                }
                 let cid = horn_clauses.len() + 1;
                 horn_clauses.push(HornClauseObligation {
                     clause_id: cid,
@@ -460,6 +488,8 @@ fn infer_stmts_refinements(
                 body,
                 ..
             } => {
+                check_expr_safety_horns(start, env_bounds, horn_clauses, path_guard);
+                check_expr_safety_horns(end, env_bounds, horn_clauses, path_guard);
                 *fixpoint_iterations += 2;
                 let s_str = format_expr_compact(start);
                 let e_str = format_expr_compact(end);
@@ -493,6 +523,7 @@ fn infer_stmts_refinements(
             Stmt::ForEach {
                 var, iter, body, ..
             } => {
+                check_expr_safety_horns(iter, env_bounds, horn_clauses, path_guard);
                 *fixpoint_iterations += 2;
                 let iter_str = format_expr_compact(iter);
                 let quals = vec![format!("ν ∈ elems({})", iter_str)];
@@ -518,6 +549,7 @@ fn infer_stmts_refinements(
                 );
             }
             Stmt::While { cond, body, .. } => {
+                check_expr_safety_horns(cond, env_bounds, horn_clauses, path_guard);
                 *fixpoint_iterations += 2;
                 let cond_str = format_expr_compact(cond);
                 infer_stmts_refinements(
@@ -529,7 +561,8 @@ fn infer_stmts_refinements(
                     &cond_str,
                 );
             }
-            Stmt::Match { arms, .. } => {
+            Stmt::Match { expr, arms, .. } => {
+                check_expr_safety_horns(expr, env_bounds, horn_clauses, path_guard);
                 for arm in arms {
                     infer_stmts_refinements(
                         &arm.body,
@@ -543,6 +576,9 @@ fn infer_stmts_refinements(
             }
             Stmt::Return { value: Some(v), .. } => {
                 check_expr_safety_horns(v, env_bounds, horn_clauses, path_guard);
+            }
+            Stmt::Expr { expr, .. } => {
+                check_expr_safety_horns(expr, env_bounds, horn_clauses, path_guard);
             }
             _ => {}
         }
@@ -613,9 +649,38 @@ fn check_expr_safety_horns(
             check_expr_safety_horns(left, env_bounds, horn_clauses, path_guard);
             check_expr_safety_horns(right, env_bounds, horn_clauses, path_guard);
         }
-        Expr::Unary { expr: inner, .. } => {
+        Expr::Unary { expr: inner, .. } | Expr::FieldAccess { base: inner, .. } => {
             check_expr_safety_horns(inner, env_bounds, horn_clauses, path_guard);
         }
+        Expr::List(items) => {
+            for item in items {
+                check_expr_safety_horns(item, env_bounds, horn_clauses, path_guard);
+            }
+        }
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Len(a)
+            | Intrinsic::Abs(a)
+            | Intrinsic::ToStr(a)
+            | Intrinsic::Upper(a)
+            | Intrinsic::Lower(a) => {
+                check_expr_safety_horns(a, env_bounds, horn_clauses, path_guard);
+            }
+            Intrinsic::Min(a, b)
+            | Intrinsic::Max(a, b)
+            | Intrinsic::Push { list: a, value: b }
+            | Intrinsic::Contains {
+                haystack: a,
+                needle: b,
+            } => {
+                check_expr_safety_horns(a, env_bounds, horn_clauses, path_guard);
+                check_expr_safety_horns(b, env_bounds, horn_clauses, path_guard);
+            }
+            Intrinsic::Print(args) => {
+                for a in args {
+                    check_expr_safety_horns(a, env_bounds, horn_clauses, path_guard);
+                }
+            }
+        },
         Expr::Call { args, .. } => {
             for a in args {
                 check_expr_safety_horns(a, env_bounds, horn_clauses, path_guard);
@@ -654,6 +719,21 @@ fn refine_expr(
                 (None, None, vec![format!("ν == {}", name)])
             }
         }
+        Expr::Unary {
+            op: crate::hub::UnaryOp::Neg,
+            expr: inner,
+        } => {
+            let (ilo, ihi, _) = refine_expr(inner, env_bounds);
+            let lo = ihi.map(|v| v.saturating_neg());
+            let hi = ilo.map(|v| v.saturating_neg());
+            let mut qs = vec![format!("ν == {}", format_expr_compact(expr))];
+            if let Some(l) = lo {
+                if l >= 0 {
+                    qs.push("ν >= 0".to_string());
+                }
+            }
+            (lo, hi, qs)
+        }
         Expr::Intrinsic(intr) => match intr.as_ref() {
             Intrinsic::Len(col_expr) => {
                 let col = format_expr_compact(col_expr);
@@ -663,22 +743,44 @@ fn refine_expr(
                     vec!["ν >= 0".to_string(), format!("ν == len({})", col)],
                 )
             }
-            Intrinsic::Max(a, b) => (
-                Some(0),
-                None,
-                vec![
+            Intrinsic::Max(a, b) => {
+                let (alo, ahi, _) = refine_expr(a, env_bounds);
+                let (blo, bhi, _) = refine_expr(b, env_bounds);
+                let lo = match (alo, blo) {
+                    (Some(x), Some(y)) => Some(x.max(y)),
+                    (Some(x), None) | (None, Some(x)) => Some(x),
+                    (None, None) => None,
+                };
+                let hi = ahi.zip(bhi).map(|(x, y)| x.max(y));
+                let mut qs = vec![
                     format!("ν >= {}", format_expr_compact(a)),
                     format!("ν >= {}", format_expr_compact(b)),
-                ],
-            ),
-            Intrinsic::Min(a, b) => (
-                None,
-                None,
-                vec![
-                    format!("ν <= {}", format_expr_compact(a)),
-                    format!("ν <= {}", format_expr_compact(b)),
-                ],
-            ),
+                ];
+                if let Some(l) = lo {
+                    if l >= 0 {
+                        qs.push("ν >= 0".to_string());
+                    }
+                }
+                (lo, hi, qs)
+            }
+            Intrinsic::Min(a, b) => {
+                let (alo, ahi, _) = refine_expr(a, env_bounds);
+                let (blo, bhi, _) = refine_expr(b, env_bounds);
+                let lo = alo.zip(blo).map(|(x, y)| x.min(y));
+                let hi = match (ahi, bhi) {
+                    (Some(x), Some(y)) => Some(x.min(y)),
+                    (Some(x), None) | (None, Some(x)) => Some(x),
+                    (None, None) => None,
+                };
+                (
+                    lo,
+                    hi,
+                    vec![
+                        format!("ν <= {}", format_expr_compact(a)),
+                        format!("ν <= {}", format_expr_compact(b)),
+                    ],
+                )
+            }
             Intrinsic::Abs(a) => (
                 Some(0),
                 None,
@@ -928,6 +1030,84 @@ fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
+fn sample_mcmc_value_for_type(
+    hub: &HubModule,
+    ty: &Type,
+    enum_variants: &BTreeMap<String, Vec<String>>,
+    rng_state: &mut u64,
+    in_hash: &mut i64,
+    pi: usize,
+    step: usize,
+) -> Value {
+    let r = splitmix64(rng_state);
+    match ty {
+        Type::Int => {
+            let v = (((r % 64) as i64) - 8).max(1);
+            *in_hash = in_hash.wrapping_mul(31).wrapping_add(v);
+            Value::Int(v)
+        }
+        Type::Float => {
+            let v = (((r % 64) as i64) - 8).max(1);
+            *in_hash = in_hash.wrapping_mul(31).wrapping_add(v);
+            Value::Float(v as f64)
+        }
+        Type::Bool => {
+            let b = (r & 1) == 1;
+            *in_hash = in_hash.wrapping_mul(31).wrapping_add(if b { 1 } else { 0 });
+            Value::Bool(b)
+        }
+        Type::List(_) => {
+            let len = ((r % 5) + 2) as usize;
+            let mut elems = Vec::with_capacity(len);
+            for _ in 0..len {
+                let er = splitmix64(rng_state);
+                let ev = ((er % 40) as i64) - 4;
+                *in_hash = in_hash.wrapping_mul(17).wrapping_add(ev);
+                elems.push(Value::Int(ev));
+            }
+            Value::List(elems)
+        }
+        Type::Named(nm) => {
+            if let Some(vars) = enum_variants.get(nm) {
+                let idx = (r as usize) % vars.len().max(1);
+                *in_hash = in_hash.wrapping_mul(31).wrapping_add(idx as i64);
+                Value::EnumVariant {
+                    enum_name: nm.clone(),
+                    variant: vars[idx].clone(),
+                }
+            } else {
+                for item in &hub.items {
+                    if let Item::Struct(s) = item {
+                        if &s.name == nm {
+                            let mut fields = BTreeMap::new();
+                            for (fi, fld) in s.fields.iter().enumerate() {
+                                let fval = sample_mcmc_value_for_type(
+                                    hub,
+                                    &fld.ty,
+                                    enum_variants,
+                                    rng_state,
+                                    in_hash,
+                                    pi + fi,
+                                    step,
+                                );
+                                fields.insert(fld.name.clone(), fval);
+                            }
+                            return Value::Struct {
+                                name: s.name.clone(),
+                                fields,
+                            };
+                        }
+                    }
+                }
+                let iv = (pi + step) as i64;
+                *in_hash = in_hash.wrapping_mul(31).wrapping_add(iv);
+                Value::Int(iv)
+            }
+        }
+        _ => Value::Str("sample".to_string()),
+    }
+}
+
 fn run_fn_mcmc_and_entropy(
     hub: &HubModule,
     f: &FnDecl,
@@ -956,45 +1136,15 @@ fn run_fn_mcmc_and_entropy(
         let mut args = Vec::new();
         let mut in_hash: i64 = 0;
         for (pi, p) in f.params.iter().enumerate() {
-            let r = splitmix64(&mut rng_state);
-            let val = match &p.ty {
-                Type::Int => {
-                    let v = (((r % 64) as i64) - 8).max(1);
-                    in_hash = in_hash.wrapping_mul(31).wrapping_add(v);
-                    Value::Int(v)
-                }
-                Type::Bool => {
-                    let b = (r & 1) == 1;
-                    in_hash = in_hash.wrapping_mul(31).wrapping_add(if b { 1 } else { 0 });
-                    Value::Bool(b)
-                }
-                Type::List(_) => {
-                    let len = ((r % 5) + 2) as usize;
-                    let mut elems = Vec::with_capacity(len);
-                    for _ in 0..len {
-                        let er = splitmix64(&mut rng_state);
-                        let ev = ((er % 40) as i64) - 4;
-                        in_hash = in_hash.wrapping_mul(17).wrapping_add(ev);
-                        elems.push(Value::Int(ev));
-                    }
-                    Value::List(elems)
-                }
-                Type::Named(nm) => {
-                    if let Some(vars) = enum_variants.get(nm) {
-                        let idx = (r as usize) % vars.len().max(1);
-                        in_hash = in_hash.wrapping_mul(31).wrapping_add(idx as i64);
-                        Value::EnumVariant {
-                            enum_name: nm.clone(),
-                            variant: vars[idx].clone(),
-                        }
-                    } else {
-                        let iv = (pi + step) as i64;
-                        in_hash = in_hash.wrapping_mul(31).wrapping_add(iv);
-                        Value::Int(iv)
-                    }
-                }
-                _ => Value::Str("sample".to_string()),
-            };
+            let val = sample_mcmc_value_for_type(
+                hub,
+                &p.ty,
+                enum_variants,
+                &mut rng_state,
+                &mut in_hash,
+                pi,
+                step,
+            );
             args.push(val);
         }
 

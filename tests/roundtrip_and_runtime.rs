@@ -4112,5 +4112,221 @@ fn index_and_nested(idx: i64, val: i64) -> i64 {
         "Expected TLA+ specification synthesizer to extract nested loop/branch actions for `total'` and `peak'`, got:\n{}",
         fs_mc.tla_plus_spec
     );
+
+    verify_pass_17();
 }
+
+#[inline(never)]
+fn verify_pass_17() {
+    // 25. Pass 17 — Liquid Refinements & MCMC Sampler, Reversible Quantum Circuits,
+    //     HLS SystemVerilog & SIMT GPU Bank-Conflict Analyzer, FHE Ring-LWE & Separation Logic,
+    //     and Cytron SSA / Hoare Contracts:
+    let pass17_rs = r#"struct SensorCfg {
+    gain: i64,
+    offset: i64,
+}
+
+fn calibrate_sensor(cfg: SensorCfg, flag: bool, mut samples: Vec<i64>) -> i64 {
+    let neg_peak: i64 = (-10).max(-5);
+    let mut acc: i64 = neg_peak;
+    for i in 0..samples.len() {
+        if i == 0 {
+            continue;
+        }
+        if i * 2 < samples.len() {
+            samples[i] = samples[i * 2] / (cfg.gain + 1);
+        }
+        acc += samples[i] + cfg.offset;
+        if acc > 1000 {
+            break;
+        }
+    }
+    return acc;
+}
+
+fn direct_mul(flag: bool, x: i64) -> i64 {
+    return x * 3;
+}
+"#;
+    let eng = StarEngine::from_source(SpokeId::Rust, pass17_rs).unwrap();
+
+    // 1. Liquid Refinements & Probabilistic MCMC:
+    //    - `neg_peak = (-10).max(-5)` has refined lower bound `-5` (NOT unsound `Some(0)`)
+    //    - `samples[i] = samples[i * 2] / (cfg.gain + 1)` emits `ArrayIndexBounds` on LHS `samples[i]`,
+    //      `ArrayIndexBounds` on RHS `samples[i * 2]`, and `NonZeroDivisor` on `cfg.gain + 1`
+    //    - MCMC sampler constructs `Value::Struct` for `cfg: SensorCfg` so `H(Y) > 0`
+    let ref_rep = eng.liquid_refinements();
+    let cal_ref = ref_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "calibrate_sensor")
+        .unwrap();
+    let neg_peak_bind = cal_ref
+        .bindings
+        .iter()
+        .find(|b| b.symbol == "neg_peak")
+        .unwrap();
+    assert_eq!(
+        neg_peak_bind.lower_bound,
+        Some(-5),
+        "Expected `(-10).max(-5)` lower bound to be Some(-5), got {:?}",
+        neg_peak_bind
+    );
+    assert_eq!(neg_peak_bind.upper_bound, Some(-5));
+    let bounds_clauses = cal_ref
+        .horn_clauses
+        .iter()
+        .filter(|c| c.kind == "ArrayIndexBounds")
+        .count();
+    let div_clauses = cal_ref
+        .horn_clauses
+        .iter()
+        .filter(|c| c.kind == "NonZeroDivisor")
+        .count();
+    assert!(
+        bounds_clauses >= 2 && div_clauses >= 1,
+        "Expected >= 2 ArrayIndexBounds clauses (LHS + RHS) and >= 1 NonZeroDivisor clause, got bounds={}, div={} ({:?})",
+        bounds_clauses,
+        div_clauses,
+        cal_ref.horn_clauses
+    );
+
+    let prob_rep = eng.probabilistic_entropy();
+    let cal_prob = prob_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "calibrate_sensor")
+        .unwrap();
+    assert!(
+        cal_prob.output_shannon_entropy_bits > 0.0,
+        "Expected MCMC sampler to construct `Value::Struct` for `SensorCfg` and achieve non-zero output Shannon entropy, got {:?}",
+        cal_prob
+    );
+
+    // 2. Reversible Quantum Circuit Compiler:
+    //    - `direct_mul(flag: bool, x: i64)` with `return x * 3;` classifies `Stmt::Return` as
+    //      `"CCX (Toffoli Multiplier)"` (not fallback dummy `"CUCCARO_ADD"`)
+    //    - 1-bit `flag: bool` (`qubit[1] q_in_flag;`) never emits out-of-bounds `q_in_flag[1]` in OpenQASM 3.0!
+    let q_rep = eng.quantum_circuit();
+    let dm_q = q_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "direct_mul")
+        .unwrap();
+    assert!(
+        dm_q.gates
+            .iter()
+            .any(|g| g.gate_op.contains("Toffoli Multiplier")),
+        "Expected `return x * 3;` in `direct_mul` to lower to a Toffoli Multiplier gate, got {:?}",
+        dm_q.gates
+    );
+    assert!(
+        !dm_q.openqasm3_source.contains("q_in_flag[1]"),
+        "1-bit `qubit[1] q_in_flag` must never be indexed out-of-bounds as `q_in_flag[1]`:\n{}",
+        dm_q.openqasm3_source
+    );
+
+    // 3. HLS SystemVerilog & SIMT GPU Kernel Analyzer:
+    //    - `samples[i] = ...` in `calibrate_sensor` classifies LHS indexed store as `BRAM_Port64` (`bram36_tiles >= 1`)
+    //    - `samples[i * 2]` has affine stride 2 (`gcd(2, 32) = 2`-way shared-memory bank conflict!)
+    let hls_rep = eng.hls_rtl();
+    let cal_hls = hls_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "calibrate_sensor")
+        .unwrap();
+    assert!(
+        cal_hls.bram36_tiles >= 1,
+        "Expected BRAM36 tiles >= 1 for indexed array store/load in `calibrate_sensor`, got {:?}",
+        cal_hls
+    );
+
+    let gpu_rep = eng.gpu_simt();
+    let cal_gpu = gpu_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "calibrate_sensor")
+        .unwrap();
+    assert!(
+        cal_gpu.shared_mem_bank_conflicts >= 1,
+        "Expected `samples[i * 2]` (stride=2, gcd(2,32)=2) to report a 2-way shared-memory bank conflict, got {:?}",
+        cal_gpu.bank_accesses
+    );
+    assert!(
+        cal_gpu
+            .bank_accesses
+            .iter()
+            .any(|b| b.stride_elements == 2 && b.bank_conflict_ways == 2 && !b.conflict_free),
+        "Expected 2-way bank conflict entry in `bank_accesses`, got {:?}",
+        cal_gpu.bank_accesses
+    );
+
+    // 4. FHE Ring-LWE & Reynolds Separation Logic:
+    //    - `acc += samples[i] + cfg.offset` emits an `EvalAddInPlace` `HEAdd` gate for `+=`
+    //    - Mutating `samples[i] = ...` upgrades `samples` cell permission from `1/2` to `1/1 (ExclusiveMut Borrow)`
+    let fhe_rep = eng.fhe_circuit();
+    let cal_fhe = fhe_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "calibrate_sensor")
+        .unwrap();
+    assert!(
+        cal_fhe
+            .gates
+            .iter()
+            .any(|g| g.scheme_op.contains("EvalAddInPlace")),
+        "Expected `acc += ...` to emit `EvalAddInPlace` FHE gate, got {:?}",
+        cal_fhe.gates
+    );
+
+    let sep_rep = eng.separation_logic();
+    let cal_sep = sep_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "calibrate_sensor")
+        .unwrap();
+    let samples_cell = cal_sep
+        .cells
+        .iter()
+        .find(|c| c.owner_var == "samples")
+        .unwrap();
+    assert!(
+        samples_cell.permission_frac.starts_with("1/1"),
+        "Expected mutated parameter `samples` to upgrade to 1/1 ExclusiveMut Borrow, got {:?}",
+        samples_cell
+    );
+
+    // 5. Cytron SSA & CFG Lowering:
+    //    - `continue` and `break` inside `calibrate_sensor` have outgoing CFG edges to `LoopHeader` and `LoopExit`
+    //    - `replace_vars_in_text` does not corrupt `.gain` or `.offset` field names when a local variable has the same name
+    let ssa_rep = eng.ssa();
+    let cal_ssa = ssa_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "calibrate_sensor")
+        .unwrap();
+    let loop_hdr_id = cal_ssa
+        .blocks
+        .iter()
+        .find(|b| b.label == "LoopHeader")
+        .unwrap()
+        .id;
+    let loop_exit_id = cal_ssa
+        .blocks
+        .iter()
+        .find(|b| b.label == "LoopExit")
+        .unwrap()
+        .id;
+    assert!(
+        cal_ssa.blocks[loop_hdr_id].predecessors.len() >= 3,
+        "Expected LoopHeader to have >= 3 predecessors (entry, continue block, latch), got {:?}",
+        cal_ssa.blocks[loop_hdr_id].predecessors
+    );
+    assert!(
+        cal_ssa.blocks[loop_exit_id].predecessors.len() >= 2,
+        "Expected LoopExit to have >= 2 predecessors (LoopHeader + break block), got {:?}",
+        cal_ssa.blocks[loop_exit_id].predecessors
+    );
+}
+
 

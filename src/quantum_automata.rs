@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::egraph::format_expr_compact;
-use crate::hub::{
-    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Item, Stmt, Type,
-};
+use crate::hub::{AssignOp, BinOp, Expr, FnDecl, HubModule, Item, Stmt, Type};
 use crate::lens::SpokeId;
 
 #[derive(Debug, Clone)]
@@ -389,11 +387,12 @@ fn lower_stmts_to_quantum_gates(
                 ));
             }
             Stmt::Assign {
-                target: AssignTarget::Var(name),
+                target,
                 op,
                 value,
                 ..
             } => {
+                let name = target.root_var();
                 let anc = format!("q_anc_{}_{}", name, forward_specs.len());
                 *ancilla_qubits += 8;
                 registers.push(QuantumQubitReg {
@@ -415,6 +414,26 @@ fn lower_stmts_to_quantum_gates(
                     anc,
                     28,
                     format!("update `{}` with `{}`", name, format_expr_compact(value)),
+                ));
+            }
+            Stmt::Return { value: Some(v), .. } | Stmt::Expr { expr: v, .. } => {
+                let anc = format!("q_anc_ret_{}", forward_specs.len());
+                *ancilla_qubits += 8;
+                registers.push(QuantumQubitReg {
+                    reg_id: registers.len(),
+                    name: anc.clone(),
+                    role: "AncillaScratch".to_string(),
+                    bit_width: 8,
+                    initial_state: "|0⟩⊗8".to_string(),
+                    final_state: "|0⟩⊗8 (uncomputed via F†)".to_string(),
+                });
+                let (op, t_cost) = classify_quantum_expr_gate(v);
+                forward_specs.push((
+                    op,
+                    first_in.to_string(),
+                    anc,
+                    t_cost,
+                    format!("return {}", format_expr_compact(v)),
                 ));
             }
             Stmt::If {
@@ -529,10 +548,22 @@ fn build_openqasm3_source(
         } else if g.gate_op.starts_with("CNOT") {
             lines.push(format!("cx {}, {};", g.control_qubits, g.target_qubits));
         } else {
-            lines.push(format!(
-                "ccx {}[0], {}[1], {}[0];",
-                g.control_qubits, g.control_qubits, g.target_qubits
-            ));
+            let ctrl_width = registers
+                .iter()
+                .find(|r| r.name == g.control_qubits)
+                .map(|r| r.bit_width)
+                .unwrap_or(8);
+            if ctrl_width <= 1 {
+                lines.push(format!(
+                    "cx {}[0], {}[0];",
+                    g.control_qubits, g.target_qubits
+                ));
+            } else {
+                lines.push(format!(
+                    "ccx {}[0], {}[1], {}[0];",
+                    g.control_qubits, g.control_qubits, g.target_qubits
+                ));
+            }
         }
     }
     lines.join("\n")

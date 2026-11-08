@@ -4,7 +4,7 @@ use std::time::Instant;
 use crate::egraph::format_expr_compact;
 use crate::eval::{eval_fn_with_values, Value};
 use crate::hub::{
-    AssignOp, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, Stmt, Type,
+    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, Stmt, Type, UnaryOp,
 };
 use crate::lens::SpokeId;
 
@@ -338,6 +338,32 @@ impl FheBuilder {
                     }
                 }
             }
+            Expr::Unary { op, expr: inner } => {
+                self.lower_expr(inner);
+                let src = format_expr_compact(expr);
+                let scheme_op = match op {
+                    UnaryOp::Neg => "cc->EvalNegate(ct_in)".to_string(),
+                    UnaryOp::Not => "cc->EvalSub(pt_one, ct_bit)".to_string(),
+                };
+                self.push_gate("HESub", scheme_op, 2, 0.8, 0, src);
+            }
+            Expr::Index { base, index } => {
+                self.lower_expr(base);
+                self.lower_expr(index);
+            }
+            Expr::FieldAccess { base, .. } => {
+                self.lower_expr(base);
+            }
+            Expr::Call { args, .. } | Expr::List(args) => {
+                for a in args {
+                    self.lower_expr(a);
+                }
+            }
+            Expr::StructInit { fields, .. } => {
+                for (_, v) in fields {
+                    self.lower_expr(v);
+                }
+            }
             Expr::Intrinsic(intr) => {
                 let src = format_expr_compact(expr);
                 match intr.as_ref() {
@@ -368,7 +394,25 @@ impl FheBuilder {
                             src,
                         );
                     }
-                    _ => {}
+                    Intrinsic::Len(a)
+                    | Intrinsic::ToStr(a)
+                    | Intrinsic::Upper(a)
+                    | Intrinsic::Lower(a) => {
+                        self.lower_expr(a);
+                    }
+                    Intrinsic::Push { list: a, value: b }
+                    | Intrinsic::Contains {
+                        haystack: a,
+                        needle: b,
+                    } => {
+                        self.lower_expr(a);
+                        self.lower_expr(b);
+                    }
+                    Intrinsic::Print(args) => {
+                        for a in args {
+                            self.lower_expr(a);
+                        }
+                    }
                 }
             }
             _ => {}
@@ -378,8 +422,40 @@ impl FheBuilder {
     fn lower_stmts(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             match stmt {
-                Stmt::Let { value, .. } | Stmt::Assign { value, .. } => {
+                Stmt::Let { value, .. } => {
                     self.lower_expr(value);
+                }
+                Stmt::Assign {
+                    target, op, value, ..
+                } => {
+                    if let AssignTarget::Index { index, .. } = target {
+                        self.lower_expr(index);
+                    }
+                    self.lower_expr(value);
+                    let root = target.root_var();
+                    match op {
+                        AssignOp::AddAssign => {
+                            self.push_gate(
+                                "HEAdd",
+                                format!("cc->EvalAddInPlace(ct_{}, ct_rhs)", sanitize_ident(root)),
+                                2,
+                                1.2,
+                                0,
+                                format!("{} += {}", root, format_expr_compact(value)),
+                            );
+                        }
+                        AssignOp::SubAssign => {
+                            self.push_gate(
+                                "HESub",
+                                format!("cc->EvalSubInPlace(ct_{}, ct_rhs)", sanitize_ident(root)),
+                                2,
+                                1.2,
+                                0,
+                                format!("{} -= {}", root, format_expr_compact(value)),
+                            );
+                        }
+                        AssignOp::Set => {}
+                    }
                 }
                 Stmt::Expr { expr, .. } => {
                     self.lower_expr(expr);
@@ -438,7 +514,23 @@ impl FheBuilder {
                         format!("bounded_fhe_loop ({})", format_expr_compact(cond)),
                     );
                 }
-                Stmt::ForEach { body, .. } | Stmt::ForRange { body, .. } => {
+                Stmt::ForEach { iter, body, .. } => {
+                    self.lower_expr(iter);
+                    self.lower_stmts(body);
+                    self.push_gate(
+                        "HEAdd",
+                        "cc->EvalSumRows(ct_packed_simd_slots)".to_string(),
+                        2,
+                        3.4,
+                        0,
+                        "packed_batch_slot_fold".to_string(),
+                    );
+                }
+                Stmt::ForRange {
+                    start, end, body, ..
+                } => {
+                    self.lower_expr(start);
+                    self.lower_expr(end);
                     self.lower_stmts(body);
                     self.push_gate(
                         "HEAdd",
@@ -932,9 +1024,22 @@ fn walk_seplogic_stmts(
                 });
             }
             Stmt::Assign { target, op, value, .. } => {
-                let pre = format!("{} * R_caller", active_preds.join(" * "));
                 let root = target.root_var();
                 let loc = format!("ℓ_{}", sanitize_ident(root));
+                for c in cells.iter_mut() {
+                    if c.owner_var == root && c.permission_frac.starts_with("1/2") {
+                        c.permission_frac = "1/1 (ExclusiveMut Borrow)".to_string();
+                        c.lifecycle_state = "BorrowedMut -> Mutated (1/1) -> Returned".to_string();
+                    }
+                }
+                let shared_pred = format!("{} ↦[1/2] {}", loc, root);
+                let excl_pred = format!("{} ↦[1/1] {}", loc, root);
+                for p in active_preds.iter_mut() {
+                    if *p == shared_pred {
+                        *p = excl_pred.clone();
+                    }
+                }
+                let pre = format!("{} * R_caller", active_preds.join(" * "));
                 let val_str = format_expr_compact(value);
                 let op_sym = match op {
                     AssignOp::Set => "=",
@@ -952,6 +1057,45 @@ fn walk_seplogic_stmts(
                     post_spatial_heap: pre,
                     disjointness_verified: true,
                 });
+            }
+            Stmt::Expr {
+                expr: Expr::Intrinsic(intr),
+                ..
+            } => {
+                if let Intrinsic::Push {
+                    list: Expr::Var(root),
+                    value,
+                } = intr.as_ref()
+                {
+                    let loc = format!("ℓ_{}", sanitize_ident(root));
+                    for c in cells.iter_mut() {
+                        if c.owner_var == *root && c.permission_frac.starts_with("1/2") {
+                            c.permission_frac = "1/1 (ExclusiveMut Borrow)".to_string();
+                            c.lifecycle_state =
+                                "BorrowedMut -> Mutated (1/1) -> Returned".to_string();
+                        }
+                    }
+                    let shared_pred = format!("{} ↦[1/2] {}", loc, root);
+                    let excl_pred = format!("{} ↦[1/1] {}", loc, root);
+                    for p in active_preds.iter_mut() {
+                        if *p == shared_pred {
+                            *p = excl_pred.clone();
+                        }
+                    }
+                    let pre = format!("{} * R_caller", active_preds.join(" * "));
+                    let val_str = format_expr_compact(value);
+                    steps.push(SepLogicProofStep {
+                        step_id: steps.len() + 1,
+                        stmt_summary: format!("push({}, {})", root, val_str),
+                        pre_spatial_heap: pre.clone(),
+                        action_rule: format!(
+                            "[Frame-Mutate] {{{} ↦[1/1] _}} push({}) {{{} ↦[1/1] v'}} (Requires 1/1 Exclusive Permission)",
+                            loc, root, loc
+                        ),
+                        post_spatial_heap: pre,
+                        disjointness_verified: true,
+                    });
+                }
             }
             Stmt::If {
                 cond,

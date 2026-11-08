@@ -363,10 +363,18 @@ fn extract_cdfg_ops_from_stmts(
                 });
             }
             Stmt::Assign { target, op, value, .. } => {
-                let target_name = match target {
-                    AssignTarget::Var(v) => v.clone(),
-                    AssignTarget::Field { base, field } => format!("{}_{}", base, field),
-                    AssignTarget::Index { base, .. } => format!("{}_elem", base),
+                let (target_name, lhs_display, is_bram_store) = match target {
+                    AssignTarget::Var(v) => (v.clone(), v.clone(), false),
+                    AssignTarget::Field { base, field } => (
+                        format!("{}_{}", base, field),
+                        format!("{}.{}", base, field),
+                        false,
+                    ),
+                    AssignTarget::Index { base, index } => (
+                        format!("{}_elem", base),
+                        format!("{}[{}]", base, format_expr_compact(index)),
+                        true,
+                    ),
                 };
                 let sig = format!("{}_r", sanitize_verilog_ident(&target_name));
                 if !reg_signals.contains(&sig) {
@@ -384,21 +392,25 @@ fn extract_cdfg_ops_from_stmts(
                     AssignOp::AddAssign => "+=",
                     AssignOp::SubAssign => "-=",
                 };
+                let effective_fu = if is_bram_store && fu == "RegFile_Latch64" {
+                    "BRAM_Port64"
+                } else if matches!(op, AssignOp::AddAssign | AssignOp::SubAssign)
+                    && fu == "RegFile_Latch64"
+                {
+                    "ALU_AddSub64"
+                } else {
+                    fu
+                };
+                let min_delay = if is_bram_store { 1.85 } else { 1.28 };
                 out.push(RawCdfgOp {
                     label: format!("UPD_{}", sanitize_verilog_ident(&target_name).to_uppercase()),
-                    fu: if matches!(op, AssignOp::AddAssign | AssignOp::SubAssign)
-                        && fu == "RegFile_Latch64"
-                    {
-                        "ALU_AddSub64"
-                    } else {
-                        fu
-                    },
-                    delay_ns: delay_ns.max(1.28),
+                    fu: effective_fu,
+                    delay_ns: delay_ns.max(min_delay),
                     cycle_cost,
                     rtl_assign: rtl,
                     source_expr: format!(
                         "{} {} {}",
-                        target_name,
+                        lhs_display,
                         op_sym,
                         format_expr_compact(value)
                     ),
@@ -857,10 +869,17 @@ fn synthesize_systemverilog_module(
     sv.push_str(");\n\n");
 
     // FSMD State Enumeration
-    sv.push_str("    typedef enum logic [3:0] {\n");
+    let enum_bits = (fsmd_states.len().next_power_of_two().trailing_zeros() as usize).max(4);
+    sv.push_str(&format!(
+        "    typedef enum logic [{}:0] {{\n",
+        enum_bits - 1
+    ));
     for (idx, st) in fsmd_states.iter().enumerate() {
         let comma = if idx + 1 < fsmd_states.len() { "," } else { "" };
-        sv.push_str(&format!("        {} = 4'd{}{}\n", st.state_name, idx, comma));
+        sv.push_str(&format!(
+            "        {} = {}'d{}{}\n",
+            st.state_name, enum_bits, idx, comma
+        ));
     }
     sv.push_str("    } fsmd_state_e;\n\n");
     sv.push_str("    fsmd_state_e state_q;\n");
@@ -934,7 +953,14 @@ fn collect_gpu_metrics_from_stmts(
 ) {
     for stmt in stmts {
         match stmt {
-            Stmt::Let { value, .. } | Stmt::Assign { value, .. } => {
+            Stmt::Let { value, .. } => {
+                inspect_gpu_expr(value, bank_accesses, flop_count, mem_bytes);
+            }
+            Stmt::Assign { target, value, .. } => {
+                if let AssignTarget::Index { base, index } = target {
+                    record_shared_mem_bank_access(base, index, bank_accesses, mem_bytes);
+                    inspect_gpu_expr(index, bank_accesses, flop_count, mem_bytes);
+                }
                 inspect_gpu_expr(value, bank_accesses, flop_count, mem_bytes);
             }
             Stmt::Expr { expr, .. } => {
@@ -1050,6 +1076,71 @@ fn collect_gpu_metrics_from_stmts(
     }
 }
 
+fn extract_index_stride(index: &Expr) -> usize {
+    match index {
+        Expr::Binary {
+            op: BinOp::Mul,
+            left,
+            right,
+        } => {
+            if let Expr::Int(n) = left.as_ref() {
+                return (*n).unsigned_abs().max(1) as usize;
+            }
+            if let Expr::Int(n) = right.as_ref() {
+                return (*n).unsigned_abs().max(1) as usize;
+            }
+            1
+        }
+        Expr::Binary {
+            op: BinOp::Add | BinOp::Sub,
+            left,
+            right,
+        } => extract_index_stride(left).max(extract_index_stride(right)),
+        _ => 1,
+    }
+}
+
+fn gcd_usize(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a.max(1)
+}
+
+fn record_shared_mem_bank_access(
+    base_str: &str,
+    index: &Expr,
+    bank_accesses: &mut Vec<SharedMemBankAccess>,
+    mem_bytes: &mut usize,
+) {
+    *mem_bytes += 8;
+    let buf_str = format!("{}[{}]", base_str, format_expr_compact(index));
+    let stride = extract_index_stride(index);
+    let ways = gcd_usize(stride, 32);
+    let conflict_free = ways == 1;
+    let padding_recommendation = if conflict_free {
+        format!(
+            "Unit/odd-stride coalesced 128B cacheline load & 32-bank conflict-free shared tile (`stride={}`, `gcd({},32)=1`)",
+            stride, stride
+        )
+    } else {
+        format!(
+            "{}-way shared-memory bank conflict (`stride={}`, `gcd({},32)={}`); pad shared tile row by +1 element (`__shared__ tile[N][32+1]`)",
+            ways, stride, stride, ways
+        )
+    };
+    bank_accesses.push(SharedMemBankAccess {
+        access_id: bank_accesses.len() + 1,
+        buffer_expr: buf_str,
+        stride_elements: stride,
+        bank_conflict_ways: ways,
+        conflict_free,
+        padding_recommendation,
+    });
+}
+
 fn inspect_gpu_expr(
     expr: &Expr,
     bank_accesses: &mut Vec<SharedMemBankAccess>,
@@ -1062,41 +1153,51 @@ fn inspect_gpu_expr(
             inspect_gpu_expr(left, bank_accesses, flop_count, mem_bytes);
             inspect_gpu_expr(right, bank_accesses, flop_count, mem_bytes);
         }
-        Expr::Unary { expr: inner, .. } => {
+        Expr::Unary { expr: inner, .. } | Expr::FieldAccess { base: inner, .. } => {
             *flop_count += 1;
             inspect_gpu_expr(inner, bank_accesses, flop_count, mem_bytes);
         }
         Expr::Index { base, index } => {
-            *mem_bytes += 8;
-            let buf_str = format!(
-                "{}[{}]",
-                format_expr_compact(base),
-                format_expr_compact(index)
-            );
-            bank_accesses.push(SharedMemBankAccess {
-                access_id: bank_accesses.len() + 1,
-                buffer_expr: buf_str,
-                stride_elements: 1,
-                bank_conflict_ways: 1,
-                conflict_free: true,
-                padding_recommendation:
-                    "Unit-stride coalesced 128B cacheline load & 32-bank conflict-free shared tile (`stride=1`, `gcd(1,32)=1`)"
-                        .to_string(),
-            });
+            let base_str = format_expr_compact(base);
+            record_shared_mem_bank_access(&base_str, index, bank_accesses, mem_bytes);
             inspect_gpu_expr(base, bank_accesses, flop_count, mem_bytes);
             inspect_gpu_expr(index, bank_accesses, flop_count, mem_bytes);
+        }
+        Expr::List(items) => {
+            for item in items {
+                inspect_gpu_expr(item, bank_accesses, flop_count, mem_bytes);
+            }
+        }
+        Expr::StructInit { fields, .. } => {
+            for (_, v) in fields {
+                inspect_gpu_expr(v, bank_accesses, flop_count, mem_bytes);
+            }
         }
         Expr::Intrinsic(intr) => {
             *flop_count += 2;
             match intr.as_ref() {
-                Intrinsic::Len(a) | Intrinsic::Abs(a) => {
+                Intrinsic::Len(a)
+                | Intrinsic::Abs(a)
+                | Intrinsic::ToStr(a)
+                | Intrinsic::Upper(a)
+                | Intrinsic::Lower(a) => {
                     inspect_gpu_expr(a, bank_accesses, flop_count, mem_bytes);
                 }
-                Intrinsic::Min(a, b) | Intrinsic::Max(a, b) => {
+                Intrinsic::Min(a, b)
+                | Intrinsic::Max(a, b)
+                | Intrinsic::Push { list: a, value: b }
+                | Intrinsic::Contains {
+                    haystack: a,
+                    needle: b,
+                } => {
                     inspect_gpu_expr(a, bank_accesses, flop_count, mem_bytes);
                     inspect_gpu_expr(b, bank_accesses, flop_count, mem_bytes);
                 }
-                _ => {}
+                Intrinsic::Print(args) => {
+                    for a in args {
+                        inspect_gpu_expr(a, bank_accesses, flop_count, mem_bytes);
+                    }
+                }
             }
         }
         Expr::Call { args, .. } => {

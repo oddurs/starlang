@@ -187,7 +187,7 @@ fn build_function_ssa(f: &FnDecl) -> FunctionSsaReport {
         });
     }
 
-    if let Some(ft) = lower_stmts_for_ssa(&f.body, entry, exit, &mut raw_blocks) {
+    if let Some(ft) = lower_stmts_for_ssa(&f.body, entry, exit, None, &mut raw_blocks) {
         add_raw_edge(&mut raw_blocks, ft, exit);
     }
 
@@ -581,6 +581,7 @@ fn lower_stmts_for_ssa(
     stmts: &[Stmt],
     mut cur: usize,
     exit: usize,
+    loop_ctx: Option<(usize, usize)>,
     blocks: &mut Vec<RawBlock>,
 ) -> Option<usize> {
     for s in stmts {
@@ -636,7 +637,16 @@ fn lower_stmts_for_ssa(
                 add_raw_edge(blocks, cur, exit);
                 return None;
             }
-            Stmt::Break { .. } | Stmt::Continue { .. } => {
+            Stmt::Break { .. } => {
+                if let Some((_, after_bb)) = loop_ctx {
+                    add_raw_edge(blocks, cur, after_bb);
+                }
+                return None;
+            }
+            Stmt::Continue { .. } => {
+                if let Some((hdr_bb, _)) = loop_ctx {
+                    add_raw_edge(blocks, cur, hdr_bb);
+                }
                 return None;
             }
             Stmt::Assert { cond, .. } => {
@@ -690,13 +700,13 @@ fn lower_stmts_for_ssa(
                 });
                 let then_bb = alloc_raw_block(blocks, "Then");
                 add_raw_edge(blocks, cur, then_bb);
-                let t_end = lower_stmts_for_ssa(then_body, then_bb, exit, blocks);
+                let t_end = lower_stmts_for_ssa(then_body, then_bb, exit, loop_ctx, blocks);
                 let e_end = if else_body.is_empty() {
                     Some(cur)
                 } else {
                     let else_bb = alloc_raw_block(blocks, "Else");
                     add_raw_edge(blocks, cur, else_bb);
-                    lower_stmts_for_ssa(else_body, else_bb, exit, blocks)
+                    lower_stmts_for_ssa(else_body, else_bb, exit, loop_ctx, blocks)
                 };
                 if t_end.is_none() && e_end.is_none() {
                     return None;
@@ -728,7 +738,9 @@ fn lower_stmts_for_ssa(
                 for (idx, arm) in arms.iter().enumerate() {
                     let arm_bb = alloc_raw_block(blocks, &format!("Arm{}", idx));
                     add_raw_edge(blocks, cur, arm_bb);
-                    if let Some(ae) = lower_stmts_for_ssa(&arm.body, arm_bb, exit, blocks) {
+                    if let Some(ae) =
+                        lower_stmts_for_ssa(&arm.body, arm_bb, exit, loop_ctx, blocks)
+                    {
                         arm_ends.push(ae);
                     }
                 }
@@ -757,7 +769,9 @@ fn lower_stmts_for_ssa(
                 });
                 add_raw_edge(blocks, hdr_bb, body_bb);
                 add_raw_edge(blocks, hdr_bb, after_bb);
-                if let Some(be) = lower_stmts_for_ssa(body, body_bb, exit, blocks) {
+                if let Some(be) =
+                    lower_stmts_for_ssa(body, body_bb, exit, Some((hdr_bb, after_bb)), blocks)
+                {
                     add_raw_edge(blocks, be, hdr_bb);
                 }
                 cur = after_bb;
@@ -780,7 +794,9 @@ fn lower_stmts_for_ssa(
                 });
                 add_raw_edge(blocks, hdr_bb, body_bb);
                 add_raw_edge(blocks, hdr_bb, after_bb);
-                if let Some(be) = lower_stmts_for_ssa(body, body_bb, exit, blocks) {
+                if let Some(be) =
+                    lower_stmts_for_ssa(body, body_bb, exit, Some((hdr_bb, after_bb)), blocks)
+                {
                     add_raw_edge(blocks, be, hdr_bb);
                 }
                 cur = after_bb;
@@ -808,7 +824,9 @@ fn lower_stmts_for_ssa(
                 });
                 add_raw_edge(blocks, hdr_bb, body_bb);
                 add_raw_edge(blocks, hdr_bb, after_bb);
-                if let Some(be) = lower_stmts_for_ssa(body, body_bb, exit, blocks) {
+                if let Some(be) =
+                    lower_stmts_for_ssa(body, body_bb, exit, Some((hdr_bb, after_bb)), blocks)
+                {
                     add_raw_edge(blocks, be, hdr_bb);
                 }
                 cur = after_bb;
@@ -961,25 +979,53 @@ fn summarize_expr(e: &Expr) -> String {
 fn replace_vars_in_text(text: &str, subst: &BTreeMap<String, String>) -> String {
     let mut out = String::new();
     let mut ident = String::new();
-    let flush = |id: &mut String, out_buf: &mut String| {
+    let mut in_string = false;
+    let mut prev_non_ident: Option<char> = None;
+    let mut ident_prefix: Option<char> = None;
+
+    let flush = |id: &mut String,
+                 out_buf: &mut String,
+                 prefix: Option<char>,
+                 next_ch: Option<char>| {
         if !id.is_empty() {
-            if let Some(rep) = subst.get(id.as_str()) {
-                out_buf.push_str(rep);
-            } else {
-                out_buf.push_str(id);
+            let is_field_or_variant = matches!(prefix, Some('.') | Some(':'));
+            let is_call_or_label = matches!(next_ch, Some('(') | Some(':'));
+            if !is_field_or_variant && !is_call_or_label {
+                if let Some(rep) = subst.get(id.as_str()) {
+                    out_buf.push_str(rep);
+                    id.clear();
+                    return;
+                }
             }
+            out_buf.push_str(id);
             id.clear();
         }
     };
+
     for ch in text.chars() {
+        if in_string {
+            out.push(ch);
+            if ch == '"' {
+                in_string = false;
+                prev_non_ident = Some('"');
+            }
+            continue;
+        }
         if ch.is_ascii_alphanumeric() || ch == '_' {
+            if ident.is_empty() {
+                ident_prefix = prev_non_ident;
+            }
             ident.push(ch);
         } else {
-            flush(&mut ident, &mut out);
+            flush(&mut ident, &mut out, ident_prefix, Some(ch));
             out.push(ch);
+            if ch == '"' {
+                in_string = true;
+            }
+            prev_non_ident = Some(ch);
         }
     }
-    flush(&mut ident, &mut out);
+    flush(&mut ident, &mut out, ident_prefix, None);
     out
 }
 
@@ -1218,7 +1264,11 @@ fn collect_loop_invariants_from_stmts(stmts: &[Stmt], out: &mut Vec<String>) {
     for s in stmts {
         match s {
             Stmt::ForRange {
-                var, start, end, ..
+                var,
+                start,
+                end,
+                body,
+                ..
             } => {
                 out.push(format!(
                     "{} <= {} && {} <= {}",
@@ -1227,12 +1277,17 @@ fn collect_loop_invariants_from_stmts(stmts: &[Stmt], out: &mut Vec<String>) {
                     var,
                     summarize_expr(end)
                 ));
+                collect_loop_invariants_from_stmts(body, out);
             }
-            Stmt::ForEach { var, iter, .. } => {
+            Stmt::ForEach {
+                var, iter, body, ..
+            } => {
                 out.push(format!("{} ∈ elems({})", var, summarize_expr(iter)));
+                collect_loop_invariants_from_stmts(body, out);
             }
-            Stmt::While { cond, .. } => {
+            Stmt::While { cond, body, .. } => {
                 out.push(format!("loop_guard({})", summarize_expr(cond)));
+                collect_loop_invariants_from_stmts(body, out);
             }
             Stmt::If {
                 then_body,
@@ -1241,6 +1296,11 @@ fn collect_loop_invariants_from_stmts(stmts: &[Stmt], out: &mut Vec<String>) {
             } => {
                 collect_loop_invariants_from_stmts(then_body, out);
                 collect_loop_invariants_from_stmts(else_body, out);
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    collect_loop_invariants_from_stmts(&arm.body, out);
+                }
             }
             _ => {}
         }
