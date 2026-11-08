@@ -513,6 +513,8 @@ impl RustFmtCtx {
         let s = self.fmt_expr(expr);
         match expr {
             Expr::Binary { .. } | Expr::Unary { .. } => format!("({})", s),
+            Expr::Int(v) if *v < 0 => format!("({})", s),
+            Expr::Float(v) if *v < 0.0 => format!("({})", s),
             Expr::Intrinsic(intr) if matches!(intr.as_ref(), Intrinsic::Len(_)) => {
                 format!("({})", s)
             }

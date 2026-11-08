@@ -375,6 +375,8 @@ fn fmt_postfix(expr: &Expr) -> String {
     let s = fmt_expr(expr);
     match expr {
         Expr::Binary { .. } | Expr::Unary { .. } => format!("({})", s),
+        Expr::Int(v) if *v < 0 => format!("({})", s),
+        Expr::Float(v) if *v < 0.0 => format!("({})", s),
         _ => s,
     }
 }

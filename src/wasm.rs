@@ -1857,6 +1857,13 @@ impl<'a> WasmCompiler<'a> {
                     .clone()
                     .or_else(|| ctx.infer_type(value, self.hub))
                     .or_else(|| ctx.list_hints.get(name).cloned())
+                    .or_else(|| {
+                        if matches!(value, Expr::List(_)) {
+                            Some(Type::List(Box::new(Type::Int)))
+                        } else {
+                            None
+                        }
+                    })
                     .ok_or_else(|| format!("cannot infer Wasm type for local '{}'", name))?;
                 let vt = self.slot_val_type(&resolved_ty)?;
                 let lidx = ctx.alloc_local(vt);
@@ -2144,6 +2151,13 @@ impl<'a> WasmCompiler<'a> {
                 let lty = ctx
                     .infer_type(left, self.hub)
                     .or_else(|| ctx.infer_type(right, self.hub))
+                    .or_else(|| {
+                        if matches!(left, Expr::List(_)) || matches!(right, Expr::List(_)) {
+                            Some(Type::List(Box::new(Type::Int)))
+                        } else {
+                            None
+                        }
+                    })
                     .ok_or_else(|| "cannot infer AssertEq operand type".to_string())?;
                 self.emit_expr(left, Some(&lty), ctx)?;
                 self.emit_expr(right, Some(&lty), ctx)?;
@@ -2408,6 +2422,15 @@ impl<'a> WasmCompiler<'a> {
                 let operand_ty = ctx
                     .infer_type(left, self.hub)
                     .or_else(|| ctx.infer_type(right, self.hub))
+                    .or_else(|| {
+                        if matches!(left.as_ref(), Expr::List(_))
+                            || matches!(right.as_ref(), Expr::List(_))
+                        {
+                            Some(Type::List(Box::new(Type::Int)))
+                        } else {
+                            None
+                        }
+                    })
                     .ok_or_else(|| "cannot infer binary operand type".to_string())?;
 
                 self.emit_expr(left, Some(&operand_ty), ctx)?;
@@ -2512,6 +2535,13 @@ impl<'a> WasmCompiler<'a> {
                 Intrinsic::Len(x) => {
                     let xty = ctx
                         .infer_type(x, self.hub)
+                        .or_else(|| {
+                            if matches!(x, Expr::List(_)) {
+                                Some(Type::List(Box::new(Type::Int)))
+                            } else {
+                                None
+                            }
+                        })
                         .ok_or_else(|| "cannot infer Len target type".to_string())?;
                     self.emit_expr(x, Some(&xty), ctx)?;
                     match xty {
@@ -2527,7 +2557,11 @@ impl<'a> WasmCompiler<'a> {
                     }
                 }
                 Intrinsic::Min(a, b) => {
-                    let ty = ctx.infer_type(a, self.hub).unwrap_or(Type::Int);
+                    let ty = ctx
+                        .infer_type(a, self.hub)
+                        .or_else(|| ctx.infer_type(b, self.hub))
+                        .or_else(|| expected.cloned())
+                        .unwrap_or(Type::Int);
                     self.emit_expr(a, Some(&ty), ctx)?;
                     self.emit_expr(b, Some(&ty), ctx)?;
                     if ty == Type::Float {
@@ -2537,7 +2571,11 @@ impl<'a> WasmCompiler<'a> {
                     }
                 }
                 Intrinsic::Max(a, b) => {
-                    let ty = ctx.infer_type(a, self.hub).unwrap_or(Type::Int);
+                    let ty = ctx
+                        .infer_type(a, self.hub)
+                        .or_else(|| ctx.infer_type(b, self.hub))
+                        .or_else(|| expected.cloned())
+                        .unwrap_or(Type::Int);
                     self.emit_expr(a, Some(&ty), ctx)?;
                     self.emit_expr(b, Some(&ty), ctx)?;
                     if ty == Type::Float {
@@ -2547,7 +2585,10 @@ impl<'a> WasmCompiler<'a> {
                     }
                 }
                 Intrinsic::Abs(a) => {
-                    let ty = ctx.infer_type(a, self.hub).unwrap_or(Type::Int);
+                    let ty = ctx
+                        .infer_type(a, self.hub)
+                        .or_else(|| expected.cloned())
+                        .unwrap_or(Type::Int);
                     self.emit_expr(a, Some(&ty), ctx)?;
                     if ty == Type::Float {
                         ctx.body.push(Instr::F64Abs);

@@ -73,7 +73,8 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
         return Ok(());
     }
     let method = parts[0].to_string();
-    let path = parts[1].to_string();
+    let raw_path = parts[1];
+    let path = raw_path.split('?').next().unwrap_or(raw_path).to_string();
 
     let mut content_length: usize = 0;
     loop {
@@ -89,6 +90,15 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<StarEngine>>) -> std::
         }
     }
 
+    const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+    if content_length > MAX_BODY_BYTES {
+        return send_response(
+            &mut stream,
+            413,
+            "application/json",
+            "{\"ok\":false,\"error\":\"request payload too large\"}",
+        );
+    }
     let mut body_bytes = vec![0u8; content_length];
     if content_length > 0 {
         reader.read_exact(&mut body_bytes)?;

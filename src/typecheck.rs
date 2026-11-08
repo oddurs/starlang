@@ -82,6 +82,13 @@ impl HubChecker {
                             message: format!("duplicate type definition '{}'", e.name),
                         });
                     }
+                    if e.variants.is_empty() {
+                        diags.push(SemanticDiagnostic {
+                            node_id: e.id,
+                            context: format!("enum {}", e.name),
+                            message: format!("enum '{}' must declare at least one variant", e.name),
+                        });
+                    }
                     let mut vset = HashSet::new();
                     for v in &e.variants {
                         if !vset.insert(v.clone()) {
@@ -201,24 +208,31 @@ impl HubChecker {
     }
 
     fn block_guarantees_return(&self, stmts: &[Stmt]) -> bool {
-        stmts.iter().any(|stmt| match stmt {
-            Stmt::Return { .. } => true,
-            Stmt::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                !else_body.is_empty()
+        for stmt in stmts {
+            match stmt {
+                Stmt::Return { .. } => return true,
+                Stmt::Break { .. } | Stmt::Continue { .. } => return false,
+                Stmt::If {
+                    then_body,
+                    else_body,
+                    ..
+                } if !else_body.is_empty()
                     && self.block_guarantees_return(then_body)
-                    && self.block_guarantees_return(else_body)
+                    && self.block_guarantees_return(else_body) =>
+                {
+                    return true;
+                }
+                Stmt::Match { arms, .. }
+                    if !arms.is_empty()
+                        && arms.iter().all(|a| self.block_guarantees_return(&a.body))
+                        && self.match_is_exhaustive(arms) =>
+                {
+                    return true;
+                }
+                _ => {}
             }
-            Stmt::Match { arms, .. } => {
-                !arms.is_empty()
-                    && arms.iter().all(|a| self.block_guarantees_return(&a.body))
-                    && self.match_is_exhaustive(arms)
-            }
-            _ => false,
-        })
+        }
+        false
     }
 
     fn match_is_exhaustive(&self, arms: &[crate::hub::MatchArm]) -> bool {
@@ -743,7 +757,18 @@ impl HubChecker {
                     });
                     return None;
                 };
+                let mut seen_fields = HashSet::new();
                 for (fname, fval) in fields {
+                    if !seen_fields.insert(fname.as_str()) {
+                        self.diags.push(SemanticDiagnostic {
+                            node_id,
+                            context: ctx.to_string(),
+                            message: format!(
+                                "duplicate field '{}' in struct '{}' initializer",
+                                fname, name
+                            ),
+                        });
+                    }
                     let vt = self.check_expr(fval, env, node_id, ctx);
                     if let Some(expected_ty) = decl_fields.get(fname) {
                         if let Some(vt) = vt {
@@ -1056,6 +1081,13 @@ impl HubChecker {
                     at
                 }
                 Intrinsic::Push { list, value } => {
+                    if !matches!(list, Expr::Var(_)) {
+                        self.diags.push(SemanticDiagnostic {
+                            node_id,
+                            context: ctx.to_string(),
+                            message: "push target must be a list variable".to_string(),
+                        });
+                    }
                     let lt = self.check_expr(list, env, node_id, ctx);
                     let vt = self.check_expr(value, env, node_id, ctx);
                     if let Some(Type::List(elem)) = lt {

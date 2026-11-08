@@ -2766,4 +2766,67 @@ fn main() {
         poly_rep.vectorizable_loops, 0,
         "Self-referential `acc += acc` is exponential doubling, not a parallel monoid reduction"
     );
+
+    // 9. Postfix method calls on negative integer literals (`abs(-5)`, `str(-5)`, `min(-5, 0)`)
+    // parenthesize `(-5)` in Rust, Ruby, Swift, Java, and TypeScript so `-` never binds looser than `.`
+    let neg_postfix_py = "\
+def check_neg_postfix() -> str:
+    a: int = abs(-5)
+    m: int = min(-5, 0)
+    return str(-5) + \":\" + str(a) + \":\" + str(m)
+
+def main() -> None:
+    print(check_neg_postfix())
+";
+    let mut neg_eng = StarEngine::from_source(SpokeId::Python, neg_postfix_py).unwrap();
+    let rust_neg = neg_eng.project(SpokeId::Rust);
+    assert!(
+        rust_neg.contains("(-5).abs()") && rust_neg.contains("(-5).min("),
+        "Rust spoke must parenthesize negative int receiver before `.abs()` / `.min()`: {}",
+        rust_neg
+    );
+    let ruby_neg = neg_eng.project(SpokeId::Ruby);
+    assert!(
+        ruby_neg.contains("(-5).abs") && ruby_neg.contains("(-5).to_s"),
+        "Ruby spoke must parenthesize negative int receiver before `.abs` / `.to_s`: {}",
+        ruby_neg
+    );
+    for spoke in SpokeId::ALL {
+        let code = neg_eng.project(spoke);
+        let snap = neg_eng
+            .apply_edit(spoke, &code)
+            .unwrap_or_else(|d| panic!("GetPut failed on {:?} for neg_postfix: {}", spoke, d));
+        assert!(
+            snap.semantic_diagnostics.is_empty(),
+            "Unexpected semantic diagnostics after {:?} round-trip: {:?}",
+            spoke,
+            snap.semantic_diagnostics
+        );
+        assert_eq!(snap.live_eval.stdout.trim(), "-5:5:-5");
+    }
+
+    // 10. Static typechecker catches duplicate field initializers in struct literals
+    let dup_field_rust = "\
+pub struct Pair {
+    pub a: i64,
+    pub b: i64,
+}
+pub fn bad_pair() -> Pair {
+    return Pair { a: 1, a: 2, b: 3 };
+}
+fn main() {
+    let p: Pair = bad_pair();
+    println!(\"{}\", p.a);
+}
+";
+    let dup_eng = StarEngine::from_source(SpokeId::Rust, dup_field_rust).unwrap();
+    let dup_snap = dup_eng.snapshot();
+    assert!(
+        dup_snap
+            .semantic_diagnostics
+            .iter()
+            .any(|d| d.message.contains("duplicate field 'a'")),
+        "Expected duplicate field diagnostic, got: {:?}",
+        dup_snap.semantic_diagnostics
+    );
 }
