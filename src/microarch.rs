@@ -434,11 +434,89 @@ fn sim_stmts_microarch(
                 acc.alu_uops += trip_multiplier;
                 acc.in_order_compute_cycles += trip_multiplier;
                 acc.ooo_compute_cycles += trip_multiplier.div_ceil(3);
-                if matches!(
-                    target,
-                    AssignTarget::Index { .. } | AssignTarget::Field { .. }
-                ) {
-                    acc.mem_uops += trip_multiplier;
+                match target {
+                    AssignTarget::Index { base, index } => {
+                        sim_expr_microarch(
+                            fn_name,
+                            index,
+                            trip_multiplier,
+                            base_addr,
+                            cache,
+                            acc,
+                            cache_sites,
+                        );
+                        let mut hits = 0u64;
+                        let mut pref_hits = 0u64;
+                        let mut misses = 0u64;
+                        let mut mem_cyc = 0u64;
+                        for t in 0..trip_multiplier {
+                            let (h, p, c) = cache.access(base, base_addr + 0x500 + t * 8);
+                            if h {
+                                hits += 1;
+                            } else if p {
+                                pref_hits += 1;
+                            } else {
+                                misses += 1;
+                            }
+                            mem_cyc += c;
+                        }
+                        acc.mem_uops += trip_multiplier;
+                        acc.l1_hits += hits;
+                        acc.l1_misses += misses;
+                        acc.mem_cycles += mem_cyc;
+                        cache_sites.push(CacheSiteProfile {
+                            site_label: format!(
+                                "store `{}[{}]`",
+                                base,
+                                format_expr_compact(index)
+                            ),
+                            fn_name: fn_name.to_string(),
+                            accesses: trip_multiplier,
+                            l1_hits: hits,
+                            prefetch_hits: pref_hits,
+                            misses,
+                            hit_rate_pct: (((hits + pref_hits) as f64 / trip_multiplier as f64)
+                                * 1000.0)
+                                .round()
+                                / 10.0,
+                            memory_cycles: mem_cyc,
+                        });
+                    }
+                    AssignTarget::Field { base, field } => {
+                        let mut hits = 0u64;
+                        let mut pref_hits = 0u64;
+                        let mut misses = 0u64;
+                        let mut mem_cyc = 0u64;
+                        for _ in 0..trip_multiplier {
+                            let (h, p, c) = cache.access(base, base_addr + 0x580);
+                            if h {
+                                hits += 1;
+                            } else if p {
+                                pref_hits += 1;
+                            } else {
+                                misses += 1;
+                            }
+                            mem_cyc += c;
+                        }
+                        acc.mem_uops += trip_multiplier;
+                        acc.l1_hits += hits;
+                        acc.l1_misses += misses;
+                        acc.mem_cycles += mem_cyc;
+                        cache_sites.push(CacheSiteProfile {
+                            site_label: format!("store `{}.{}`", base, field),
+                            fn_name: fn_name.to_string(),
+                            accesses: trip_multiplier,
+                            l1_hits: hits,
+                            prefetch_hits: pref_hits,
+                            misses,
+                            hit_rate_pct: (((hits + pref_hits) as f64 / trip_multiplier as f64)
+                                * 1000.0)
+                                .round()
+                                / 10.0,
+                            memory_cycles: mem_cyc,
+                        });
+                    }
+                    AssignTarget::Var(_) => {}
                 }
                 sim_expr_microarch(
                     fn_name,
@@ -598,6 +676,24 @@ fn sim_stmts_microarch(
                 body,
                 ..
             } => {
+                sim_expr_microarch(
+                    fn_name,
+                    start,
+                    trip_multiplier,
+                    base_addr,
+                    cache,
+                    acc,
+                    cache_sites,
+                );
+                sim_expr_microarch(
+                    fn_name,
+                    end,
+                    trip_multiplier,
+                    base_addr,
+                    cache,
+                    acc,
+                    cache_sites,
+                );
                 let const_int = |e: &Expr| -> Option<i64> {
                     match e {
                         Expr::Int(v) => Some(*v),
@@ -614,10 +710,11 @@ fn sim_stmts_microarch(
                         _ => None,
                     }
                 };
-                let trips = match (const_int(start), const_int(end)) {
-                    (Some(lo), Some(hi)) => (hi - lo).clamp(1, 64) as u64,
+                let raw_trips = match (const_int(start), const_int(end)) {
+                    (Some(lo), Some(hi)) => (hi - lo).clamp(0, 64) as u64,
                     _ => 16,
-                } * trip_multiplier;
+                };
+                let trips = raw_trips * trip_multiplier;
 
                 // Loop back-edge branch: taken `trips` times, not-taken 1 time on loop exit
                 let bht_idx = (*id as usize) & 63;
@@ -654,17 +751,19 @@ fn sim_stmts_microarch(
                     penalty_cycles: pen,
                 });
 
-                sim_stmts_microarch(
-                    fn_name,
-                    body,
-                    trips,
-                    base_addr + 0x1000,
-                    bht,
-                    cache,
-                    acc,
-                    branch_sites,
-                    cache_sites,
-                );
+                if trips > 0 {
+                    sim_stmts_microarch(
+                        fn_name,
+                        body,
+                        trips,
+                        base_addr + 0x1000,
+                        bht,
+                        cache,
+                        acc,
+                        branch_sites,
+                        cache_sites,
+                    );
+                }
             }
             Stmt::ForEach {
                 id,
@@ -673,6 +772,15 @@ fn sim_stmts_microarch(
                 body,
                 ..
             } => {
+                sim_expr_microarch(
+                    fn_name,
+                    iter,
+                    trip_multiplier,
+                    base_addr,
+                    cache,
+                    acc,
+                    cache_sites,
+                );
                 let trips = 16 * trip_multiplier;
                 let bht_idx = (*id as usize) & 63;
                 let mut correct = 0u64;
@@ -750,6 +858,15 @@ fn sim_stmts_microarch(
             }
             Stmt::While { id, cond, body, .. } => {
                 let trips = 12 * trip_multiplier;
+                sim_expr_microarch(
+                    fn_name,
+                    cond,
+                    trips + 1,
+                    base_addr,
+                    cache,
+                    acc,
+                    cache_sites,
+                );
                 let bht_idx = (*id as usize) & 63;
                 let mut correct = 0u64;
                 let mut mispred = 0u64;
@@ -1295,9 +1412,11 @@ fn lower_stmts_for_scheduling(
             Stmt::Assign {
                 target, op, value, ..
             } => {
-                if let AssignTarget::Index { index, .. } = target {
-                    let _ = lower_expr_for_scheduling(index, None, out, tmp_counter);
-                }
+                let idx_v = if let AssignTarget::Index { index, .. } = target {
+                    Some(lower_expr_for_scheduling(index, None, out, tmp_counter))
+                } else {
+                    None
+                };
                 let dst = match target {
                     AssignTarget::Var(v) => v.clone(),
                     AssignTarget::Index { base, .. } | AssignTarget::Field { base, .. } => {
@@ -1305,19 +1424,52 @@ fn lower_stmts_for_scheduling(
                     }
                 };
                 match op {
-                    AssignOp::Set => {
-                        lower_expr_for_scheduling(value, Some(&dst), out, tmp_counter);
-                    }
+                    AssignOp::Set => match target {
+                        AssignTarget::Var(_) => {
+                            lower_expr_for_scheduling(value, Some(&dst), out, tmp_counter);
+                        }
+                        AssignTarget::Index { base, .. } => {
+                            let rhs = lower_expr_for_scheduling(value, None, out, tmp_counter);
+                            let iv = idx_v.unwrap_or_else(|| "0".to_string());
+                            let idx = out.len();
+                            out.push(RawSchedInst {
+                                idx,
+                                unit: "LSU".to_string(),
+                                latency: 1,
+                                defs: vec![base.clone()],
+                                uses: vec![base.clone(), iv.clone(), rhs.clone()],
+                                is_barrier: false,
+                                text: format!("str {}[{}] = {}", base, iv, rhs),
+                            });
+                        }
+                        AssignTarget::Field { base, field } => {
+                            let rhs = lower_expr_for_scheduling(value, None, out, tmp_counter);
+                            let idx = out.len();
+                            out.push(RawSchedInst {
+                                idx,
+                                unit: "LSU".to_string(),
+                                latency: 1,
+                                defs: vec![base.clone()],
+                                uses: vec![base.clone(), rhs.clone()],
+                                is_barrier: false,
+                                text: format!("str {}.{} = {}", base, field, rhs),
+                            });
+                        }
+                    },
                     AssignOp::AddAssign | AssignOp::SubAssign => {
                         let rhs = lower_expr_for_scheduling(value, None, out, tmp_counter);
                         let sym = if *op == AssignOp::AddAssign { "+" } else { "-" };
+                        let mut uses = vec![dst.clone(), rhs.clone()];
+                        if let Some(iv) = idx_v {
+                            uses.push(iv);
+                        }
                         let idx = out.len();
                         out.push(RawSchedInst {
                             idx,
                             unit: "ALU".to_string(),
                             latency: 1,
                             defs: vec![dst.clone()],
-                            uses: vec![dst.clone(), rhs.clone()],
+                            uses,
                             is_barrier: false,
                             text: format!("{} = {} {} {}", dst, dst, sym, rhs),
                         });
@@ -1625,6 +1777,26 @@ fn lower_expr_for_scheduling(
                 uses: fvs.clone(),
                 is_barrier: false,
                 text: format!("{} = pack {} {{ {} }}", dst, name, fvs.join(", ")),
+            });
+            dst
+        }
+        Expr::List(items) => {
+            let mut ivs = Vec::new();
+            for it in items {
+                ivs.push(lower_expr_for_scheduling(it, None, out, tmp_counter));
+            }
+            let dst = target_dst
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| next_sched_tmp(tmp_counter));
+            let idx = out.len();
+            out.push(RawSchedInst {
+                idx,
+                unit: "LSU".to_string(),
+                latency: 2,
+                defs: vec![dst.clone()],
+                uses: ivs.clone(),
+                is_barrier: false,
+                text: format!("{} = list [{}]", dst, ivs.join(", ")),
             });
             dst
         }

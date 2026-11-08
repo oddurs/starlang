@@ -324,14 +324,19 @@ fn allocate_fn_registers(
         adj.insert(v.clone(), BTreeSet::new());
     }
 
-    // 1. Interval overlap interference
+    let move_pair_set: BTreeSet<(String, String)> = move_pairs.iter().cloned().collect();
+
+    // 1. Interval overlap interference (excluding pure boundary handoff at MovCopy dst = src)
     for i in 0..all_vars.len() {
         for j in (i + 1)..all_vars.len() {
             let u = &all_vars[i];
             let v = &all_vars[j];
             let (u_s, u_e) = (var_start[u], var_end[u]);
             let (v_s, v_e) = (var_start[v], var_end[v]);
-            if u_s <= v_e && v_s <= u_e {
+            let is_move_handoff = ((u_e == v_s && u_s < u_e) || (v_e == u_s && v_s < v_e))
+                && (move_pair_set.contains(&(u.clone(), v.clone()))
+                    || move_pair_set.contains(&(v.clone(), u.clone())));
+            if u_s <= v_e && v_s <= u_e && !is_move_handoff {
                 adj.get_mut(u).unwrap().insert(v.clone());
                 adj.get_mut(v).unwrap().insert(u.clone());
             }
@@ -449,12 +454,52 @@ fn allocate_fn_registers(
     let mut next_spill_offset = 16usize;
 
     for v in kempe_stack.iter().rev() {
+        if assigned_color.contains_key(v) {
+            continue;
+        }
         let mut used_colors = BTreeSet::new();
         for nbr in &adj[v] {
             if let Some(Some(c)) = assigned_color.get(nbr) {
                 used_colors.insert(*c);
             }
         }
+        // Check for an uncolored non-interfering move partner that can be coalesced with `v`
+        let coalesce_partner = move_pairs
+            .iter()
+            .filter_map(|(dst, src)| {
+                if dst == v {
+                    Some(src)
+                } else if src == v {
+                    Some(dst)
+                } else {
+                    None
+                }
+            })
+            .find(|partner| {
+                !assigned_color.contains_key(*partner)
+                    && !adj[v].contains(*partner)
+                    && adj[*partner].len() < k
+            })
+            .cloned();
+
+        let mut combined_used = used_colors.clone();
+        if let Some(ref partner) = coalesce_partner {
+            for pnbr in &adj[partner] {
+                if let Some(Some(c)) = assigned_color.get(pnbr) {
+                    combined_used.insert(*c);
+                }
+            }
+        }
+
+        if let (Some(partner), Some(c)) = (
+            coalesce_partner,
+            (0..k).find(|c| !combined_used.contains(c)),
+        ) {
+            assigned_color.insert(v.clone(), Some(c));
+            assigned_color.insert(partner, Some(c));
+            continue;
+        }
+
         let color = (0..k).find(|c| !used_colors.contains(c));
         if color.is_none() {
             spill_slot_offset.insert(v.clone(), next_spill_offset);
@@ -595,6 +640,15 @@ fn lower_stmts_to_ir(
             Stmt::Assign {
                 target, op, value, ..
             } => {
+                let idx_use = if let AssignTarget::Index { index, .. } = target {
+                    Some(lower_expr_to_ir(index, None, loop_depth, insts, temp_counter))
+                } else {
+                    None
+                };
+                let is_subtarget = matches!(
+                    target,
+                    AssignTarget::Index { .. } | AssignTarget::Field { .. }
+                );
                 let dst_name = match target {
                     AssignTarget::Var(v) => v.clone(),
                     AssignTarget::Index { base, .. } | AssignTarget::Field { base, .. } => {
@@ -603,24 +657,38 @@ fn lower_stmts_to_ir(
                 };
                 match op {
                     AssignOp::Set => {
+                        let target_hint = if !is_subtarget {
+                            Some(dst_name.as_str())
+                        } else {
+                            None
+                        };
                         let rhs = lower_expr_to_ir(
                             value,
-                            Some(&dst_name),
+                            target_hint,
                             loop_depth,
                             insts,
                             temp_counter,
                         );
-                        if rhs != dst_name {
+                        if rhs != dst_name || is_subtarget {
                             let pc = insts.len();
+                            let mut uses = vec![rhs.clone()];
+                            if is_subtarget && !uses.contains(&dst_name) {
+                                uses.push(dst_name.clone());
+                            }
+                            if let Some(iv) = idx_use {
+                                if !uses.contains(&iv) {
+                                    uses.push(iv);
+                                }
+                            }
                             insts.push(IrInst {
                                 pc,
                                 loop_depth,
                                 op: IrOp::MovCopy {
                                     dst: dst_name.clone(),
-                                    src: rhs.clone(),
+                                    src: rhs,
                                 },
                                 defs: vec![dst_name],
-                                uses: vec![rhs],
+                                uses,
                             });
                         }
                     }
@@ -632,6 +700,12 @@ fn lower_stmts_to_ir(
                             BinOp::Sub
                         };
                         let pc = insts.len();
+                        let mut uses = vec![dst_name.clone(), rhs.clone()];
+                        if let Some(iv) = idx_use {
+                            if !uses.contains(&iv) {
+                                uses.push(iv);
+                            }
+                        }
                         insts.push(IrInst {
                             pc,
                             loop_depth,
@@ -639,10 +713,10 @@ fn lower_stmts_to_ir(
                                 dst: dst_name.clone(),
                                 op: bop,
                                 lhs: dst_name.clone(),
-                                rhs: rhs.clone(),
+                                rhs,
                             },
-                            defs: vec![dst_name.clone()],
-                            uses: vec![dst_name, rhs],
+                            defs: vec![dst_name],
+                            uses,
                         });
                     }
                 }
@@ -1601,25 +1675,25 @@ fn emit_x86_64_assembly(
                 let d = resolve(dst);
                 let l = resolve(lhs);
                 let r = resolve(rhs);
+                let emit_two_addr = |out: &mut String, mnem: &str| {
+                    if d == l {
+                        out.push_str(&format!("    {} {}, {}\n", mnem, d, r));
+                    } else if d == r {
+                        out.push_str(&format!(
+                            "    mov rax, {}\n    {} rax, {}\n    mov {}, rax\n",
+                            l, mnem, r, d
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            "    mov {}, {}\n    {} {}, {}\n",
+                            d, l, mnem, d, r
+                        ));
+                    }
+                };
                 match op {
-                    BinOp::Add => {
-                        if d != l {
-                            out.push_str(&format!("    mov {}, {}\n", d, l));
-                        }
-                        out.push_str(&format!("    add {}, {}\n", d, r));
-                    }
-                    BinOp::Sub => {
-                        if d != l {
-                            out.push_str(&format!("    mov {}, {}\n", d, l));
-                        }
-                        out.push_str(&format!("    sub {}, {}\n", d, r));
-                    }
-                    BinOp::Mul => {
-                        if d != l {
-                            out.push_str(&format!("    mov {}, {}\n", d, l));
-                        }
-                        out.push_str(&format!("    imul {}, {}\n", d, r));
-                    }
+                    BinOp::Add => emit_two_addr(&mut out, "add"),
+                    BinOp::Sub => emit_two_addr(&mut out, "sub"),
+                    BinOp::Mul => emit_two_addr(&mut out, "imul"),
                     BinOp::Div | BinOp::IntDiv => {
                         out.push_str(&format!(
                             "    mov rax, {}\n    cqo\n    idiv {}\n    mov {}, rax\n",
@@ -1646,18 +1720,8 @@ fn emit_x86_64_assembly(
                             l, r, set_op, d
                         ));
                     }
-                    BinOp::And => {
-                        if d != l {
-                            out.push_str(&format!("    mov {}, {}\n", d, l));
-                        }
-                        out.push_str(&format!("    and {}, {}\n", d, r));
-                    }
-                    BinOp::Or => {
-                        if d != l {
-                            out.push_str(&format!("    mov {}, {}\n", d, l));
-                        }
-                        out.push_str(&format!("    or {}, {}\n", d, r));
-                    }
+                    BinOp::And => emit_two_addr(&mut out, "and"),
+                    BinOp::Or => emit_two_addr(&mut out, "or"),
                 }
             }
             IrOp::Call { dst, callee, args } => {
@@ -1665,17 +1729,31 @@ fn emit_x86_64_assembly(
                 if callee == "__csel_min" && args.len() == 2 {
                     let a = resolve(&args[0]);
                     let b = resolve(&args[1]);
-                    out.push_str(&format!(
-                        "    mov {}, {}\n    cmp {}, {}\n    cmovg {}, {}                  # min({}, {})\n",
-                        d, a, d, b, d, b, args[0], args[1]
-                    ));
+                    if d == b && d != a {
+                        out.push_str(&format!(
+                            "    mov rax, {}\n    cmp rax, {}\n    cmovg rax, {}\n    mov {}, rax                  # min({}, {})\n",
+                            a, b, b, d, args[0], args[1]
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            "    mov {}, {}\n    cmp {}, {}\n    cmovg {}, {}                  # min({}, {})\n",
+                            d, a, d, b, d, b, args[0], args[1]
+                        ));
+                    }
                 } else if callee == "__csel_max" && args.len() == 2 {
                     let a = resolve(&args[0]);
                     let b = resolve(&args[1]);
-                    out.push_str(&format!(
-                        "    mov {}, {}\n    cmp {}, {}\n    cmovl {}, {}                  # max({}, {})\n",
-                        d, a, d, b, d, b, args[0], args[1]
-                    ));
+                    if d == b && d != a {
+                        out.push_str(&format!(
+                            "    mov rax, {}\n    cmp rax, {}\n    cmovl rax, {}\n    mov {}, rax                  # max({}, {})\n",
+                            a, b, b, d, args[0], args[1]
+                        ));
+                    } else {
+                        out.push_str(&format!(
+                            "    mov {}, {}\n    cmp {}, {}\n    cmovl {}, {}                  # max({}, {})\n",
+                            d, a, d, b, d, b, args[0], args[1]
+                        ));
+                    }
                 } else {
                     for (i, a) in args.iter().take(6).enumerate() {
                         let s = resolve(a);
@@ -1888,7 +1966,21 @@ fn scan_stmts_alloc_sites(
                     sites,
                 );
             }
-            Stmt::Assign { id, value, .. } => {
+            Stmt::Assign {
+                id, target, value, ..
+            } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    scan_expr_alloc_sites(
+                        *id,
+                        fn_name,
+                        None,
+                        false,
+                        in_loop,
+                        index,
+                        struct_field_counts,
+                        sites,
+                    );
+                }
                 scan_expr_alloc_sites(
                     *id,
                     fn_name,
@@ -1917,10 +2009,22 @@ fn scan_stmts_alloc_sites(
                 );
             }
             Stmt::If {
+                id,
+                cond,
                 then_body,
                 else_body,
                 ..
             } => {
+                scan_expr_alloc_sites(
+                    *id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    cond,
+                    struct_field_counts,
+                    sites,
+                );
                 scan_stmts_alloc_sites(
                     fn_name,
                     then_body,
@@ -1938,7 +2042,19 @@ fn scan_stmts_alloc_sites(
                     sites,
                 );
             }
-            Stmt::Match { arms, .. } => {
+            Stmt::Match {
+                id, expr, arms, ..
+            } => {
+                scan_expr_alloc_sites(
+                    *id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    expr,
+                    struct_field_counts,
+                    sites,
+                );
                 for a in arms {
                     scan_stmts_alloc_sites(
                         fn_name,
@@ -1950,9 +2066,77 @@ fn scan_stmts_alloc_sites(
                     );
                 }
             }
-            Stmt::While { body, .. }
-            | Stmt::ForRange { body, .. }
-            | Stmt::ForEach { body, .. } => {
+            Stmt::While {
+                id, cond, body, ..
+            } => {
+                scan_expr_alloc_sites(
+                    *id,
+                    fn_name,
+                    None,
+                    false,
+                    true,
+                    cond,
+                    struct_field_counts,
+                    sites,
+                );
+                scan_stmts_alloc_sites(
+                    fn_name,
+                    body,
+                    true,
+                    returned_vars,
+                    struct_field_counts,
+                    sites,
+                );
+            }
+            Stmt::ForRange {
+                id,
+                start,
+                end,
+                body,
+                ..
+            } => {
+                scan_expr_alloc_sites(
+                    *id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    start,
+                    struct_field_counts,
+                    sites,
+                );
+                scan_expr_alloc_sites(
+                    *id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    end,
+                    struct_field_counts,
+                    sites,
+                );
+                scan_stmts_alloc_sites(
+                    fn_name,
+                    body,
+                    true,
+                    returned_vars,
+                    struct_field_counts,
+                    sites,
+                );
+            }
+            Stmt::ForEach {
+                id, iter, body, ..
+            } => {
+                scan_expr_alloc_sites(
+                    *id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    iter,
+                    struct_field_counts,
+                    sites,
+                );
                 scan_stmts_alloc_sites(
                     fn_name,
                     body,
@@ -2040,6 +2224,18 @@ fn scan_expr_alloc_sites(
                 estimated_bytes_saved: bytes,
                 note,
             });
+            for (_, fval) in fields {
+                scan_expr_alloc_sites(
+                    stmt_id,
+                    fn_name,
+                    None,
+                    escapes_via_return,
+                    in_loop,
+                    fval,
+                    struct_field_counts,
+                    sites,
+                );
+            }
         }
         Expr::List(items) => {
             let len = items.len();
@@ -2083,6 +2279,18 @@ fn scan_expr_alloc_sites(
                 estimated_bytes_saved: bytes,
                 note,
             });
+            for item in items {
+                scan_expr_alloc_sites(
+                    stmt_id,
+                    fn_name,
+                    None,
+                    escapes_via_return,
+                    in_loop,
+                    item,
+                    struct_field_counts,
+                    sites,
+                );
+            }
         }
         Expr::Intrinsic(intr) => match intr.as_ref() {
             Intrinsic::Push { list, value } => {
@@ -2097,6 +2305,16 @@ fn scan_expr_alloc_sites(
                     estimated_bytes_saved: 64,
                     note: "Loop `push` bounded by input slice length — pre-reserve single contiguous arena block".to_string(),
                 });
+                scan_expr_alloc_sites(
+                    stmt_id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    value,
+                    struct_field_counts,
+                    sites,
+                );
             }
             Intrinsic::Upper(a) | Intrinsic::Lower(a) | Intrinsic::ToStr(a) => {
                 let state = if in_loop && !escapes_via_return {
@@ -2121,9 +2339,119 @@ fn scan_expr_alloc_sites(
                         format_expr_compact(a)
                     ),
                 });
+                scan_expr_alloc_sites(
+                    stmt_id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    a,
+                    struct_field_counts,
+                    sites,
+                );
             }
-            _ => {}
+            Intrinsic::Len(a) | Intrinsic::Abs(a) => {
+                scan_expr_alloc_sites(
+                    stmt_id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    a,
+                    struct_field_counts,
+                    sites,
+                );
+            }
+            Intrinsic::Min(a, b)
+            | Intrinsic::Max(a, b)
+            | Intrinsic::Contains {
+                haystack: a,
+                needle: b,
+            } => {
+                scan_expr_alloc_sites(
+                    stmt_id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    a,
+                    struct_field_counts,
+                    sites,
+                );
+                scan_expr_alloc_sites(
+                    stmt_id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    b,
+                    struct_field_counts,
+                    sites,
+                );
+            }
+            Intrinsic::Print(args) => {
+                for a in args {
+                    scan_expr_alloc_sites(
+                        stmt_id,
+                        fn_name,
+                        None,
+                        false,
+                        in_loop,
+                        a,
+                        struct_field_counts,
+                        sites,
+                    );
+                }
+            }
         },
+        Expr::Unary { expr: inner, .. } | Expr::FieldAccess { base: inner, .. } => {
+            scan_expr_alloc_sites(
+                stmt_id,
+                fn_name,
+                bound_var,
+                escapes_via_return,
+                in_loop,
+                inner,
+                struct_field_counts,
+                sites,
+            );
+        }
+        Expr::Index { base, index } => {
+            scan_expr_alloc_sites(
+                stmt_id,
+                fn_name,
+                None,
+                false,
+                in_loop,
+                base,
+                struct_field_counts,
+                sites,
+            );
+            scan_expr_alloc_sites(
+                stmt_id,
+                fn_name,
+                None,
+                false,
+                in_loop,
+                index,
+                struct_field_counts,
+                sites,
+            );
+        }
+        Expr::Call { args, .. } => {
+            for a in args {
+                scan_expr_alloc_sites(
+                    stmt_id,
+                    fn_name,
+                    None,
+                    false,
+                    in_loop,
+                    a,
+                    struct_field_counts,
+                    sites,
+                );
+            }
+        }
         Expr::Binary { left, right, .. } => {
             scan_expr_alloc_sites(
                 stmt_id,

@@ -329,14 +329,15 @@ fn compile_stmts_r1cs(
                 last_idx = w_idx;
             }
             Stmt::Assign {
-                target: AssignTarget::Var(name),
-                op,
-                value,
-                ..
+                target, op, value, ..
             } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    let _ = compile_expr_r1cs(index, b, private_witnesses);
+                }
+                let name = target.root_var().to_string();
                 let rhs_idx = compile_expr_r1cs(value, b, private_witnesses);
                 let rhs_val = b.wire_val(rhs_idx);
-                let cur_idx = b.wire_by_name.get(name).copied().unwrap_or(0);
+                let cur_idx = b.wire_by_name.get(&name).copied().unwrap_or(0);
                 let cur_val = b.wire_val(cur_idx);
                 let (next_val, a_desc) = match op {
                     AssignOp::Set => (rhs_val, b.wire_sym(rhs_idx)),
@@ -389,12 +390,62 @@ fn compile_stmts_r1cs(
                     format!("Booleanity check b*(1-b)=0 for ({})", format_expr_compact(cond)),
                 );
 
+                let pre_map = b.wire_by_name.clone();
                 let then_idx = compile_stmts_r1cs(then_body, b, private_witnesses);
+                let then_map = b.wire_by_name.clone();
+
+                b.wire_by_name = pre_map.clone();
                 let else_idx = if else_body.is_empty() {
                     0
                 } else {
                     compile_stmts_r1cs(else_body, b, private_witnesses)
                 };
+                let else_map = b.wire_by_name.clone();
+
+                // Reconcile variable wires across then_map and else_map via MuxSelect gates
+                let mut merged_map = pre_map.clone();
+                let mut all_vars: std::collections::BTreeSet<String> =
+                    then_map.keys().cloned().collect();
+                all_vars.extend(else_map.keys().cloned());
+                for var in all_vars {
+                    let t_w = then_map
+                        .get(&var)
+                        .copied()
+                        .or_else(|| pre_map.get(&var).copied())
+                        .unwrap_or(0);
+                    let e_w = else_map
+                        .get(&var)
+                        .copied()
+                        .or_else(|| pre_map.get(&var).copied())
+                        .unwrap_or(0);
+                    if t_w == e_w {
+                        merged_map.insert(var, t_w);
+                    } else {
+                        let tv = b.wire_val(t_w);
+                        let ev = b.wire_val(e_w);
+                        let diff = mod_fp(tv as i128 - ev as i128);
+                        let mv = if bit_val == 1 { tv } else { ev };
+                        let m_sym = format!("{}_mux{}", var, b.wires.len());
+                        let m_idx = b.alloc_wire(&m_sym, "IntermediateGate", mv);
+                        b.add_constraint(
+                            "MuxSelect",
+                            b.wire_sym(bit_idx),
+                            format!("({} - {})", b.wire_sym(t_w), b.wire_sym(e_w)),
+                            format!("({} - {})", b.wire_sym(m_idx), b.wire_sym(e_w)),
+                            bit_val,
+                            diff,
+                            mod_fp(mv as i128 - ev as i128),
+                            format!(
+                                "Mux state merge on `{}` for if ({})",
+                                var,
+                                format_expr_compact(cond)
+                            ),
+                        );
+                        merged_map.insert(var, m_idx);
+                    }
+                }
+                b.wire_by_name = merged_map;
+
                 let tv = b.wire_val(then_idx);
                 let ev = b.wire_val(else_idx);
                 // Mux gate: bit * (tv - ev) = mux_out - ev
@@ -415,12 +466,26 @@ fn compile_stmts_r1cs(
                 );
                 last_idx = mux_idx;
             }
-            Stmt::Match { arms, .. } => {
+            Stmt::Match { expr, arms, .. } => {
+                let _ = compile_expr_r1cs(expr, b, private_witnesses);
+                let pre_map = b.wire_by_name.clone();
+                let mut final_map = pre_map.clone();
                 for arm in arms {
+                    b.wire_by_name = pre_map.clone();
                     last_idx = compile_stmts_r1cs(&arm.body, b, private_witnesses);
+                    final_map = b.wire_by_name.clone();
                 }
+                b.wire_by_name = final_map;
             }
-            Stmt::ForRange { var, body, .. } | Stmt::ForEach { var, body, .. } => {
+            Stmt::ForRange {
+                var,
+                start,
+                end,
+                body,
+                ..
+            } => {
+                let _ = compile_expr_r1cs(start, b, private_witnesses);
+                let _ = compile_expr_r1cs(end, b, private_witnesses);
                 // Unroll 2 bounded circuit rounds for R1CS arithmetization
                 for r in 0..2 {
                     let iter_sym = format!("{}_r{}", var, r);
@@ -430,10 +495,24 @@ fn compile_stmts_r1cs(
                     last_idx = compile_stmts_r1cs(body, b, private_witnesses);
                 }
             }
-            Stmt::While { body, .. } => {
+            Stmt::ForEach {
+                var, iter, body, ..
+            } => {
+                let _ = compile_expr_r1cs(iter, b, private_witnesses);
+                // Unroll 2 bounded circuit rounds for R1CS arithmetization
+                for r in 0..2 {
+                    let iter_sym = format!("{}_r{}", var, r);
+                    let w_idx = b.alloc_wire(&iter_sym, "PrivateWitness", (r as i64 + 1) * 10);
+                    *private_witnesses += 1;
+                    b.wire_by_name.insert(var.clone(), w_idx);
+                    last_idx = compile_stmts_r1cs(body, b, private_witnesses);
+                }
+            }
+            Stmt::While { cond, body, .. } => {
+                let _ = compile_expr_r1cs(cond, b, private_witnesses);
                 last_idx = compile_stmts_r1cs(body, b, private_witnesses);
             }
-            Stmt::Return { value: Some(v), .. } => {
+            Stmt::Return { value: Some(v), .. } | Stmt::Expr { expr: v, .. } => {
                 last_idx = compile_expr_r1cs(v, b, private_witnesses);
             }
             _ => {}
@@ -514,17 +593,20 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
                     );
                     out_idx
                 }
-                BinOp::Div | BinOp::IntDiv => {
-                    let denom_s = if srv == 0 { 1 } else { srv };
-                    let q_s = slv.wrapping_div(denom_s);
-                    let rem_s = slv.wrapping_sub(q_s.wrapping_mul(denom_s));
+                BinOp::Div | BinOp::IntDiv | BinOp::Mod => {
+                    let (q_s, rem_s, denom_fp) = if srv == 0 {
+                        (0i64, slv, rv)
+                    } else {
+                        let q = slv.wrapping_div(srv);
+                        let r = slv.wrapping_sub(q.wrapping_mul(srv));
+                        (q, r, rv)
+                    };
                     let q_sym = format!("quot_{}", b.wires.len());
                     let q_idx = b.alloc_wire(&q_sym, "PrivateWitness", q_s);
                     let r_sym = format!("rem_{}", b.wires.len());
                     let r_idx = b.alloc_wire(&r_sym, "PrivateWitness", rem_s);
                     let q_fp = b.wire_val(q_idx);
                     let r_fp = b.wire_val(r_idx);
-                    let denom_fp = mod_fp(denom_s as i128);
                     let diff_fp = mod_fp(lv as i128 - r_fp as i128);
                     *private_witnesses += 2;
                     b.mul_depth += 1;
@@ -542,7 +624,11 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
                             format_expr_compact(expr)
                         ),
                     );
-                    q_idx
+                    if matches!(op, BinOp::Mod) {
+                        r_idx
+                    } else {
+                        q_idx
+                    }
                 }
                 BinOp::Add => {
                     let s = mod_fp(lv as i128 + rv as i128);
@@ -606,9 +692,11 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
                 }
             }
         }
-        Expr::Index { base, .. } | Expr::FieldAccess { base, .. } => {
+        Expr::Index { base, index } => {
+            let _ = compile_expr_r1cs(index, b, private_witnesses);
             compile_expr_r1cs(base, b, private_witnesses)
         }
+        Expr::FieldAccess { base, .. } => compile_expr_r1cs(base, b, private_witnesses),
         Expr::StructInit { fields, .. } => {
             let mut acc_val = 0i64;
             for (_, v) in fields {
@@ -616,14 +704,28 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
                 acc_val = mod_fp(acc_val as i128 + b.wire_val(fi) as i128);
             }
             let sym = format!("struct_hash_{}", b.wires.len());
-            b.alloc_wire(&sym, "IntermediateGate", acc_val)
+            let w_idx = b.alloc_wire(&sym, "IntermediateGate", acc_val);
+            b.add_constraint(
+                "LinearEq",
+                b.wire_sym(w_idx),
+                "w0(1)".to_string(),
+                b.wire_sym(w_idx),
+                acc_val,
+                1,
+                acc_val,
+                format!("Aggregate field commitment for {}", format_expr_compact(expr)),
+            );
+            w_idx
         }
         Expr::Call { args, .. } => {
-            if let Some(first) = args.first() {
-                compile_expr_r1cs(first, b, private_witnesses)
-            } else {
-                0
+            let mut first_idx = 0usize;
+            for (i, a) in args.iter().enumerate() {
+                let ai = compile_expr_r1cs(a, b, private_witnesses);
+                if i == 0 {
+                    first_idx = ai;
+                }
             }
+            first_idx
         }
         Expr::Intrinsic(intr) => match intr.as_ref() {
             Intrinsic::Max(a, c) | Intrinsic::Min(a, c) => {
@@ -636,10 +738,40 @@ fn compile_expr_r1cs(expr: &Expr, b: &mut R1csBuilder, private_witnesses: &mut u
                 } else {
                     av.min(cv)
                 };
+                let pick_fp = mod_fp(pick as i128);
                 let sym = format!("minmax_{}", b.wires.len());
-                b.alloc_wire(&sym, "IntermediateGate", pick)
+                let w_idx = b.alloc_wire(&sym, "IntermediateGate", pick_fp);
+                b.add_constraint(
+                    "LinearEq",
+                    b.wire_sym(w_idx),
+                    "w0(1)".to_string(),
+                    b.wire_sym(w_idx),
+                    pick_fp,
+                    1,
+                    pick_fp,
+                    format!("Min/Max select gadget for {}", format_expr_compact(expr)),
+                );
+                w_idx
             }
-            Intrinsic::Abs(a) | Intrinsic::Len(a) => compile_expr_r1cs(a, b, private_witnesses),
+            Intrinsic::Abs(a) => {
+                let ai = compile_expr_r1cs(a, b, private_witnesses);
+                let av = fp_to_signed(b.wire_val(ai));
+                let abs_fp = mod_fp((av as i128).abs());
+                let sym = format!("abs_{}", b.wires.len());
+                let w_idx = b.alloc_wire(&sym, "IntermediateGate", abs_fp);
+                b.add_constraint(
+                    "LinearEq",
+                    b.wire_sym(w_idx),
+                    "w0(1)".to_string(),
+                    b.wire_sym(w_idx),
+                    abs_fp,
+                    1,
+                    abs_fp,
+                    format!("Absolute value gadget for {}", format_expr_compact(expr)),
+                );
+                w_idx
+            }
+            Intrinsic::Len(a) => compile_expr_r1cs(a, b, private_witnesses),
             _ => 0,
         },
         _ => 0,
@@ -858,17 +990,68 @@ fn collect_relational_components(
             }
             Stmt::Assign {
                 target: AssignTarget::Var(name),
-                op: AssignOp::AddAssign,
+                op,
                 value,
                 ..
             } => {
-                let agg_desc = if format_expr_compact(value) == "1" {
-                    format!("COUNT(*) AS {}", name)
-                } else {
-                    format!("SUM({}) AS {}", format_expr_compact(value), name)
+                let maybe_agg = match op {
+                    AssignOp::AddAssign => {
+                        if format_expr_compact(value) == "1" {
+                            Some(format!("COUNT(*) AS {}", name))
+                        } else {
+                            Some(format!("SUM({}) AS {}", format_expr_compact(value), name))
+                        }
+                    }
+                    AssignOp::SubAssign => Some(format!(
+                        "SUM(-({})) AS {}",
+                        format_expr_compact(value),
+                        name
+                    )),
+                    AssignOp::Set => match value {
+                        Expr::Binary {
+                            op: BinOp::Add,
+                            left,
+                            right,
+                        } => {
+                            let rhs_term = match (left.as_ref(), right.as_ref()) {
+                                (Expr::Var(v), other) if v == name => Some(other),
+                                (other, Expr::Var(v)) if v == name => Some(other),
+                                _ => None,
+                            };
+                            rhs_term.map(|term| {
+                                if format_expr_compact(term) == "1" {
+                                    format!("COUNT(*) AS {}", name)
+                                } else {
+                                    format!("SUM({}) AS {}", format_expr_compact(term), name)
+                                }
+                            })
+                        }
+                        Expr::Intrinsic(intr) => match intr.as_ref() {
+                            Intrinsic::Max(a, b) => {
+                                let other = match (a, b) {
+                                    (Expr::Var(v), o) if v == name => Some(o),
+                                    (o, Expr::Var(v)) if v == name => Some(o),
+                                    _ => None,
+                                };
+                                other.map(|o| format!("MAX({}) AS {}", format_expr_compact(o), name))
+                            }
+                            Intrinsic::Min(a, b) => {
+                                let other = match (a, b) {
+                                    (Expr::Var(v), o) if v == name => Some(o),
+                                    (o, Expr::Var(v)) if v == name => Some(o),
+                                    _ => None,
+                                };
+                                other.map(|o| format!("MIN({}) AS {}", format_expr_compact(o), name))
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    },
                 };
-                if !aggs.contains(&agg_desc) {
-                    aggs.push(agg_desc);
+                if let Some(agg_desc) = maybe_agg {
+                    if !aggs.contains(&agg_desc) {
+                        aggs.push(agg_desc);
+                    }
                 }
             }
             Stmt::If {
@@ -877,15 +1060,21 @@ fn collect_relational_components(
                 else_body,
                 ..
             } => {
-                if preds.len() < 3 {
-                    preds.push(format_expr_compact(cond));
+                let c_str = format_expr_compact(cond);
+                if preds.len() < 3 && !preds.contains(&c_str) {
+                    preds.push(c_str);
                 }
                 collect_relational_components(then_body, preds, aggs, projs);
                 collect_relational_components(else_body, preds, aggs, projs);
             }
-            Stmt::ForRange { body, .. }
-            | Stmt::ForEach { body, .. }
-            | Stmt::While { body, .. } => {
+            Stmt::ForRange { body, .. } | Stmt::ForEach { body, .. } => {
+                collect_relational_components(body, preds, aggs, projs);
+            }
+            Stmt::While { cond, body, .. } => {
+                let c_str = format_expr_compact(cond);
+                if preds.len() < 3 && !preds.contains(&c_str) {
+                    preds.push(c_str);
+                }
                 collect_relational_components(body, preds, aggs, projs);
             }
             Stmt::Match { arms, .. } => {

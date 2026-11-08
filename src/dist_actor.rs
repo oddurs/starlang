@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use crate::egraph::format_expr_compact;
-use crate::hub::{AssignOp, AssignTarget, FnDecl, HubModule, Item, Stmt};
+use crate::hub::{AssignOp, FnDecl, HubModule, Item, Stmt};
 use crate::lens::SpokeId;
 
 #[derive(Debug, Clone)]
@@ -293,9 +293,14 @@ fn collect_actor_vars(stmts: &[Stmt], has_loop: &mut bool, vars: &mut Vec<String
                     collect_actor_vars(&arm.body, has_loop, vars);
                 }
             }
-            Stmt::ForRange { body, .. }
-            | Stmt::ForEach { body, .. }
-            | Stmt::While { body, .. } => {
+            Stmt::ForRange { var, body, .. } | Stmt::ForEach { var, body, .. } => {
+                *has_loop = true;
+                if !vars.contains(var) {
+                    vars.push(var.clone());
+                }
+                collect_actor_vars(body, has_loop, vars);
+            }
+            Stmt::While { body, .. } => {
                 *has_loop = true;
                 collect_actor_vars(body, has_loop, vars);
             }
@@ -567,32 +572,14 @@ fn synthesize_tla_plus_spec(
         })
         .collect();
 
+    let mut raw_summaries = Vec::new();
+    collect_tla_step_summaries(&f.body, max_depth, &mut raw_summaries);
     let mut actions = Vec::new();
-    for (idx, s) in f.body.iter().enumerate() {
-        let act_summary = match s {
-            Stmt::Let { name, value, .. } => format!("{}' = {}", name, format_expr_compact(value)),
-            Stmt::Assign {
-                target: AssignTarget::Var(name),
-                op,
-                value,
-                ..
-            } => {
-                let op_s = match op {
-                    AssignOp::Set => "",
-                    AssignOp::AddAssign => "+ ",
-                    AssignOp::SubAssign => "- ",
-                };
-                format!("{}' = {} {}{}", name, name, op_s, format_expr_compact(value))
-            }
-            Stmt::ForRange { var, .. } | Stmt::ForEach { var, .. } => {
-                format!("{}' \\in 0..{}", var, max_depth)
-            }
-            Stmt::Return { value: Some(v), .. } => {
-                format!("pc' = \"Done\" /\\ /* ret {} */ TRUE", format_expr_compact(v))
-            }
-            _ => "pc' = \"Step\"".to_string(),
-        };
-        actions.push(format!("Step_{} ==\n  /\\ pc /= \"Done\"\n  /\\ {}", idx, act_summary));
+    for (idx, act_summary) in raw_summaries.into_iter().enumerate() {
+        actions.push(format!(
+            "Step_{} ==\n  /\\ pc /= \"Done\"\n  /\\ {}",
+            idx, act_summary
+        ));
     }
     if !actions.iter().any(|a| a.contains("pc' = \"Done\"")) {
         actions.push(format!(
@@ -613,6 +600,71 @@ fn synthesize_tla_plus_spec(
         step_names.join(" \\/ "),
         inv_formula
     )
+}
+
+fn collect_tla_step_summaries(stmts: &[Stmt], max_depth: usize, out: &mut Vec<String>) {
+    for s in stmts {
+        match s {
+            Stmt::Let { name, value, .. } => {
+                out.push(format!("{}' = {}", name, format_expr_compact(value)));
+            }
+            Stmt::Assign {
+                target, op, value, ..
+            } => {
+                let name = target.root_var();
+                let rhs = format_expr_compact(value);
+                let summary = match op {
+                    AssignOp::Set => format!("{}' = {}", name, rhs),
+                    AssignOp::AddAssign => format!("{}' = {} + {}", name, name, rhs),
+                    AssignOp::SubAssign => format!("{}' = {} - {}", name, name, rhs),
+                };
+                out.push(summary);
+            }
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+                ..
+            } => {
+                out.push(format!(
+                    "/* guard ({}) */ pc' = \"Branch\"",
+                    format_expr_compact(cond)
+                ));
+                collect_tla_step_summaries(then_body, max_depth, out);
+                collect_tla_step_summaries(else_body, max_depth, out);
+            }
+            Stmt::Match { expr, arms, .. } => {
+                out.push(format!(
+                    "/* match ({}) */ pc' = \"Dispatch\"",
+                    format_expr_compact(expr)
+                ));
+                for arm in arms {
+                    collect_tla_step_summaries(&arm.body, max_depth, out);
+                }
+            }
+            Stmt::ForRange { var, body, .. } | Stmt::ForEach { var, body, .. } => {
+                out.push(format!("{}' \\in 0..{}", var, max_depth));
+                collect_tla_step_summaries(body, max_depth, out);
+            }
+            Stmt::While { cond, body, .. } => {
+                out.push(format!(
+                    "/* while ({}) */ pc' = \"Loop\"",
+                    format_expr_compact(cond)
+                ));
+                collect_tla_step_summaries(body, max_depth, out);
+            }
+            Stmt::Return { value: Some(v), .. } | Stmt::Expr { expr: v, .. } => {
+                out.push(format!(
+                    "pc' = \"Done\" /\\ /* ret {} */ TRUE",
+                    format_expr_compact(v)
+                ));
+            }
+            Stmt::Return { value: None, .. } => {
+                out.push("pc' = \"Done\"".to_string());
+            }
+            _ => {}
+        }
+    }
 }
 
 fn synthesize_kripke_mermaid(

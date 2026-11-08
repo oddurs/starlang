@@ -3952,5 +3952,165 @@ fn verify_passes_14_and_15() {
         qf_stab.quantization_sites >= 1,
         "Expected TruncatingDivQuantization hazard inside `AssignTarget::Index` (`buf[4 / 2] = 9`) to be detected"
     );
+
+    verify_pass_16();
+}
+
+#[inline(never)]
+fn verify_pass_16() {
+    // 28. Pass 16 Regression Checks:
+    // - RegAlloc: `AssignTarget::Index { base, index }` extends `index` live interval, coalesced moves
+    //   genuinely elide (`# [coalesced move elided]`), x86_64 two-address ops avoid clobbering when `d == r`,
+    //   and Escape/SROA recursively audits nested `StructInit` / `List` / `AssignTarget::Index`.
+    let reg_rs = r#"struct Pair {
+    a: i64,
+    b: i64,
+}
+
+fn index_and_nested(idx: i64, val: i64) -> i64 {
+    let mut arr: Vec<Pair> = vec![Pair { a: 1, b: 2 }, Pair { a: 3, b: 4 }];
+    let alias: i64 = val;
+    arr[(idx + 0) as usize] = Pair { a: alias, b: format!("{}", idx).len() as i64 };
+    return idx + alias;
+}
+"#;
+    let reg_eng = StarEngine::from_source(SpokeId::Rust, reg_rs).unwrap();
+    let reg_rep = reg_eng.regalloc(Some(8));
+    let fn_reg = reg_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "index_and_nested")
+        .unwrap();
+    let idx_iv = fn_reg
+        .intervals
+        .iter()
+        .find(|iv| iv.var_name == "idx")
+        .unwrap();
+    assert!(
+        idx_iv.use_count >= 2 && idx_iv.end_pc > idx_iv.start_pc,
+        "Expected `idx` used in `AssignTarget::Index` and `return` to have use_count >= 2, got: {:?}",
+        idx_iv
+    );
+    assert!(
+        fn_reg.aarch64_asm.contains("[coalesced move elided]")
+            || fn_reg.x86_64_asm.contains("[coalesced move elided]"),
+        "Expected non-interfering MovCopy handoff to coalesce and elide in native asm:\n{}",
+        fn_reg.aarch64_asm
+    );
+    let esc_rep = reg_eng.escape_analysis();
+    let fn_esc = esc_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "index_and_nested")
+        .unwrap();
+    assert!(
+        fn_esc.sites.iter().filter(|s| s.kind == "StructInit").count() >= 3,
+        "Expected recursive Escape/SROA scan to find all 3 nested `Pair` StructInit sites (2 in list + 1 in index assign), got: {:?}",
+        fn_esc.sites
+    );
+    assert!(
+        fn_esc.sites.iter().any(|s| s.kind == "StringFormat"),
+        "Expected recursive Escape/SROA scan to find nested `to_str(idx)` inside `StructInit`, got: {:?}",
+        fn_esc.sites
+    );
+
+    // - MicroArch & Instruction Scheduler:
+    //   `AssignTarget::Index` records L1D store cache site AND emits `LSU` `str base[idx] = val` DAG node
+    let uarch_rep = reg_eng.microarch();
+    assert!(
+        uarch_rep
+            .cache_sites
+            .iter()
+            .any(|cs| cs.site_label.contains("store `arr[")),
+        "Expected L1D cache simulator to profile indexed store `arr[idx + 0]`, got: {:?}",
+        uarch_rep.cache_sites
+    );
+    let sched_rep = reg_eng.schedule_instructions();
+    let fn_sched = sched_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "index_and_nested")
+        .unwrap();
+    assert!(
+        fn_sched
+            .instructions
+            .iter()
+            .any(|inst| inst.unit == "LSU" && inst.text.starts_with("str arr[")),
+        "Expected list scheduler to emit LSU store `str arr[...] = ...` with index dependency, got: {:?}",
+        fn_sched.instructions
+    );
+
+    // - Distributed Actors & TLA+ Model Checker + ZK R1CS & Relational SQL:
+    //   - `Stmt::If` in R1CS multiplexes mutated branch variables (`res`) via `MuxSelect` instead of
+    //     leaving the untaken `else` branch wire in `wire_by_name`
+    //   - `Stmt::Expr` tail expressions and `BinOp::Mod` (`%`) are arithmetized in R1CS
+    //   - `collect_relational_components` lifts `acc = acc + x` and `peak = max(peak, x)` into SQL `SUM`/`MAX`
+    //   - `synthesize_tla_plus_spec` includes nested loop/branch state transitions
+    let zk_sql_star = r#"(fn branch_and_mod ((param x Int)) -> Int
+  (let-mut res 10)
+  (if (> x 5)
+    (then (set! res 20))
+    (else (set! res 30)))
+  (let rem (% x 5))
+  (+ res rem))
+(fn fold_stream ((param xs (List Int))) -> Int
+  (let-mut total 0)
+  (let-mut peak 0)
+  (for-each item xs
+    (if (> item 0)
+      (then
+        (set! total (+ total item))
+        (set! peak (max peak item)))))
+  (return (+ total peak)))
+"#;
+    let zk_eng = StarEngine::from_source(SpokeId::Star, zk_sql_star).unwrap();
+    let zk_rep = zk_eng.zk_r1cs();
+    assert!(
+        zk_rep.all_circuits_satisfied,
+        "Expected all R1CS constraints to be satisfied: {:?}",
+        zk_rep
+    );
+    let bm_zk = zk_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "branch_and_mod")
+        .unwrap();
+    let out_wire = bm_zk
+        .wires
+        .iter()
+        .find(|w| w.visibility == "PublicOutput")
+        .unwrap();
+    // Sample input `x = 12`: `12 > 5` is true -> `res = 20` (NOT 30 from untaken `else`!),
+    // `rem = 12 % 5 = 2`, tail `Stmt::Expr` `(+ res rem)` = `20 + 2 = 22`!
+    assert_eq!(
+        out_wire.value_fp, 22,
+        "Expected R1CS PublicOutput wire for `branch_and_mod(12)` to be 20 + (12 % 5) = 22, got {} (wires: {:?})",
+        out_wire.value_fp, bm_zk.wires
+    );
+
+    let sql_rep = zk_eng.relational_sql();
+    let fs_sql = sql_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "fold_stream")
+        .unwrap();
+    assert!(
+        fs_sql.ansi_sql_query.contains("SUM(item) AS total")
+            && fs_sql.ansi_sql_query.contains("MAX(item) AS peak"),
+        "Expected Relational SQL lifter to recognize `total = total + item` (SUM) and `peak = max(peak, item)` (MAX), got:\n{}",
+        fs_sql.ansi_sql_query
+    );
+
+    let mc_rep = zk_eng.model_check();
+    let fs_mc = mc_rep
+        .functions
+        .iter()
+        .find(|f| f.fn_name == "fold_stream")
+        .unwrap();
+    assert!(
+        fs_mc.tla_plus_spec.contains("total' =") && fs_mc.tla_plus_spec.contains("peak' ="),
+        "Expected TLA+ specification synthesizer to extract nested loop/branch actions for `total'` and `peak'`, got:\n{}",
+        fs_mc.tla_plus_spec
+    );
 }
 
