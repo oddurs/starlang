@@ -3,158 +3,495 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StarLang v1.0 — 13-Spoke Bidirectional Compiler, WebAssembly & Time-Travel Studio</title>
+  <title>StarLang Studio — 13-Spoke Bidirectional Compiler & Formal Verification Workbench</title>
   <style>
     :root {
-      --bg: #090d16;
-      --panel: #111827;
-      --panel-header: #172033;
-      --border: #25324d;
-      --text: #e5edff;
-      --muted: #8b9bb8;
-      --accent: #60a5fa;
-      --lift: #f59e0b;
-      --ok: #10b981;
-      --err: #ef4444;
-      --warn: #fbbf24;
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --surface-subtle: #f1f5f9;
+      --surface-muted: #f8fafc;
+      --surface-hover: #f1f5f9;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --text: #09090b;
+      --text-secondary: #334155;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      --accent-border: #bfdbfe;
+      --primary-bg: #09090b;
+      --primary-hover: #27272a;
+      --primary-text: #ffffff;
+      --lift: #d97706;
+      --lift-soft: #fffbeb;
+      --lift-border: #fde68a;
+      --ok: #047857;
+      --ok-soft: #ecfdf5;
+      --ok-border: #a7f3d0;
+      --err: #be123c;
+      --err-soft: #fff1f2;
+      --err-border: #fecdd3;
+      --warn: #b45309;
+      --warn-soft: #fffbeb;
+      --warn-border: #fde68a;
+      --shadow-xs: 0 1px 2px rgba(9, 9, 11, 0.04);
+      --shadow-sm: 0 1px 3px rgba(9, 9, 11, 0.06), 0 1px 2px rgba(9, 9, 11, 0.04);
+      --shadow-md: 0 4px 12px rgba(9, 9, 11, 0.07);
+      --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
+
     * { box-sizing: border-box; }
-    body {
+
+    html, body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 0;
+      height: 100vh;
+      overflow: hidden;
+      font-family: var(--font-sans);
       background: var(--bg);
       color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      letter-spacing: -0.011em;
+    }
+
+    body {
       display: flex;
       flex-direction: column;
-      min-height: 100vh;
     }
-    header {
-      padding: 10px 18px;
-      background: var(--panel);
+
+    /* =========================================================================
+       ZONE 1: TOP APPLICATION BAR (Minimalist Single-Row App Header)
+       ========================================================================= */
+    header.app-topbar {
+      height: 52px;
+      padding: 0 16px;
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
       display: flex;
-      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      flex-shrink: 0;
+      z-index: 20;
     }
-    .brand {
+
+    .topbar-left {
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 10px;
+      min-width: 0;
     }
-    .brand h1 {
-      font-size: 15.5px;
-      margin: 0;
-      font-weight: 700;
-    }
-    .brand p {
-      margin: 2px 0 0;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .controls {
+
+    .brand-mark {
       display: flex;
       align-items: center;
       gap: 8px;
-      flex-wrap: wrap;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--text);
+      white-space: nowrap;
+      letter-spacing: -0.02em;
     }
+
+    .brand-star {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: var(--primary-bg);
+      color: var(--primary-text);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+    }
+
+    .version-badge {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: var(--surface-subtle);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+
+    /* Compact Topology Indicator with Hover Popover */
+    .topology-pill {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      cursor: default;
+    }
+
+    .topology-pill:hover .topology-popover {
+      display: flex;
+    }
+
+    .topology-popover {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      padding: 12px 14px;
+      box-shadow: var(--shadow-md);
+      z-index: 100;
+      flex-direction: column;
+      gap: 6px;
+      width: 260px;
+    }
+
+    .topology-popover-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    svg.star-svg {
+      width: 168px;
+      height: 60px;
+      flex-shrink: 0;
+      align-self: center;
+    }
+    .edge { stroke: #cbd5e1; stroke-width: 1.5; transition: stroke 0.2s; }
+    .edge.lift { stroke: var(--lift); stroke-width: 2.5; }
+    .edge.proj { stroke: var(--ok); stroke-width: 2.0; }
+    .node-lbl { fill: #475569; font-size: 7.5px; font-family: var(--font-mono); font-weight: 600; }
+    .node-hub { fill: #09090b; stroke: #2563eb; stroke-width: 1.5; }
+
+    .divider-v {
+      width: 1px;
+      height: 20px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    /* Controls: Inputs, Selects, Buttons */
     select, button, input[type="text"] {
-      background: var(--panel-header);
+      font-family: var(--font-sans);
+      background: var(--surface);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 6px 10px;
+      padding: 5px 10px;
       font-size: 12px;
+      font-weight: 500;
+      line-height: 1.3;
+      transition: all 0.12s ease;
+      box-shadow: var(--shadow-xs);
     }
-    button { cursor: pointer; }
+
+    select:hover, button:hover:not(:disabled) {
+      background: var(--surface-hover);
+      border-color: var(--border-strong);
+    }
+
+    select:focus, input[type="text"]:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+    }
+
+    #sample-select {
+      max-width: 250px;
+      font-weight: 600;
+      color: var(--text);
+      background-color: var(--surface-muted);
+    }
+
+    .history-group {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      box-shadow: var(--shadow-xs);
+    }
+
+    .history-group button {
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      padding: 5px 8px;
+      font-size: 11.5px;
+      background: var(--surface);
+    }
+
+    .history-group button + button {
+      border-left: 1px solid var(--border);
+    }
+
+    button { cursor: pointer; user-select: none; }
     button:disabled {
       opacity: 0.4;
       cursor: not-allowed;
+      box-shadow: none;
     }
+
+    /* Center Telemetry Strip */
+    .topbar-center {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .topbar-center::-webkit-scrollbar { display: none; }
+
+    .telemetry-pill, .vm-preview, .test-pill, .cov-pill, .safety-pill {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    #hub-rev {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      padding: 3px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    #typecheck-pill {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: var(--ok-soft);
+      border: 1px solid var(--ok-border);
+      color: var(--ok);
+      white-space: nowrap;
+    }
+
+    .safety-pill {
+      cursor: pointer;
+      background: var(--ok-soft);
+      border-color: var(--ok-border);
+      color: var(--ok);
+    }
+    .safety-pill:hover { filter: brightness(0.97); }
+    .safety-pill.warn {
+      background: var(--warn-soft);
+      border-color: var(--warn-border);
+      color: var(--warn);
+    }
+
+    .test-pill {
+      background: var(--accent-soft);
+      border-color: var(--accent-border);
+      color: #1d4ed8;
+    }
+
+    .cov-pill {
+      cursor: pointer;
+      background: var(--ok-soft);
+      border-color: var(--ok-border);
+      color: var(--ok);
+    }
+    .cov-pill:hover { filter: brightness(0.97); }
+    .cov-pill.warn {
+      background: var(--warn-soft);
+      border-color: var(--warn-border);
+      color: var(--warn);
+    }
+
+    .vm-preview {
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      background: var(--surface-muted);
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    .vm-preview.err, .test-pill.err, .safety-pill.err {
+      background: var(--err-soft);
+      border-color: var(--err-border);
+      color: var(--err);
+    }
+
+    /* Right Global Actions */
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
     button.run-btn {
-      background: #0f766e;
-      border-color: #14b8a6;
-      color: #ecfdf5;
+      background: var(--primary-bg);
+      border-color: var(--primary-bg);
+      color: var(--primary-text);
       font-weight: 600;
+      padding: 6px 12px;
+      letter-spacing: -0.01em;
     }
-    button.run-btn:hover { background: #0d9488; }
+    button.run-btn:hover:not(:disabled) {
+      background: var(--primary-hover);
+      border-color: var(--primary-hover);
+      color: var(--primary-text);
+    }
+
     button.opt-btn {
-      background: #312e81;
-      border-color: #6366f1;
-      color: #e0e7ff;
+      background: var(--surface);
+      border-color: var(--border-strong);
+      color: var(--text);
       font-weight: 600;
     }
-    button.opt-btn:hover { background: #3730a3; }
-    button.trace-btn {
-      background: #1e3a5f;
-      border-color: #38bdf8;
-      color: #e0f2fe;
-      font-weight: 600;
+    button.opt-btn:hover:not(:disabled) {
+      background: var(--surface-subtle);
     }
-    button.trace-btn:hover { background: #1d4ed8; }
-    button.mut-btn {
-      background: #4c1d95;
-      border-color: #a855f7;
-      color: #f3e8ff;
-      font-weight: 600;
-    }
-    button.mut-btn:hover { background: #5b21b6; }
-    button.verify-btn {
-      background: #065f46;
-      border-color: #34d399;
-      color: #ecfdf5;
-      font-weight: 600;
-    }
-    button.verify-btn:hover { background: #047857; }
-    button.merge-btn {
-      background: #7c2d12;
-      border-color: #fb923c;
-      color: #ffedd5;
-      font-weight: 600;
-    }
-    button.merge-btn:hover { background: #9a3412; }
-    button.wasm-btn {
-      background: #1e293b;
-      border-color: #38bdf8;
-      color: #e0f2fe;
-      font-weight: 600;
-    }
-    button.wasm-btn:hover { background: #0f172a; }
-    button.debug-btn {
-      background: #3f3f46;
-      border-color: #f472b6;
-      color: #fdf2f8;
-      font-weight: 600;
-    }
-    button.debug-btn:hover { background: #52525b; }
-    .hub-banner {
-      padding: 7px 18px;
-      background: #0d1322;
+
+    /* =========================================================================
+       ZONE 2: WORKSPACE CONTROL BAR (Layout Switcher + 13 Spoke Pills)
+       ========================================================================= */
+    .workspace-bar {
+      min-height: 42px;
+      padding: 6px 16px;
+      background: var(--surface-muted);
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
-      font-size: 12px;
+      flex-shrink: 0;
     }
-    .hub-left {
+
+    .workspace-left {
       display: flex;
       align-items: center;
       gap: 10px;
       flex-wrap: wrap;
     }
-    .refactor-bar {
-      padding: 6px 18px;
-      background: #0b101d;
-      border-bottom: 1px solid var(--border);
+
+    .layout-switcher {
+      display: inline-flex;
+      background: var(--surface-subtle);
+      padding: 2px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+    }
+
+    .layout-btn {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 5px;
+      box-shadow: none;
+    }
+    .layout-btn:hover:not(:disabled) {
+      background: transparent;
+      color: var(--text);
+    }
+    .layout-btn.active {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: var(--shadow-xs);
+    }
+
+    .spoke-toggles {
       display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .toggle-pill {
+      padding: 3px 9px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11.5px;
+      font-weight: 500;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.1s ease;
+    }
+
+    .toggle-pill:hover {
+      background: var(--surface-subtle);
+      color: var(--text);
+    }
+
+    .toggle-pill.on {
+      background: var(--surface);
+      border-color: var(--border-strong);
+      color: var(--text);
+      font-weight: 600;
+      box-shadow: var(--shadow-xs);
+    }
+
+    .workspace-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .meta-pill {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 500;
+    }
+
+    .action-msg {
+      color: var(--accent);
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+
+    /* Collapsible Refactor Drawer Bar */
+    .refactor-bar {
+      padding: 6px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: none;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
       font-size: 12px;
+      flex-shrink: 0;
+    }
+    .refactor-bar.open {
+      display: flex;
     }
     .refactor-controls {
       display: flex;
@@ -162,201 +499,359 @@
       gap: 8px;
       flex-wrap: wrap;
     }
-    .vm-preview, .test-pill, .cov-pill, .safety-pill {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11.5px;
-      padding: 3px 10px;
-      border-radius: 6px;
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      color: #a7f3d0;
-      max-width: 480px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .safety-pill {
-      cursor: pointer;
-      background: rgba(16, 185, 129, 0.15);
-      border-color: rgba(52, 211, 153, 0.45);
-      color: #a7f3d0;
-    }
-    .safety-pill.warn {
-      background: rgba(245, 158, 11, 0.16);
-      border-color: rgba(251, 191, 36, 0.45);
-      color: #fde68a;
-    }
-    .test-pill {
-      background: rgba(59, 130, 246, 0.14);
-      border-color: rgba(96, 165, 250, 0.4);
-      color: #bfdbfe;
-    }
-    .cov-pill {
-      cursor: pointer;
-      background: rgba(16, 185, 129, 0.14);
-      border-color: rgba(52, 211, 153, 0.4);
-      color: #a7f3d0;
-    }
-    .cov-pill.warn {
-      background: rgba(245, 158, 11, 0.16);
-      border-color: rgba(251, 191, 36, 0.45);
-      color: #fde68a;
-    }
-    .vm-preview.err, .test-pill.err, .safety-pill.err {
-      background: rgba(239, 68, 68, 0.16);
-      border-color: rgba(239, 68, 68, 0.45);
-      color: #fecaca;
-    }
-    .spoke-toggles {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    .toggle-pill {
-      padding: 3px 9px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: #131c2e;
-      color: var(--muted);
-      font-size: 11.5px;
-      cursor: pointer;
-      user-select: none;
-    }
-    .toggle-pill.on {
-      border-color: #3b82f6;
-      color: #dbeafe;
-      background: rgba(59, 130, 246, 0.16);
-    }
-    .meta-pill {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #cbd5e1;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11px;
-    }
-    .action-msg {
-      color: #93c5fd;
-      font-size: 11.5px;
-      font-weight: 500;
-    }
+
     .sem-bar {
       display: none;
-      padding: 6px 18px;
-      background: rgba(180, 83, 9, 0.22);
-      border-bottom: 1px solid rgba(245, 158, 11, 0.5);
-      color: #fde68a;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      padding: 6px 16px;
+      background: var(--warn-soft);
+      border-bottom: 1px solid var(--warn-border);
+      color: var(--warn);
+      font-family: var(--font-mono);
       font-size: 11.5px;
+      flex-shrink: 0;
     }
+
+    /* =========================================================================
+       ZONE 3: POLYGLOT EDITOR WORKSPACE CANVAS
+       ========================================================================= */
     main.grid {
       flex: 1;
+      min-height: 0;
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-      grid-auto-rows: minmax(270px, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      grid-auto-rows: minmax(220px, 1fr);
       gap: 10px;
-      padding: 10px 14px;
+      padding: 12px 16px;
+      overflow-y: auto;
+      background: var(--bg);
     }
+
+    main.grid.mode-focus {
+      grid-template-columns: 1fr;
+      grid-auto-rows: 1fr;
+    }
+    main.grid.mode-pair {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-auto-rows: 1fr;
+    }
+    main.grid.mode-split {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-auto-rows: 1fr;
+    }
+    main.grid.mode-all {
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      grid-auto-rows: minmax(240px, 1fr);
+    }
+
     .pane {
-      background: var(--panel);
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      transition: border-color 0.15s ease;
+      box-shadow: var(--shadow-sm);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
     .pane.hidden { display: none; }
-    .pane.active-edit { border-color: var(--lift); }
-    .pane.has-error { border-color: var(--err); }
+    .pane.active-edit {
+      border-color: var(--lift);
+      box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.12);
+    }
+    .pane.has-error {
+      border-color: var(--err);
+      box-shadow: 0 0 0 2px rgba(190, 18, 60, 0.12);
+    }
+
     .pane-header {
       padding: 7px 12px;
-      background: var(--panel-header);
+      background: var(--surface-muted);
       border-bottom: 1px solid var(--border);
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 12.5px;
+      font-size: 12px;
       font-weight: 600;
+      color: var(--text);
+      flex-shrink: 0;
     }
+
+    .pane-header code {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
     .badges-right {
       display: flex;
       align-items: center;
       gap: 6px;
     }
+
     .delta-badge {
+      font-family: var(--font-mono);
       font-size: 10.5px;
+      font-weight: 600;
       padding: 1px 6px;
       border-radius: 4px;
-      background: rgba(56, 189, 248, 0.16);
-      color: #7dd3fc;
+      background: var(--accent-soft);
+      border: 1px solid var(--accent-border);
+      color: var(--accent);
       display: none;
     }
+
     .status {
-      font-size: 11px;
-      font-weight: 500;
-      padding: 2px 8px;
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 2px 7px;
       border-radius: 999px;
-      background: rgba(16, 185, 129, 0.14);
-      color: #6ee7b7;
+      background: var(--ok-soft);
+      border: 1px solid var(--ok-border);
+      color: var(--ok);
     }
     .status.editing {
-      background: rgba(245, 158, 11, 0.18);
-      color: #fcd34d;
+      background: var(--lift-soft);
+      border-color: var(--lift-border);
+      color: var(--lift);
     }
     .status.error {
-      background: rgba(239, 68, 68, 0.18);
-      color: #fca5a5;
+      background: var(--err-soft);
+      border-color: var(--err-border);
+      color: var(--err);
     }
+
     textarea {
       flex: 1;
       width: 100%;
-      background: transparent;
+      background: var(--surface);
       color: var(--text);
       border: none;
       outline: none;
       resize: none;
-      padding: 10px 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      padding: 12px 14px;
+      font-family: var(--font-mono);
       font-size: 12px;
-      line-height: 1.46;
+      line-height: 1.52;
       tab-size: 4;
     }
+
     .diag-bar {
       display: none;
       padding: 6px 12px;
-      background: rgba(127, 29, 29, 0.72);
-      border-top: 1px solid var(--err);
-      color: #fecaca;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11.5px;
+      background: var(--err-soft);
+      border-top: 1px solid var(--err-border);
+      color: var(--err);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
     }
     .pane.has-error .diag-bar { display: block; }
+
+    /* =========================================================================
+       ZONE 4: CATEGORIZED INSPECTOR WORKBENCH DOCK (Bottom Panel)
+       ========================================================================= */
+    aside.inspector-dock {
+      background: var(--surface);
+      border-top: 1px solid var(--border-strong);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      max-height: 54vh;
+      box-shadow: 0 -2px 10px rgba(9, 9, 11, 0.04);
+      z-index: 15;
+    }
+
+    .dock-nav {
+      padding: 6px 16px;
+      background: var(--surface-muted);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .dock-tabs {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .dock-tab {
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 6px;
+      box-shadow: none;
+    }
+    .dock-tab:hover {
+      background: var(--surface-subtle);
+      color: var(--text);
+    }
+    .dock-tab.active {
+      background: var(--surface);
+      border-color: var(--border-strong);
+      color: var(--text);
+      box-shadow: var(--shadow-xs);
+    }
+
+    .dock-search-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #tool-search {
+      width: 190px;
+      padding: 4px 9px;
+      font-size: 11.5px;
+      background: var(--surface);
+    }
+
+    /* Tool Strip inside Dock (Clean, Uniform Minimalist App Buttons) */
+    .controls {
+      padding: 7px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      overflow-x: auto;
+    }
+
+    .controls button {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 11.5px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 6px;
+      box-shadow: var(--shadow-xs);
+      white-space: nowrap;
+    }
+
+    .controls button:hover:not(:disabled) {
+      background: var(--surface-subtle);
+      border-color: var(--border-strong);
+      color: var(--text);
+    }
+
+    .controls button.active-tool {
+      background: var(--primary-bg);
+      border-color: var(--primary-bg);
+      color: var(--primary-text);
+      font-weight: 600;
+    }
+
+    .controls button.hidden-by-cat {
+      display: none;
+    }
+
+    /* Action buttons inside drawers */
+    button.wasm-btn, button.verify-btn, button.trace-btn, button.mut-btn, button.merge-btn, button.debug-btn {
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+      font-weight: 600;
+    }
+    button.wasm-btn:hover, button.verify-btn:hover, button.trace-btn:hover, button.mut-btn:hover, button.merge-btn:hover, button.debug-btn:hover {
+      background: var(--surface-subtle);
+    }
+
+    /* Inspector Drawers */
+    .dock-drawers {
+      overflow-y: auto;
+      max-height: calc(54vh - 84px);
+      background: var(--bg);
+    }
+
     #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer, #zk-drawer, #sql-drawer, #refinement-drawer, #prob-drawer, #quantum-drawer, #automata-drawer, #hls-drawer, #gpu-drawer, #fhe-drawer, #seplogic-drawer {
       display: none;
-      border-top: 1px solid var(--border);
-      background: var(--panel);
+      background: var(--bg);
       padding: 12px 16px;
     }
+
+    .run-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text);
+      box-shadow: var(--shadow-xs);
+    }
+
+    .run-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 10px;
+    }
+
+    .run-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text);
+      box-shadow: var(--shadow-xs);
+    }
+
+    .run-card strong {
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      display: block;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--surface-subtle);
+    }
+
+    .run-card pre {
+      margin: 8px 0 0;
+      white-space: pre-wrap;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
     .merge-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
       gap: 10px;
       margin-bottom: 10px;
     }
+
     .merge-box {
-      background: #090d16;
+      background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: 8px;
       display: flex;
       flex-direction: column;
-      min-height: 220px;
+      min-height: 200px;
+      box-shadow: var(--shadow-xs);
+      overflow: hidden;
     }
+
     .merge-box-hdr {
       padding: 6px 10px;
-      background: var(--panel-header);
+      background: var(--surface-muted);
       border-bottom: 1px solid var(--border);
       display: flex;
       justify-content: space-between;
@@ -364,173 +859,144 @@
       font-size: 12px;
       font-weight: 600;
     }
-    .run-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 10px;
-      font-size: 13px;
-      font-weight: 600;
-    }
-    .run-cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
-      gap: 10px;
-    }
-    .run-card {
-      background: #090d16;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 10px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 12px;
-    }
-    .run-card pre {
-      margin: 6px 0 0;
-      white-space: pre-wrap;
-      color: #cbd5e1;
-    }
-    svg.star-svg {
-      width: 174px;
-      height: 62px;
-      flex-shrink: 0;
-    }
-    .edge { stroke: #334155; stroke-width: 1.6; transition: stroke 0.2s; }
-    .edge.lift { stroke: var(--lift); stroke-width: 2.5; }
-    .edge.proj { stroke: var(--ok); stroke-width: 2.0; }
-    .node-lbl { fill: #94a3b8; font-size: 7.5px; font-family: ui-monospace, monospace; }
-    .node-hub { fill: #1d4ed8; stroke: #60a5fa; stroke-width: 1.5; }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <svg class="star-svg" viewBox="0 0 176 74">
-        <line id="edge-rust" class="edge" x1="88" y1="37" x2="24" y2="5" />
-        <line id="edge-zig" class="edge" x1="88" y1="37" x2="24" y2="16" />
-        <line id="edge-c" class="edge" x1="88" y1="37" x2="24" y2="27" />
-        <line id="edge-cpp" class="edge" x1="88" y1="37" x2="24" y2="38" />
-        <line id="edge-swift" class="edge" x1="88" y1="37" x2="24" y2="49" />
-        <line id="edge-java" class="edge" x1="88" y1="37" x2="24" y2="60" />
-        <line id="edge-go" class="edge" x1="88" y1="37" x2="150" y2="5" />
-        <line id="edge-python" class="edge" x1="88" y1="37" x2="150" y2="15" />
-        <line id="edge-ruby" class="edge" x1="88" y1="37" x2="150" y2="25" />
-        <line id="edge-lua" class="edge" x1="88" y1="37" x2="150" y2="35" />
-        <line id="edge-perl" class="edge" x1="88" y1="37" x2="150" y2="46" />
-        <line id="edge-typescript" class="edge" x1="88" y1="37" x2="150" y2="57" />
-        <line id="edge-star" class="edge" x1="88" y1="37" x2="150" y2="68" />
-        <circle class="node-hub" cx="88" cy="37" r="11" />
-        <text x="88" y="40" text-anchor="middle" fill="#eff6ff" font-size="7.5" font-weight="bold">HUB</text>
-        <text class="node-lbl" x="4" y="8">RS</text>
-        <text class="node-lbl" x="1" y="19">ZIG</text>
-        <text class="node-lbl" x="1" y="30">C11</text>
-        <text class="node-lbl" x="1" y="41">CPP</text>
-        <text class="node-lbl" x="4" y="52">SW</text>
-        <text class="node-lbl" x="4" y="63">JV</text>
-        <text class="node-lbl" x="153" y="8">GO</text>
-        <text class="node-lbl" x="153" y="18">PY</text>
-        <text class="node-lbl" x="153" y="28">RB</text>
-        <text class="node-lbl" x="153" y="38">LUA</text>
-        <text class="node-lbl" x="153" y="49">PL</text>
-        <text class="node-lbl" x="153" y="60">TS</text>
-        <text class="node-lbl" x="153" y="71">IR</text>
-      </svg>
-      <div>
-        <h1>★ StarLang v2.6 — 13-Spoke Bidirectional Compiler, WebAssembly, Time-Travel, Big-O, QuickCheck, Auto-Repair, PBE Synth, SSA, Hoare, Concolic, Taint, E-Graph, Partial Eval, Polyhedral SIMD, WCET, RegAlloc, Escape, Superscalar CPU, AutoDiff, Actors, TLA+, ZK R1CS, Relational SQL, Liquid Types, MCMC Entropy, Reversible Quantum Circuits, Minimal DFA, HLS SystemVerilog RTL, SIMT GPU Kernel, FHE Ring-LWE & Reynolds Separation Logic Studio</h1>
-        <p>Rust ⇄ Zig 0.16 ⇄ C11 ⇄ C++ ⇄ Swift 6 ⇄ Java 21 ⇄ Go ⇄ Python ⇄ Ruby ⇄ LuaJIT ⇄ Perl 5 ⇄ TypeScript ⇄ Star IR ➔ Wasm, AArch64, x86_64, Circom ZK, SQL, OpenQASM 3.0, SystemVerilog RTL, CUDA/WGSL/Metal/OpenCL GPU & OpenFHE/TFHE</p>
+  <!-- =========================================================================
+       ZONE 1: MINIMALIST TOP APPLICATION BAR
+       ========================================================================= -->
+  <header class="app-topbar">
+    <div class="topbar-left">
+      <div class="brand-mark">
+        <span class="brand-star">★</span>
+        <span>StarLang</span>
+        <span class="version-badge">v2.6</span>
+      </div>
+
+      <!-- Compact Hub-and-Spoke Topology Pill with Hover Map -->
+      <div class="topology-pill" title="Hover to inspect 13-Spoke Hub Topology">
+        <span>13-Spoke Hub</span>
+        <div class="topology-popover">
+          <span class="topology-popover-title">Bidirectional Hub-and-Spoke AST</span>
+          <svg class="star-svg" viewBox="0 0 176 74">
+            <line id="edge-rust" class="edge" x1="88" y1="37" x2="24" y2="5" />
+            <line id="edge-zig" class="edge" x1="88" y1="37" x2="24" y2="16" />
+            <line id="edge-c" class="edge" x1="88" y1="37" x2="24" y2="27" />
+            <line id="edge-cpp" class="edge" x1="88" y1="37" x2="24" y2="38" />
+            <line id="edge-swift" class="edge" x1="88" y1="37" x2="24" y2="49" />
+            <line id="edge-java" class="edge" x1="88" y1="37" x2="24" y2="60" />
+            <line id="edge-go" class="edge" x1="88" y1="37" x2="150" y2="5" />
+            <line id="edge-python" class="edge" x1="88" y1="37" x2="150" y2="15" />
+            <line id="edge-ruby" class="edge" x1="88" y1="37" x2="150" y2="25" />
+            <line id="edge-lua" class="edge" x1="88" y1="37" x2="150" y2="35" />
+            <line id="edge-perl" class="edge" x1="88" y1="37" x2="150" y2="46" />
+            <line id="edge-typescript" class="edge" x1="88" y1="37" x2="150" y2="57" />
+            <line id="edge-star" class="edge" x1="88" y1="37" x2="150" y2="68" />
+            <circle class="node-hub" cx="88" cy="37" r="11" />
+            <text x="88" y="40" text-anchor="middle" fill="#ffffff" font-size="7.5" font-weight="bold">HUB</text>
+            <text class="node-lbl" x="4" y="8">RS</text>
+            <text class="node-lbl" x="1" y="19">ZIG</text>
+            <text class="node-lbl" x="1" y="30">C11</text>
+            <text class="node-lbl" x="1" y="41">CPP</text>
+            <text class="node-lbl" x="4" y="52">SW</text>
+            <text class="node-lbl" x="4" y="63">JV</text>
+            <text class="node-lbl" x="153" y="8">GO</text>
+            <text class="node-lbl" x="153" y="18">PY</text>
+            <text class="node-lbl" x="153" y="28">RB</text>
+            <text class="node-lbl" x="153" y="38">LUA</text>
+            <text class="node-lbl" x="153" y="49">PL</text>
+            <text class="node-lbl" x="153" y="60">TS</text>
+            <text class="node-lbl" x="153" y="71">IR</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="divider-v"></div>
+
+      <select id="sample-select" title="Load a polyglot benchmark preset"></select>
+
+      <div class="history-group">
+        <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
+        <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
       </div>
     </div>
-    <div class="controls">
-      <select id="sample-select"></select>
-      <button id="undo-btn" disabled title="Undo cross-language edit">↶ Undo</button>
-      <button id="redo-btn" disabled title="Redo cross-language edit">↷ Redo</button>
-      <button class="wasm-btn" id="fhe-btn" title="Fully Homomorphic Encryption (FHE) Ring-LWE (BFV/BGV/CKKS/TFHE) Blinded Circuit Compiler, Noise-Budget Tracker, Relinearization & Programmable Bootstrapping Scheduler">🛡 FHE Ring-LWE & TFHE</button>
-      <button class="verify-btn" id="seplogic-btn" title="Reynolds Separation Logic (emp, x ↦ v, P * Q, P -* Q) Symbolic Heap Frame Prover, Boyland Fractional Borrow Permission Verifier & 13-Spoke Zero-Copy Region Synthesizer">🧩 Separation Logic (P * Q)</button>
-      <button class="wasm-btn" id="hls-btn" title="High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility Force-Directed FSMD Scheduler, FPGA LUT6/FF/DSP48E2/BRAM36 Estimator & Synthesizable IEEE-1800 SystemVerilog RTL Generator">🔌 HLS SystemVerilog RTL</button>
-      <button class="opt-btn" id="gpu-btn" title="32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA C++/PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C), Warp Divergence & Shared-Memory 32-Bank Conflict Analyzer">🚀 GPU SIMT (CUDA/WGSL/MSL)</button>
-      <button class="wasm-btn" id="quantum-btn" title="Reversible Bennett-Toffoli Quantum Circuit Compiler (F -> Copy -> F† Uncomputation), Grover Amplitude Amplification Oracle & OpenQASM 3.0 Synthesizer">⚛ Quantum & OpenQASM 3</button>
-      <button class="opt-btn" id="automata-btn" title="Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Branchless Lookup Table Vectorizer">🤖 Minimal DFA & L*</button>
-      <button class="verify-btn" id="refinement-btn" title="Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 Export & 13-Spoke Dependent / Branded Type Synthesizer">💎 Liquid Types & CHC</button>
-      <button class="trace-btn" id="prob-btn" title="Probabilistic Programming, Metropolis-Hastings MCMC + Importance Sampling, Shannon Entropy H(X)/H(Y) & Mutual-Information QIF Leakage Quantifier">🎲 MCMC & Shannon Entropy</button>
-      <button class="wasm-btn" id="zk-btn" title="Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Witness Verifier & Circom 2.0 Synthesizer">🔐 ZK R1CS & Circom</button>
-      <button class="opt-btn" id="sql-btn" title="Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer & 13-Spoke SQL / DataFrame Synthesizer">🗄 Relational SQL & Pushdown</button>
-      <button class="wasm-btn" id="actors-btn" title="Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer">📡 Actors & Vector Clocks</button>
-      <button class="verify-btn" id="modelcheck-btn" title="Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability & TLA+ Spec Synthesizer">📐 TLA+ & Model Check</button>
-      <button class="wasm-btn" id="autodiff-btn" title="Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer">∇ AutoDiff & Tape</button>
-      <button class="verify-btn" id="stability-btn" title="IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f & Quantization Auditor">🔬 Lipschitz & Stability</button>
-      <button class="wasm-btn" id="microarch-btn" title="4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Hardware Simulator">🖥 CPU, Cache & Branch</button>
-      <button class="opt-btn" id="schedule-btn" title="Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Pipeline Stall Eliminator">📐 List Scheduler & ILP</button>
-      <button class="wasm-btn" id="regalloc-btn" title="Chaitin-Briggs Kempe-stack graph-coloring & Poletto-Sarkar linear-scan register allocator + Dual-Target AArch64 / x86_64 Native Assembly">🎛 RegAlloc & ASM</button>
-      <button class="opt-btn" id="escape-btn" title="Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO & 13-Spoke Stack/Arena Lifetime Optimizer">📦 Escape & SROA</button>
-      <button class="wasm-btn" id="polyhedral-btn" title="Polyhedral loop dependence analysis, associative monoid reduction recognition, Brent Work-Span & 13-spoke SIMD / Map-Reduce vectorizer">🧮 Polyhedral & SIMD</button>
-      <button class="verify-btn" id="wcet-btn" title="Floyd-Turing well-founded ranking function termination prover & IPET symbolic BCET/WCET timing bound analyzer">⏳ Termination & WCET</button>
-      <button class="wasm-btn" id="egraph-btn" title="Equality Saturation & Congruence-Closure E-Graph Superoptimizer across all 13 languages">🔮 E-Graph Superopt</button>
-      <button class="opt-btn" id="peval-btn" title="Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer & Loop Unroller across all 13 languages">⚡ Partial Eval</button>
-      <button class="trace-btn" id="concolic-btn" title="Whitebox concolic path exploration, boundary-negation solver & path-covering unit test synthesis across all 13 languages">🧭 Concolic Paths</button>
-      <button class="verify-btn" id="security-btn" title="Denning lattice information-flow taint analysis, sanitizer verification & constant-time side-channel auditor">🔒 Taint & Security</button>
-      <button class="verify-btn" id="contracts-btn" title="Infer Hoare Logic Design-by-Contract specifications (requires, loop_invariant, ensures) & verify Dijkstra Weakest-Precondition VCs across 13 languages">📜 Hoare Contracts</button>
-      <button class="trace-btn" id="ssa-btn" title="Compute Cytron Static Single Assignment (SSA) form, Dominance Frontiers, φ-nodes, Liveness & Def-Use chains">🧬 SSA & Liveness</button>
-      <button class="wasm-btn" id="synth-btn" title="Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages">✨ PBE Synth</button>
-      <button class="trace-btn" id="cfg-btn" title="Inspect Control-Flow Graphs, Dominator Trees, Natural Loop Back-Edges, Mermaid & Graphviz DOT">🕸 CFG & Loops</button>
-      <button class="mut-btn" id="repair-btn" title="Localize failing unit tests or refuted safety obligations & synthesize a 4-gate verified AST patch across all 13 languages">🩹 Auto-Repair</button>
-      <button class="debug-btn" id="debug-btn" title="Scrub forward & backward through execution steps across all 13 languages simultaneously & compute dynamic backward slices">⏱ Time-Travel</button>
-      <button class="trace-btn" id="complexity-btn" title="Profile static & empirical Big-O complexity, cyclomatic complexity, gas cost & 13-spoke code density">📈 Big-O & Gas</button>
-      <button class="verify-btn" id="qc-btn" title="Run property-based QuickCheck, invariant discovery & minimal counterexample shrinking across all 13 languages">🎲 QuickCheck</button>
-      <button class="wasm-btn" id="wasm-btn" title="Compile Central Hub AST directly to W3C WebAssembly 1.0 binary (.wasm) + .wat & execute in V8 / Browser Wasm VM">📦 Compile Wasm</button>
-      <button class="merge-btn" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 13 languages">🔀 3-Way Merge</button>
-      <button class="verify-btn" id="verify-btn" title="Prove div-by-zero, bounds & assertions via interval abstract interpretation + concolic witnesses">🛡 Symbolic Verify</button>
-      <button class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph & hotspots">🔍 Trace & Coverage</button>
-      <button class="mut-btn" id="mut-btn" title="Run sub-ms Hub AST mutation testing & auto-synthesize missing boundary unit tests">🧬 Mutation Test</button>
-      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 13 languages">⚡ Optimize Hub</button>
-      <button class="run-btn" id="run-btn">▶ Run All 14 Engines (VM + Wasm + rustc + zig + clang + clang++ + swiftc + javac + go + py + rb + luajit + perl + node)</button>
-    </div>
-  </header>
 
-  <div class="hub-banner">
-    <div class="hub-left">
-      <span style="color:var(--accent);font-weight:600;" id="hub-rev">Hub rev #1</span>
-      <span id="typecheck-pill" style="color:#34d399;font-weight:500;">✓ Hub Typecheck: OK</span>
+    <!-- Live Status & Telemetry Strip -->
+    <div class="topbar-center">
+      <span id="hub-rev">Hub rev #1</span>
+      <span id="typecheck-pill">✓ Hub Typecheck: OK</span>
       <span class="safety-pill" id="safety-pill" title="Click to inspect symbolic safety proofs, crash counterexamples & UNSAT dead branches">🛡 Safety: —</span>
       <span class="test-pill" id="test-pill">✓ Tests: —</span>
       <span class="cov-pill" id="cov-pill" title="Click to inspect call trace & uncovered AST branches">🎯 Coverage: —</span>
       <span class="vm-preview" id="vm-preview">⚡ Hub VM: ...</span>
-      <div id="meta-badges" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
     </div>
-    <div class="spoke-toggles" id="spoke-toggles">
-      <span style="color:var(--muted);font-size:11px;">Spokes:</span>
-      <span class="toggle-pill on" data-spoke="rust">Rust</span>
-      <span class="toggle-pill on" data-spoke="zig">Zig</span>
-      <span class="toggle-pill on" data-spoke="c">C11</span>
-      <span class="toggle-pill on" data-spoke="cpp">C++</span>
-      <span class="toggle-pill on" data-spoke="swift">Swift</span>
-      <span class="toggle-pill on" data-spoke="java">Java</span>
-      <span class="toggle-pill on" data-spoke="go">Go</span>
-      <span class="toggle-pill on" data-spoke="python">Python</span>
-      <span class="toggle-pill on" data-spoke="ruby">Ruby</span>
-      <span class="toggle-pill on" data-spoke="lua">Lua</span>
-      <span class="toggle-pill on" data-spoke="perl">Perl</span>
-      <span class="toggle-pill on" data-spoke="typescript">TypeScript</span>
-      <span class="toggle-pill on" data-spoke="star">Star IR</span>
-    </div>
-  </div>
 
-  <div class="refactor-bar">
-    <div class="refactor-controls">
-      <span style="color:var(--muted);font-weight:600;">Semantic Hub Refactor:</span>
-      <select id="symbol-select" title="Select a Hub symbol to rename across all 12 languages"></select>
-      <input type="text" id="rename-input" placeholder="new_identifier" style="width:165px;" />
-      <button id="rename-btn">✎ Rename Across 12 Languages</button>
+    <!-- Primary Global Actions -->
+    <div class="topbar-right">
+      <button id="toggle-refactor-btn" title="Toggle cross-language semantic rename bar">✎ Refactor</button>
+      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 13 languages">⚡ Optimize</button>
+      <button class="run-btn" id="run-btn" title="Execute across Hub VM, Wasm, rustc, zig, clang, clang++, swiftc, javac, go, python3, ruby, luajit, perl, and node (Cmd/Ctrl+Enter)">▶ Run All 14 Engines</button>
+    </div>
+  </header>
+
+  <!-- =========================================================================
+       ZONE 2: WORKSPACE VIEW-MODE & SPOKE LANGUAGE BAR
+       ========================================================================= -->
+  <div class="workspace-bar">
+    <div class="workspace-left">
+      <div class="layout-switcher" role="group" aria-label="Workspace Layout">
+        <button class="layout-btn" data-layout="focus" id="layout-focus-btn" title="Focus on 1 language pane">Focus (1)</button>
+        <button class="layout-btn" data-layout="pair" id="layout-pair-btn" title="Side-by-side 2-language comparison">Pair (2)</button>
+        <button class="layout-btn active" data-layout="split" id="layout-split-btn" title="3-pane split workbench">Split (3)</button>
+        <button class="layout-btn" data-layout="all" id="layout-all-btn" title="Show all 13 language spokes in a grid">All 13 Grid</button>
+      </div>
+
+      <div class="divider-v"></div>
+
+      <div class="spoke-toggles" id="spoke-toggles">
+        <span class="toggle-pill on" data-spoke="rust">Rust</span>
+        <span class="toggle-pill" data-spoke="zig">Zig</span>
+        <span class="toggle-pill" data-spoke="c">C11</span>
+        <span class="toggle-pill" data-spoke="cpp">C++</span>
+        <span class="toggle-pill" data-spoke="swift">Swift</span>
+        <span class="toggle-pill" data-spoke="java">Java</span>
+        <span class="toggle-pill" data-spoke="go">Go</span>
+        <span class="toggle-pill on" data-spoke="python">Python</span>
+        <span class="toggle-pill" data-spoke="ruby">Ruby</span>
+        <span class="toggle-pill" data-spoke="lua">Lua</span>
+        <span class="toggle-pill" data-spoke="perl">Perl</span>
+        <span class="toggle-pill on" data-spoke="typescript">TypeScript</span>
+        <span class="toggle-pill" data-spoke="star">Star IR</span>
+      </div>
+    </div>
+
+    <div class="workspace-right">
       <span class="action-msg" id="action-msg"></span>
+      <div id="meta-badges" style="display:flex;gap:5px;flex-wrap:wrap;"></div>
     </div>
-    <span style="color:var(--muted);font-size:11px;">Tip: Cmd/Ctrl+Enter runs all 13 engines</span>
   </div>
 
+  <!-- On-Demand Semantic Refactor Bar -->
+  <div class="refactor-bar" id="refactor-bar">
+    <div class="refactor-controls">
+      <span style="color:var(--text-secondary);font-weight:600;">Semantic Hub Refactor:</span>
+      <select id="symbol-select" title="Select a Hub symbol to rename across all 13 languages"></select>
+      <input type="text" id="rename-input" placeholder="new_identifier" style="width:165px;" />
+      <button id="rename-btn">✎ Rename Across All 13 Languages</button>
+    </div>
+    <span style="color:var(--muted);font-size:11px;">Scope- and type-directed AST rename across all 13 spokes</span>
+  </div>
+
+  <!-- Semantic Diagnostics Banner -->
   <div class="sem-bar" id="sem-bar"></div>
 
-  <main class="grid">
+  <!-- =========================================================================
+       ZONE 3: POLYGLOT CODE WORKSPACE CANVAS
+       ========================================================================= -->
+  <main class="grid mode-split" id="editor-grid">
     <section class="pane" id="pane-rust">
       <div class="pane-header">
-        <span>Rust (<code>.rs</code>)</span>
+        <span>Rust <code>.rs</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-rust"></span>
           <span class="status" id="status-rust">Synced</span>
@@ -540,9 +1006,9 @@
       <div class="diag-bar" id="diag-rust"></div>
     </section>
 
-    <section class="pane" id="pane-zig">
+    <section class="pane hidden" id="pane-zig">
       <div class="pane-header">
-        <span>Zig 0.16 (<code>.zig</code>)</span>
+        <span>Zig 0.16 <code>.zig</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-zig"></span>
           <span class="status" id="status-zig">Synced</span>
@@ -552,9 +1018,9 @@
       <div class="diag-bar" id="diag-zig"></div>
     </section>
 
-    <section class="pane" id="pane-c">
+    <section class="pane hidden" id="pane-c">
       <div class="pane-header">
-        <span>Modern ISO C11 (<code>.c</code>)</span>
+        <span>ISO C11 <code>.c</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-c"></span>
           <span class="status" id="status-c">Synced</span>
@@ -564,9 +1030,9 @@
       <div class="diag-bar" id="diag-c"></div>
     </section>
 
-    <section class="pane" id="pane-cpp">
+    <section class="pane hidden" id="pane-cpp">
       <div class="pane-header">
-        <span>Modern C++ (<code>.cpp</code>)</span>
+        <span>Modern C++ <code>.cpp</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-cpp"></span>
           <span class="status" id="status-cpp">Synced</span>
@@ -576,9 +1042,9 @@
       <div class="diag-bar" id="diag-cpp"></div>
     </section>
 
-    <section class="pane" id="pane-swift">
+    <section class="pane hidden" id="pane-swift">
       <div class="pane-header">
-        <span>Swift 6 (<code>.swift</code>)</span>
+        <span>Swift 6 <code>.swift</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-swift"></span>
           <span class="status" id="status-swift">Synced</span>
@@ -588,9 +1054,9 @@
       <div class="diag-bar" id="diag-swift"></div>
     </section>
 
-    <section class="pane" id="pane-java">
+    <section class="pane hidden" id="pane-java">
       <div class="pane-header">
-        <span>Java 21 (<code>.java</code>)</span>
+        <span>Java 21 <code>.java</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-java"></span>
           <span class="status" id="status-java">Synced</span>
@@ -600,9 +1066,9 @@
       <div class="diag-bar" id="diag-java"></div>
     </section>
 
-    <section class="pane" id="pane-go">
+    <section class="pane hidden" id="pane-go">
       <div class="pane-header">
-        <span>Go (<code>.go</code>)</span>
+        <span>Go <code>.go</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-go"></span>
           <span class="status" id="status-go">Synced</span>
@@ -614,7 +1080,7 @@
 
     <section class="pane" id="pane-python">
       <div class="pane-header">
-        <span>Python (<code>.py</code>)</span>
+        <span>Python <code>.py</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-python"></span>
           <span class="status" id="status-python">Synced</span>
@@ -624,9 +1090,9 @@
       <div class="diag-bar" id="diag-python"></div>
     </section>
 
-    <section class="pane" id="pane-ruby">
+    <section class="pane hidden" id="pane-ruby">
       <div class="pane-header">
-        <span>Ruby + RBS (<code>.rb</code>)</span>
+        <span>Ruby + RBS <code>.rb</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-ruby"></span>
           <span class="status" id="status-ruby">Synced</span>
@@ -636,9 +1102,9 @@
       <div class="diag-bar" id="diag-ruby"></div>
     </section>
 
-    <section class="pane" id="pane-lua">
+    <section class="pane hidden" id="pane-lua">
       <div class="pane-header">
-        <span>LuaJIT + LuaCATS (<code>.lua</code>)</span>
+        <span>LuaJIT <code>.lua</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-lua"></span>
           <span class="status" id="status-lua">Synced</span>
@@ -648,9 +1114,9 @@
       <div class="diag-bar" id="diag-lua"></div>
     </section>
 
-    <section class="pane" id="pane-perl">
+    <section class="pane hidden" id="pane-perl">
       <div class="pane-header">
-        <span>Modern Perl 5.34 (<code>.pl</code>)</span>
+        <span>Perl 5.34 <code>.pl</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-perl"></span>
           <span class="status" id="status-perl">Synced</span>
@@ -662,7 +1128,7 @@
 
     <section class="pane" id="pane-typescript">
       <div class="pane-header">
-        <span>TypeScript (<code>.ts</code>)</span>
+        <span>TypeScript <code>.ts</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-typescript"></span>
           <span class="status" id="status-typescript">Synced</span>
@@ -672,9 +1138,9 @@
       <div class="diag-bar" id="diag-typescript"></div>
     </section>
 
-    <section class="pane" id="pane-star">
+    <section class="pane hidden" id="pane-star">
       <div class="pane-header">
-        <span>Star Canonical Hub S-Expr (<code>.star</code> + Sidecar Metadata)</span>
+        <span>Star Hub IR <code>.star</code></span>
         <div class="badges-right">
           <span class="delta-badge" id="delta-star"></span>
           <span class="status" id="status-star">Synced</span>
@@ -685,374 +1151,560 @@
     </section>
   </main>
 
-  <section id="fhe-drawer">
-    <div class="run-header">
-      <span id="fhe-summary">🛡 Fully Homomorphic Encryption (FHE) Ring-LWE (BFV/BGV/CKKS/TFHE) Blinded Circuit Compiler, Noise-Budget Tracker & Relinearization / Bootstrapping Scheduler...</span>
-      <button onclick="document.getElementById('fhe-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="fhe-cards"></div>
-  </section>
-
-  <section id="seplogic-drawer">
-    <div class="run-header">
-      <span id="seplogic-summary">🧩 Reynolds Separation Logic (emp, x ↦ v, P * Q, P -* Q) Symbolic Heap Frame Prover, Boyland Fractional Borrow Verifier & 13-Spoke Zero-Copy Region Synthesizer...</span>
-      <button onclick="document.getElementById('seplogic-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="seplogic-cards"></div>
-  </section>
-
-  <section id="hls-drawer">
-    <div class="run-header">
-      <span id="hls-summary">🔌 High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility Force-Directed FSMD Scheduler, FPGA LUT6/FF/DSP48E2/BRAM36 Estimator & Synthesizable IEEE-1800 SystemVerilog RTL Generator...</span>
-      <button onclick="document.getElementById('hls-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="hls-cards"></div>
-  </section>
-
-  <section id="gpu-drawer">
-    <div class="run-header">
-      <span id="gpu-summary">🚀 32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C), Warp Divergence & Shared-Memory 32-Bank Conflict Analyzer...</span>
-      <button onclick="document.getElementById('gpu-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="gpu-cards"></div>
-  </section>
-
-  <section id="quantum-drawer">
-    <div class="run-header">
-      <span id="quantum-summary">⚛ Reversible Bennett-Toffoli Quantum Circuit Compiler (F ➔ CNOT Copy ➔ F† Uncomputation), Grover Phase Oracle & OpenQASM 3.0 Synthesizer...</span>
-      <button onclick="document.getElementById('quantum-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="quantum-cards"></div>
-  </section>
-
-  <section id="automata-drawer">
-    <div class="run-header">
-      <span id="automata-summary">🤖 Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Branchless Lookup Table Vectorizer...</span>
-      <button onclick="document.getElementById('automata-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="automata-cards"></div>
-  </section>
-
-  <section id="refinement-drawer">
-    <div class="run-header">
-      <span id="refinement-summary">💎 Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 HORN Export & 13-Spoke Dependent / Branded Types...</span>
-      <button onclick="document.getElementById('refinement-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="refinement-cards"></div>
-  </section>
-
-  <section id="prob-drawer">
-    <div class="run-header">
-      <span id="prob-summary">🎲 Probabilistic Programming, Metropolis-Hastings MCMC Sampling, Shannon Entropy H(X)/H(Y) & Mutual-Information QIF Leakage Quantifier...</span>
-      <button onclick="document.getElementById('prob-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="prob-cards"></div>
-  </section>
-
-  <section id="zk-drawer">
-    <div class="run-header">
-      <span id="zk-summary">🔐 Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Groth16 / Plonk Gate Arithmetizer & Zero-Knowledge Witness Verifier...</span>
-      <button onclick="document.getElementById('zk-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="zk-cards"></div>
-  </section>
-
-  <section id="sql-drawer">
-    <div class="run-header">
-      <span id="sql-summary">🗄 Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer & 13-Spoke SQL / DataFrame Synthesizer...</span>
-      <button onclick="document.getElementById('sql-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="sql-cards"></div>
-  </section>
-
-  <section id="actors-drawer">
-    <div class="run-header">
-      <span id="actors-summary">📡 Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer...</span>
-      <button onclick="document.getElementById('actors-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="actors-cards"></div>
-  </section>
-
-  <section id="modelcheck-drawer">
-    <div class="run-header">
-      <span id="modelcheck-summary">📐 Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability & TLA+ Spec...</span>
-      <button onclick="document.getElementById('modelcheck-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="modelcheck-cards"></div>
-  </section>
-
-  <section id="autodiff-drawer">
-    <div class="run-header">
-      <span id="autodiff-summary">∇ Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer...</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="wasm-btn" id="autodiff-inject-btn">∇ Inject Synthesized Gradient Function + Test Into All 13 Spokes</button>
-        <button onclick="document.getElementById('autodiff-drawer').style.display='none'">Close</button>
+  <!-- =========================================================================
+       ZONE 4: CATEGORIZED INSPECTOR WORKBENCH DOCK
+       ========================================================================= -->
+  <aside class="inspector-dock" id="inspector-dock">
+    <div class="dock-nav">
+      <div class="dock-tabs" id="dock-tabs">
+        <button class="dock-tab active" data-cat="runtime">⚡ Runtime & Debug</button>
+        <button class="dock-tab" data-cat="verify">🛡 Formal Verification</button>
+        <button class="dock-tab" data-cat="testing">🧪 Test, Repair & Synth</button>
+        <button class="dock-tab" data-cat="compiler">⚙️ Compiler IR & Opt</button>
+        <button class="dock-tab" data-cat="hardware">🖥 Silicon, GPU & ASM</button>
+        <button class="dock-tab" data-cat="crypto">🔐 Crypto, Quantum & AI</button>
+        <button class="dock-tab" data-cat="all">All Tools (35)</button>
+      </div>
+      <div class="dock-search-wrap">
+        <input type="text" id="tool-search" placeholder="Filter 35 analysis engines..." />
+        <button id="close-all-drawers-btn" title="Collapse active inspector panel">▾ Hide Inspector</button>
       </div>
     </div>
-    <div class="run-cards" id="autodiff-cards"></div>
-  </section>
 
-  <section id="stability-drawer">
-    <div class="run-header">
-      <span id="stability-summary">🔬 IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f & Quantization Auditor...</span>
-      <button onclick="document.getElementById('stability-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="stability-cards"></div>
-  </section>
+    <!-- Categorized Tool Bar (All original button IDs preserved) -->
+    <div class="controls" id="tool-strip">
+      <!-- Runtime & Debug -->
+      <button data-cat="runtime" class="wasm-btn" id="wasm-btn" title="Compile Central Hub AST directly to W3C WebAssembly 1.0 binary (.wasm) + .wat & execute in V8 / Browser Wasm VM">📦 WebAssembly (.wasm)</button>
+      <button data-cat="runtime" class="debug-btn" id="debug-btn" title="Scrub forward & backward through execution steps across all 13 languages simultaneously & compute dynamic backward slices">⏱ Time-Travel Debugger</button>
+      <button data-cat="runtime" class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph & hotspots">🔍 Trace & Coverage</button>
+      <button data-cat="runtime" class="trace-btn" id="complexity-btn" title="Profile static & empirical Big-O complexity, cyclomatic complexity, gas cost & 13-spoke code density">📈 Big-O & Gas Profiler</button>
 
-  <section id="microarch-drawer">
-    <div class="run-header">
-      <span id="microarch-summary">🖥 4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Simulator...</span>
-      <button onclick="document.getElementById('microarch-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="microarch-cards"></div>
-  </section>
+      <!-- Formal Verification -->
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="verify-btn" title="Prove div-by-zero, bounds & assertions via interval abstract interpretation + concolic witnesses">🛡 Symbolic Safety</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="contracts-btn" title="Infer Hoare Logic Design-by-Contract specifications (requires, loop_invariant, ensures) & verify Dijkstra Weakest-Precondition VCs across 13 languages">📜 Hoare Contracts</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="refinement-btn" title="Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 Export & 13-Spoke Dependent / Branded Type Synthesizer">💎 Liquid Types & CHC</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="seplogic-btn" title="Reynolds Separation Logic (emp, x ↦ v, P * Q, P -* Q) Symbolic Heap Frame Prover, Boyland Fractional Borrow Permission Verifier & 13-Spoke Zero-Copy Region Synthesizer">🧩 Separation Logic (P * Q)</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="wcet-btn" title="Floyd-Turing well-founded ranking function termination prover & IPET symbolic BCET/WCET timing bound analyzer">⏳ Termination & WCET</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="modelcheck-btn" title="Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability & TLA+ Spec Synthesizer">📐 TLA+ Model Check</button>
 
-  <section id="schedule-drawer">
-    <div class="run-header">
-      <span id="schedule-summary">📐 Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Pipeline Stall Eliminator...</span>
-      <button onclick="document.getElementById('schedule-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="schedule-cards"></div>
-  </section>
+      <!-- Test, Repair & Synth -->
+      <button data-cat="testing" class="verify-btn hidden-by-cat" id="qc-btn" title="Run property-based QuickCheck, invariant discovery & minimal counterexample shrinking across all 13 languages">🎲 QuickCheck Shrinker</button>
+      <button data-cat="testing" class="trace-btn hidden-by-cat" id="concolic-btn" title="Whitebox concolic path exploration, boundary-negation solver & path-covering unit test synthesis across all 13 languages">🧭 Concolic Path Explorer</button>
+      <button data-cat="testing" class="mut-btn hidden-by-cat" id="mut-btn" title="Run sub-ms Hub AST mutation testing & auto-synthesize missing boundary unit tests">🧬 Mutation Testing</button>
+      <button data-cat="testing" class="mut-btn hidden-by-cat" id="repair-btn" title="Localize failing unit tests or refuted safety obligations & synthesize a 4-gate verified AST patch across all 13 languages">🩹 CEGIS Auto-Repair</button>
+      <button data-cat="testing" class="wasm-btn hidden-by-cat" id="synth-btn" title="Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages">✨ PBE Program Synth</button>
+      <button data-cat="testing" class="merge-btn hidden-by-cat" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 13 languages">🔀 3-Way AST Merge</button>
 
-  <section id="regalloc-drawer">
-    <div class="run-header">
-      <span id="regalloc-summary">🎛 Chaitin-Briggs Kempe-Stack Graph-Coloring & Linear-Scan Register Allocator + AArch64 / x86_64 Native Assembly...</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="wasm-btn" id="regalloc-k8-btn">K = 8 Registers (Standard)</button>
-        <button class="mut-btn" id="regalloc-k3-btn">K = 3 Registers (Kempe Spill Stress-Test)</button>
-        <button onclick="document.getElementById('regalloc-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="run-cards" id="regalloc-cards"></div>
-  </section>
+      <!-- Compiler IR & Opt -->
+      <button data-cat="compiler" class="wasm-btn hidden-by-cat" id="egraph-btn" title="Equality Saturation & Congruence-Closure E-Graph Superoptimizer across all 13 languages">🔮 E-Graph Superopt</button>
+      <button data-cat="compiler" class="opt-btn hidden-by-cat" id="peval-btn" title="Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer & Loop Unroller across all 13 languages">⚡ Futamura Partial Eval</button>
+      <button data-cat="compiler" class="trace-btn hidden-by-cat" id="ssa-btn" title="Compute Cytron Static Single Assignment (SSA) form, Dominance Frontiers, φ-nodes, Liveness & Def-Use chains">🧬 Cytron SSA & Liveness</button>
+      <button data-cat="compiler" class="trace-btn hidden-by-cat" id="cfg-btn" title="Inspect Control-Flow Graphs, Dominator Trees, Natural Loop Back-Edges, Mermaid & Graphviz DOT">🕸 CFG & Dominators</button>
+      <button data-cat="compiler" class="wasm-btn hidden-by-cat" id="polyhedral-btn" title="Polyhedral loop dependence analysis, associative monoid reduction recognition, Brent Work-Span & 13-spoke SIMD / Map-Reduce vectorizer">🧮 Polyhedral SIMD</button>
+      <button data-cat="compiler" class="opt-btn hidden-by-cat" id="escape-btn" title="Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO & 13-Spoke Stack/Arena Lifetime Optimizer">📦 Escape & SROA</button>
+      <button data-cat="compiler" class="opt-btn hidden-by-cat" id="automata-btn" title="Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Branchless Lookup Table Vectorizer">🤖 Minimal DFA & L*</button>
 
-  <section id="escape-drawer">
-    <div class="run-header">
-      <span id="escape-summary">📦 Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO & 13-Spoke Stack/Arena Optimizer...</span>
-      <button onclick="document.getElementById('escape-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="escape-cards"></div>
-  </section>
+      <!-- Silicon, GPU & ASM -->
+      <button data-cat="hardware" class="wasm-btn hidden-by-cat" id="hls-btn" title="High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility Force-Directed FSMD Scheduler, FPGA LUT6/FF/DSP48E2/BRAM36 Estimator & Synthesizable IEEE-1800 SystemVerilog RTL Generator">🔌 HLS SystemVerilog RTL</button>
+      <button data-cat="hardware" class="opt-btn hidden-by-cat" id="gpu-btn" title="32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA C++/PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C), Warp Divergence & Shared-Memory 32-Bank Conflict Analyzer">🚀 GPU SIMT (CUDA/WGSL/MSL)</button>
+      <button data-cat="hardware" class="wasm-btn hidden-by-cat" id="regalloc-btn" title="Chaitin-Briggs Kempe-stack graph-coloring & Poletto-Sarkar linear-scan register allocator + Dual-Target AArch64 / x86_64 Native Assembly">🎛 RegAlloc & ARM64/x86</button>
+      <button data-cat="hardware" class="wasm-btn hidden-by-cat" id="microarch-btn" title="4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Hardware Simulator">🖥 Superscalar CPU Sim</button>
+      <button data-cat="hardware" class="opt-btn hidden-by-cat" id="schedule-btn" title="Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Pipeline Stall Eliminator">📐 DAG List Scheduler</button>
 
-  <section id="polyhedral-drawer">
-    <div class="run-header">
-      <span id="polyhedral-summary">🧮 Polyhedral Loop Dependence, Associative Monoid Reduction & 13-Spoke SIMD / Map-Reduce Vectorizer...</span>
-      <button onclick="document.getElementById('polyhedral-drawer').style.display='none'">Close</button>
+      <!-- Crypto, Quantum & AI -->
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="fhe-btn" title="Fully Homomorphic Encryption (FHE) Ring-LWE (BFV/BGV/CKKS/TFHE) Blinded Circuit Compiler, Noise-Budget Tracker, Relinearization & Programmable Bootstrapping Scheduler">🛡 FHE Ring-LWE & TFHE</button>
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="zk-btn" title="Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Witness Verifier & Circom 2.0 Synthesizer">🔐 ZK R1CS & Circom</button>
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="quantum-btn" title="Reversible Bennett-Toffoli Quantum Circuit Compiler (F -> Copy -> F† Uncomputation), Grover Amplitude Amplification Oracle & OpenQASM 3.0 Synthesizer">⚛ Quantum & OpenQASM 3</button>
+      <button data-cat="crypto" class="verify-btn hidden-by-cat" id="security-btn" title="Denning lattice information-flow taint analysis, sanitizer verification & constant-time side-channel auditor">🔒 Taint & Constant-Time</button>
+      <button data-cat="crypto" class="trace-btn hidden-by-cat" id="prob-btn" title="Probabilistic Programming, Metropolis-Hastings MCMC + Importance Sampling, Shannon Entropy H(X)/H(Y) & Mutual-Information QIF Leakage Quantifier">🎲 MCMC & Shannon Entropy</button>
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="autodiff-btn" title="Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer">∇ AutoDiff & Wengert Tape</button>
+      <button data-cat="crypto" class="verify-btn hidden-by-cat" id="stability-btn" title="IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f & Quantization Auditor">🔬 Lipschitz & Stability</button>
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="actors-btn" title="Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer">📡 Actors & Vector Clocks</button>
+      <button data-cat="crypto" class="opt-btn hidden-by-cat" id="sql-btn" title="Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer & 13-Spoke SQL / DataFrame Synthesizer">🗄 Relational SQL Pushdown</button>
     </div>
-    <div class="run-cards" id="polyhedral-cards"></div>
-  </section>
 
-  <section id="wcet-drawer">
-    <div class="run-header">
-      <span id="wcet-summary">⏳ Floyd-Turing Well-Founded Ranking Function Termination Prover & IPET Symbolic BCET/WCET Analyzer...</span>
-      <button onclick="document.getElementById('wcet-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="wcet-cards"></div>
-  </section>
-
-  <section id="egraph-drawer">
-    <div class="run-header">
-      <span id="egraph-summary">🔮 Equality Saturation & Congruence-Closure E-Graph Superoptimizer...</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="wasm-btn" id="egraph-apply-btn">🔮 Apply Minimum-Gas AST Across All 13 Spokes</button>
-        <button onclick="document.getElementById('egraph-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="run-cards" id="egraph-cards"></div>
-  </section>
-
-  <section id="peval-drawer">
-    <div class="run-header">
-      <span id="peval-summary">⚡ Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer & Loop Unroller...</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="opt-btn" id="peval-apply-btn">⚡ Apply Specialized Residual Program Across All 13 Spokes</button>
-        <button onclick="document.getElementById('peval-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="run-cards" id="peval-cards"></div>
-  </section>
-
-  <section id="concolic-drawer">
-    <div class="run-header">
-      <span id="concolic-summary">🧭 Whitebox Concolic Path Explorer, Boundary-Negation Solver & Path-Covering Unit Test Synthesizer...</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="wasm-btn" id="concolic-inject-btn">🧪 Inject Path-Covering Unit Tests Into All 13 Spokes</button>
-        <button onclick="document.getElementById('concolic-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="run-cards" id="concolic-cards"></div>
-  </section>
-
-  <section id="security-drawer">
-    <div class="run-header">
-      <span id="security-summary">🔒 Denning Lattice Information-Flow Taint, Sanitizer Verification & Constant-Time Side-Channel Auditor...</span>
-      <button onclick="document.getElementById('security-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="security-cards"></div>
-  </section>
-
-  <section id="contracts-drawer">
-    <div class="run-header">
-      <span id="contracts-summary">📜 Hoare-Logic Design-by-Contract (`requires` / `loop_invariant` / `ensures`) & Weakest-Precondition (`WP`) VC Verifier...</span>
-      <button onclick="document.getElementById('contracts-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="contracts-cards"></div>
-  </section>
-
-  <section id="ssa-drawer">
-    <div class="run-header">
-      <span id="ssa-summary">🧬 Cytron Static Single Assignment (SSA), Dominance Frontiers, `φ`-Nodes, Liveness & Def-Use Chains...</span>
-      <button onclick="document.getElementById('ssa-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="ssa-cards"></div>
-  </section>
-
-  <section id="synth-drawer">
-    <div class="run-header">
-      <span id="synth-summary">✨ Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages...</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <input type="text" id="synth-spec-input" value="clamp_bonus(score: Int, cap: Int) -> Int | (40, 100) => 80; (75, 100) => 100; (-15, 60) => 0; (0, 50) => 0" style="width:420px;" />
-        <button class="wasm-btn" id="synth-run-btn">✨ Synthesize & Inject Into 13 Spokes</button>
-        <button id="synth-list-btn">📋 List Fold Preset (sum_above)</button>
-        <button onclick="document.getElementById('synth-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="run-cards" id="synth-cards"></div>
-  </section>
-
-  <section id="cfg-drawer">
-    <div class="run-header">
-      <span id="cfg-summary">🕸 Control-Flow Graph (CFG), Dominator Tree, Natural Loop Detector & Mermaid/Graphviz DOT Exporter...</span>
-      <button onclick="document.getElementById('cfg-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="cfg-cards"></div>
-  </section>
-
-  <section id="repair-drawer">
-    <div class="run-header">
-      <span id="repair-summary">🩹 Counterexample-Guided Automated Program Repair (CEGIS) across all 13 languages...</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="mut-btn" id="repair-demo-btn">🧪 Inject Bug & Auto-Repair</button>
-        <button onclick="document.getElementById('repair-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="run-cards" id="repair-cards"></div>
-  </section>
-
-  <section id="complexity-drawer">
-    <div class="run-header">
-      <span id="complexity-summary">📈 Asymptotic Big-O, Cyclomatic Complexity, Gas Profiler & 13-Spoke Code Density...</span>
-      <button onclick="document.getElementById('complexity-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="complexity-cards"></div>
-  </section>
-
-  <section id="qc-drawer">
-    <div class="run-header">
-      <span id="qc-summary">🎲 Polyglot Property-Based QuickCheck, Invariant Discovery & Minimal Counterexample Shrinker...</span>
-      <button onclick="document.getElementById('qc-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="qc-cards"></div>
-  </section>
-
-  <section id="debug-drawer">
-    <div class="run-header">
-      <span id="debug-summary">⏱ Polyglot Time-Travel Debugger & Dynamic Backward Slicer across all 13 languages...</span>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <button id="debug-prev-btn">⏮ Prev</button>
-        <input type="range" id="debug-slider" min="0" max="0" value="0" style="width:180px;" />
-        <span id="debug-step-lbl" style="font-family:monospace;font-size:12px;">Step 0/0</span>
-        <button id="debug-next-btn">⏭ Next</button>
-        <input type="text" id="debug-slice-input" placeholder="var or step:N" style="width:130px;" />
-        <button class="debug-btn" id="debug-slice-btn">🎯 Slice</button>
-        <button onclick="document.getElementById('debug-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="run-cards" id="debug-cards"></div>
-  </section>
-
-  <section id="wasm-drawer">
-    <div class="run-header">
-      <span id="wasm-summary">📦 Zero-Dependency WebAssembly 1.0 Binary (.wasm) & Text (.wat) Compiler...</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="wasm-btn" id="wasm-browser-btn">⚡ Run .wasm in Browser</button>
-        <button onclick="document.getElementById('wasm-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="run-cards" id="wasm-cards"></div>
-  </section>
-
-  <section id="merge-drawer">
-    <div class="run-header">
-      <span id="merge-summary">🔀 3-Way Concurrent Polyglot Merger — Fork current Hub into two different languages, edit both concurrently, and merge onto all 12 spokes:</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button id="merge-fork-btn">↻ Fork Current Hub</button>
-        <button class="merge-btn" id="merge-exec-btn">🔀 Merge Concurrent Edits Across All 12 Languages</button>
-        <button onclick="document.getElementById('merge-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="merge-grid">
-      <div class="merge-box">
-        <div class="merge-box-hdr">
-          <span>Left Developer Fork</span>
-          <select id="merge-left-spoke"></select>
+    <!-- Single-Active Inspector Drawer Container -->
+    <div class="dock-drawers" id="dock-drawers">
+      <section id="fhe-drawer">
+        <div class="run-header">
+          <span id="fhe-summary">🛡 Fully Homomorphic Encryption (FHE) Ring-LWE (BFV/BGV/CKKS/TFHE) Blinded Circuit Compiler, Noise-Budget Tracker & Relinearization / Bootstrapping Scheduler...</span>
+          <button onclick="document.getElementById('fhe-drawer').style.display='none'">Close</button>
         </div>
-        <textarea id="merge-left-ed" spellcheck="false"></textarea>
-      </div>
-      <div class="merge-box">
-        <div class="merge-box-hdr">
-          <span>Right Developer Fork</span>
-          <select id="merge-right-spoke"></select>
+        <div class="run-cards" id="fhe-cards"></div>
+      </section>
+
+      <section id="seplogic-drawer">
+        <div class="run-header">
+          <span id="seplogic-summary">🧩 Reynolds Separation Logic (emp, x ↦ v, P * Q, P -* Q) Symbolic Heap Frame Prover, Boyland Fractional Borrow Verifier & 13-Spoke Zero-Copy Region Synthesizer...</span>
+          <button onclick="document.getElementById('seplogic-drawer').style.display='none'">Close</button>
         </div>
-        <textarea id="merge-right-ed" spellcheck="false"></textarea>
-      </div>
-    </div>
-    <div class="run-cards" id="merge-cards"></div>
-  </section>
+        <div class="run-cards" id="seplogic-cards"></div>
+      </section>
 
-  <section id="verify-drawer">
-    <div class="run-header">
-      <span id="verify-summary">Running Hub interval abstract interpretation & concolic witness search...</span>
-      <button onclick="document.getElementById('verify-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="verify-cards"></div>
-  </section>
+      <section id="hls-drawer">
+        <div class="run-header">
+          <span id="hls-summary">🔌 High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility Force-Directed FSMD Scheduler, FPGA LUT6/FF/DSP48E2/BRAM36 Estimator & Synthesizable IEEE-1800 SystemVerilog RTL Generator...</span>
+          <button onclick="document.getElementById('hls-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="hls-cards"></div>
+      </section>
 
-  <section id="mut-drawer">
-    <div class="run-header">
-      <span id="mut-summary">Running semantic Hub AST mutation suite...</span>
-      <div style="display:flex;gap:8px;">
-        <button class="mut-btn" id="harden-btn">🛡 Auto-Harden Tests Across 11 Languages</button>
-        <button onclick="document.getElementById('mut-drawer').style.display='none'">Close</button>
-      </div>
-    </div>
-    <div class="run-cards" id="mut-cards"></div>
-  </section>
+      <section id="gpu-drawer">
+        <div class="run-header">
+          <span id="gpu-summary">🚀 32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C), Warp Divergence & Shared-Memory 32-Bank Conflict Analyzer...</span>
+          <button onclick="document.getElementById('gpu-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="gpu-cards"></div>
+      </section>
 
-  <section id="trace-drawer">
-    <div class="run-header">
-      <span id="trace-summary">Tracing Hub AST execution & coverage...</span>
-      <button onclick="document.getElementById('trace-drawer').style.display='none'">Close</button>
-    </div>
-    <div class="run-cards" id="trace-cards"></div>
-  </section>
+      <section id="quantum-drawer">
+        <div class="run-header">
+          <span id="quantum-summary">⚛ Reversible Bennett-Toffoli Quantum Circuit Compiler (F ➔ CNOT Copy ➔ F† Uncomputation), Grover Phase Oracle & OpenQASM 3.0 Synthesizer...</span>
+          <button onclick="document.getElementById('quantum-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="quantum-cards"></div>
+      </section>
 
-  <section id="run-drawer">
-    <div class="run-header">
-      <span id="run-summary">Executing across Hub VM, rustc, zig, clang -std=c11, clang++, swiftc, javac, go, python3, ruby, and node...</span>
-      <button onclick="document.getElementById('run-drawer').style.display='none'">Close</button>
+      <section id="automata-drawer">
+        <div class="run-header">
+          <span id="automata-summary">🤖 Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Branchless Lookup Table Vectorizer...</span>
+          <button onclick="document.getElementById('automata-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="automata-cards"></div>
+      </section>
+
+      <section id="refinement-drawer">
+        <div class="run-header">
+          <span id="refinement-summary">💎 Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 HORN Export & 13-Spoke Dependent / Branded Types...</span>
+          <button onclick="document.getElementById('refinement-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="refinement-cards"></div>
+      </section>
+
+      <section id="prob-drawer">
+        <div class="run-header">
+          <span id="prob-summary">🎲 Probabilistic Programming, Metropolis-Hastings MCMC Sampling, Shannon Entropy H(X)/H(Y) & Mutual-Information QIF Leakage Quantifier...</span>
+          <button onclick="document.getElementById('prob-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="prob-cards"></div>
+      </section>
+
+      <section id="zk-drawer">
+        <div class="run-header">
+          <span id="zk-summary">🔐 Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Groth16 / Plonk Gate Arithmetizer & Zero-Knowledge Witness Verifier...</span>
+          <button onclick="document.getElementById('zk-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="zk-cards"></div>
+      </section>
+
+      <section id="sql-drawer">
+        <div class="run-header">
+          <span id="sql-summary">🗄 Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer & 13-Spoke SQL / DataFrame Synthesizer...</span>
+          <button onclick="document.getElementById('sql-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="sql-cards"></div>
+      </section>
+
+      <section id="actors-drawer">
+        <div class="run-header">
+          <span id="actors-summary">📡 Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer...</span>
+          <button onclick="document.getElementById('actors-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="actors-cards"></div>
+      </section>
+
+      <section id="modelcheck-drawer">
+        <div class="run-header">
+          <span id="modelcheck-summary">📐 Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability & TLA+ Spec...</span>
+          <button onclick="document.getElementById('modelcheck-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="modelcheck-cards"></div>
+      </section>
+
+      <section id="autodiff-drawer">
+        <div class="run-header">
+          <span id="autodiff-summary">∇ Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer...</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="wasm-btn" id="autodiff-inject-btn">∇ Inject Synthesized Gradient Function + Test Into All 13 Spokes</button>
+            <button onclick="document.getElementById('autodiff-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="autodiff-cards"></div>
+      </section>
+
+      <section id="stability-drawer">
+        <div class="run-header">
+          <span id="stability-summary">🔬 IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f & Quantization Auditor...</span>
+          <button onclick="document.getElementById('stability-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="stability-cards"></div>
+      </section>
+
+      <section id="microarch-drawer">
+        <div class="run-header">
+          <span id="microarch-summary">🖥 4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Simulator...</span>
+          <button onclick="document.getElementById('microarch-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="microarch-cards"></div>
+      </section>
+
+      <section id="schedule-drawer">
+        <div class="run-header">
+          <span id="schedule-summary">📐 Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Pipeline Stall Eliminator...</span>
+          <button onclick="document.getElementById('schedule-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="schedule-cards"></div>
+      </section>
+
+      <section id="regalloc-drawer">
+        <div class="run-header">
+          <span id="regalloc-summary">🎛 Chaitin-Briggs Kempe-Stack Graph-Coloring & Linear-Scan Register Allocator + AArch64 / x86_64 Native Assembly...</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="wasm-btn" id="regalloc-k8-btn">K = 8 Registers (Standard)</button>
+            <button class="mut-btn" id="regalloc-k3-btn">K = 3 Registers (Kempe Spill Stress-Test)</button>
+            <button onclick="document.getElementById('regalloc-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="regalloc-cards"></div>
+      </section>
+
+      <section id="escape-drawer">
+        <div class="run-header">
+          <span id="escape-summary">📦 Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO & 13-Spoke Stack/Arena Optimizer...</span>
+          <button onclick="document.getElementById('escape-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="escape-cards"></div>
+      </section>
+
+      <section id="polyhedral-drawer">
+        <div class="run-header">
+          <span id="polyhedral-summary">🧮 Polyhedral Loop Dependence, Associative Monoid Reduction & 13-Spoke SIMD / Map-Reduce Vectorizer...</span>
+          <button onclick="document.getElementById('polyhedral-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="polyhedral-cards"></div>
+      </section>
+
+      <section id="wcet-drawer">
+        <div class="run-header">
+          <span id="wcet-summary">⏳ Floyd-Turing Well-Founded Ranking Function Termination Prover & IPET Symbolic BCET/WCET Analyzer...</span>
+          <button onclick="document.getElementById('wcet-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="wcet-cards"></div>
+      </section>
+
+      <section id="egraph-drawer">
+        <div class="run-header">
+          <span id="egraph-summary">🔮 Equality Saturation & Congruence-Closure E-Graph Superoptimizer...</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="wasm-btn" id="egraph-apply-btn">🔮 Apply Minimum-Gas AST Across All 13 Spokes</button>
+            <button onclick="document.getElementById('egraph-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="egraph-cards"></div>
+      </section>
+
+      <section id="peval-drawer">
+        <div class="run-header">
+          <span id="peval-summary">⚡ Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer & Loop Unroller...</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="opt-btn" id="peval-apply-btn">⚡ Apply Specialized Residual Program Across All 13 Spokes</button>
+            <button onclick="document.getElementById('peval-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="peval-cards"></div>
+      </section>
+
+      <section id="concolic-drawer">
+        <div class="run-header">
+          <span id="concolic-summary">🧭 Whitebox Concolic Path Explorer, Boundary-Negation Solver & Path-Covering Unit Test Synthesizer...</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="wasm-btn" id="concolic-inject-btn">🧪 Inject Path-Covering Unit Tests Into All 13 Spokes</button>
+            <button onclick="document.getElementById('concolic-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="concolic-cards"></div>
+      </section>
+
+      <section id="security-drawer">
+        <div class="run-header">
+          <span id="security-summary">🔒 Denning Lattice Information-Flow Taint, Sanitizer Verification & Constant-Time Side-Channel Auditor...</span>
+          <button onclick="document.getElementById('security-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="security-cards"></div>
+      </section>
+
+      <section id="contracts-drawer">
+        <div class="run-header">
+          <span id="contracts-summary">📜 Hoare-Logic Design-by-Contract (`requires` / `loop_invariant` / `ensures`) & Weakest-Precondition (`WP`) VC Verifier...</span>
+          <button onclick="document.getElementById('contracts-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="contracts-cards"></div>
+      </section>
+
+      <section id="ssa-drawer">
+        <div class="run-header">
+          <span id="ssa-summary">🧬 Cytron Static Single Assignment (SSA), Dominance Frontiers, `φ`-Nodes, Liveness & Def-Use Chains...</span>
+          <button onclick="document.getElementById('ssa-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="ssa-cards"></div>
+      </section>
+
+      <section id="synth-drawer">
+        <div class="run-header">
+          <span id="synth-summary">✨ Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages...</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <input type="text" id="synth-spec-input" value="clamp_bonus(score: Int, cap: Int) -> Int | (40, 100) => 80; (75, 100) => 100; (-15, 60) => 0; (0, 50) => 0" style="width:420px;" />
+            <button class="wasm-btn" id="synth-run-btn">✨ Synthesize & Inject Into 13 Spokes</button>
+            <button id="synth-list-btn">📋 List Fold Preset (sum_above)</button>
+            <button onclick="document.getElementById('synth-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="synth-cards"></div>
+      </section>
+
+      <section id="cfg-drawer">
+        <div class="run-header">
+          <span id="cfg-summary">🕸 Control-Flow Graph (CFG), Dominator Tree, Natural Loop Detector & Mermaid/Graphviz DOT Exporter...</span>
+          <button onclick="document.getElementById('cfg-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="cfg-cards"></div>
+      </section>
+
+      <section id="repair-drawer">
+        <div class="run-header">
+          <span id="repair-summary">🩹 Counterexample-Guided Automated Program Repair (CEGIS) across all 13 languages...</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="mut-btn" id="repair-demo-btn">🧪 Inject Bug & Auto-Repair</button>
+            <button onclick="document.getElementById('repair-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="repair-cards"></div>
+      </section>
+
+      <section id="complexity-drawer">
+        <div class="run-header">
+          <span id="complexity-summary">📈 Asymptotic Big-O, Cyclomatic Complexity, Gas Profiler & 13-Spoke Code Density...</span>
+          <button onclick="document.getElementById('complexity-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="complexity-cards"></div>
+      </section>
+
+      <section id="qc-drawer">
+        <div class="run-header">
+          <span id="qc-summary">🎲 Polyglot Property-Based QuickCheck, Invariant Discovery & Minimal Counterexample Shrinker...</span>
+          <button onclick="document.getElementById('qc-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="qc-cards"></div>
+      </section>
+
+      <section id="debug-drawer">
+        <div class="run-header">
+          <span id="debug-summary">⏱ Polyglot Time-Travel Debugger & Dynamic Backward Slicer across all 13 languages...</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <button id="debug-prev-btn">⏮ Prev</button>
+            <input type="range" id="debug-slider" min="0" max="0" value="0" style="width:180px;" />
+            <span id="debug-step-lbl" style="font-family:monospace;font-size:12px;">Step 0/0</span>
+            <button id="debug-next-btn">⏭ Next</button>
+            <input type="text" id="debug-slice-input" placeholder="var or step:N" style="width:130px;" />
+            <button class="debug-btn" id="debug-slice-btn">🎯 Slice</button>
+            <button onclick="document.getElementById('debug-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="debug-cards"></div>
+      </section>
+
+      <section id="wasm-drawer">
+        <div class="run-header">
+          <span id="wasm-summary">📦 Zero-Dependency WebAssembly 1.0 Binary (.wasm) & Text (.wat) Compiler...</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="wasm-btn" id="wasm-browser-btn">⚡ Run .wasm in Browser</button>
+            <button onclick="document.getElementById('wasm-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="wasm-cards"></div>
+      </section>
+
+      <section id="merge-drawer">
+        <div class="run-header">
+          <span id="merge-summary">🔀 3-Way Concurrent Polyglot Merger — Fork current Hub into two different languages, edit both concurrently, and merge onto all 13 spokes:</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button id="merge-fork-btn">↻ Fork Current Hub</button>
+            <button class="merge-btn" id="merge-exec-btn">🔀 Merge Concurrent Edits Across All 13 Languages</button>
+            <button onclick="document.getElementById('merge-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="merge-grid">
+          <div class="merge-box">
+            <div class="merge-box-hdr">
+              <span>Left Developer Fork</span>
+              <select id="merge-left-spoke"></select>
+            </div>
+            <textarea id="merge-left-ed" spellcheck="false"></textarea>
+          </div>
+          <div class="merge-box">
+            <div class="merge-box-hdr">
+              <span>Right Developer Fork</span>
+              <select id="merge-right-spoke"></select>
+            </div>
+            <textarea id="merge-right-ed" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div class="run-cards" id="merge-cards"></div>
+      </section>
+
+      <section id="verify-drawer">
+        <div class="run-header">
+          <span id="verify-summary">Running Hub interval abstract interpretation & concolic witness search...</span>
+          <button onclick="document.getElementById('verify-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="verify-cards"></div>
+      </section>
+
+      <section id="mut-drawer">
+        <div class="run-header">
+          <span id="mut-summary">Running semantic Hub AST mutation suite...</span>
+          <div style="display:flex;gap:8px;">
+            <button class="mut-btn" id="harden-btn">🛡 Auto-Harden Tests Across 13 Languages</button>
+            <button onclick="document.getElementById('mut-drawer').style.display='none'">Close</button>
+          </div>
+        </div>
+        <div class="run-cards" id="mut-cards"></div>
+      </section>
+
+      <section id="trace-drawer">
+        <div class="run-header">
+          <span id="trace-summary">Tracing Hub AST execution & coverage...</span>
+          <button onclick="document.getElementById('trace-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="trace-cards"></div>
+      </section>
+
+      <section id="run-drawer">
+        <div class="run-header">
+          <span id="run-summary">Executing across Hub VM, Wasm, rustc, zig, clang -std=c11, clang++, swiftc, javac, go, python3, ruby, luajit, perl, and node...</span>
+          <button onclick="document.getElementById('run-drawer').style.display='none'">Close</button>
+        </div>
+        <div class="run-cards" id="run-cards"></div>
+      </section>
     </div>
-    <div class="run-cards" id="run-cards"></div>
-  </section>
+  </aside>
 
   <script>
     const SPOKES = ["rust", "zig", "c", "cpp", "swift", "java", "go", "python", "ruby", "lua", "perl", "typescript", "star"];
+    const ALL_DRAWER_IDS = [
+      "run-drawer", "trace-drawer", "mut-drawer", "verify-drawer", "merge-drawer",
+      "wasm-drawer", "debug-drawer", "complexity-drawer", "qc-drawer", "repair-drawer",
+      "synth-drawer", "cfg-drawer", "ssa-drawer", "contracts-drawer", "concolic-drawer",
+      "security-drawer", "egraph-drawer", "peval-drawer", "polyhedral-drawer", "wcet-drawer",
+      "regalloc-drawer", "escape-drawer", "microarch-drawer", "schedule-drawer", "autodiff-drawer",
+      "stability-drawer", "actors-drawer", "modelcheck-drawer", "zk-drawer", "sql-drawer",
+      "refinement-drawer", "prob-drawer", "quantum-drawer", "automata-drawer", "hls-drawer",
+      "gpu-drawer", "fhe-drawer", "seplogic-drawer"
+    ];
     let lastWasmBase64 = null;
     let lastDebugReport = null;
     let debounceTimer = null;
+    let currentLayoutMode = "split";
+    let activeSpokeOrder = ["rust", "python", "typescript"];
     const prevTexts = {};
+
+    /* =========================================================================
+       UI / UX INFORMATION ARCHITECTURE CONTROLLERS
+       ========================================================================= */
+    function closeAllDrawers() {
+      ALL_DRAWER_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = "none";
+      });
+      document.querySelectorAll("#tool-strip button").forEach(b => b.classList.remove("active-tool"));
+    }
+
+    function openExclusiveDrawer(drawerId, btnId) {
+      ALL_DRAWER_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = (id === drawerId) ? "block" : "none";
+      });
+      document.querySelectorAll("#tool-strip button").forEach(b => {
+        b.classList.toggle("active-tool", b.id === btnId);
+      });
+    }
+
+    // Automatically ensure only one inspector drawer is open at a time
+    document.querySelectorAll("#tool-strip button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const prefix = btn.id.replace("-btn", "");
+        const targetDrawer = `${prefix}-drawer`;
+        if (ALL_DRAWER_IDS.includes(targetDrawer)) {
+          openExclusiveDrawer(targetDrawer, btn.id);
+        }
+      }, true);
+    });
+
+    document.getElementById("close-all-drawers-btn").addEventListener("click", closeAllDrawers);
+
+    // Category Tabs in Inspector Dock
+    document.querySelectorAll(".dock-tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".dock-tab").forEach(t => t.classList.remove("active"));
+        tab.classList.add("active");
+        const cat = tab.dataset.cat;
+        document.getElementById("tool-search").value = "";
+        document.querySelectorAll("#tool-strip button").forEach(btn => {
+          const match = (cat === "all") || (btn.dataset.cat === cat);
+          btn.classList.toggle("hidden-by-cat", !match);
+        });
+      });
+    });
+
+    // Live Search Filter across all 35 tools
+    document.getElementById("tool-search").addEventListener("input", e => {
+      const q = e.target.value.trim().toLowerCase();
+      if (q.length > 0) {
+        document.querySelectorAll(".dock-tab").forEach(t => t.classList.remove("active"));
+        document.querySelector('.dock-tab[data-cat="all"]').classList.add("active");
+      }
+      document.querySelectorAll("#tool-strip button").forEach(btn => {
+        const text = (btn.textContent + " " + (btn.title || "") + " " + (btn.dataset.cat || "")).toLowerCase();
+        btn.classList.toggle("hidden-by-cat", q.length > 0 ? !text.includes(q) : false);
+      });
+    });
+
+    // Toggle Semantic Refactor Bar
+    document.getElementById("toggle-refactor-btn").addEventListener("click", () => {
+      document.getElementById("refactor-bar").classList.toggle("open");
+    });
+
+    // Workspace Layout Mode Switcher (Focus 1, Pair 2, Split 3, All 13)
+    function applyLayoutMode(mode) {
+      currentLayoutMode = mode;
+      const grid = document.getElementById("editor-grid");
+      grid.classList.remove("mode-focus", "mode-pair", "mode-split", "mode-all");
+      grid.classList.add(`mode-${mode}`);
+      document.querySelectorAll(".layout-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.layout === mode);
+      });
+
+      if (mode === "all") {
+        SPOKES.forEach(s => {
+          document.getElementById(`pane-${s}`).classList.remove("hidden");
+          const pill = document.querySelector(`.toggle-pill[data-spoke="${s}"]`);
+          if (pill) pill.classList.add("on");
+        });
+      } else {
+        const limit = mode === "focus" ? 1 : (mode === "pair" ? 2 : 3);
+        const visible = activeSpokeOrder.slice(0, limit);
+        SPOKES.forEach(s => {
+          const isVis = visible.includes(s);
+          document.getElementById(`pane-${s}`).classList.toggle("hidden", !isVis);
+          const pill = document.querySelector(`.toggle-pill[data-spoke="${s}"]`);
+          if (pill) pill.classList.toggle("on", isVis);
+        });
+      }
+    }
+
+    document.querySelectorAll(".layout-btn").forEach(btn => {
+      btn.addEventListener("click", () => applyLayoutMode(btn.dataset.layout));
+    });
 
     function countChangedLines(a, b) {
       if (!a) return 0;
@@ -1076,11 +1728,11 @@
       const semBar = document.getElementById("sem-bar");
       const diags = snap.semantic_diagnostics || [];
       if (diags.length === 0) {
-        tcPill.style.color = "#34d399";
+        tcPill.style.color = "#047857";
         tcPill.textContent = "✓ Hub Typecheck: 0 issues";
         semBar.style.display = "none";
       } else {
-        tcPill.style.color = "#fbbf24";
+        tcPill.style.color = "#b45309";
         tcPill.textContent = `⚠ Hub Typecheck: ${diags.length} issue(s)`;
         semBar.style.display = "block";
         semBar.textContent = diags
@@ -1223,7 +1875,7 @@
         pane.classList.add("has-error");
         status.className = "status error";
         status.textContent = `Syntax Hold (L${data.diagnostic.line})`;
-        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 10 spokes held at last valid Hub AST`;
+        diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 12 spokes held at last valid Hub AST`;
       }
     }
 
@@ -1250,14 +1902,31 @@
     document.querySelectorAll(".toggle-pill").forEach(pill => {
       pill.addEventListener("click", () => {
         const s = pill.dataset.spoke;
-        pill.classList.toggle("on");
-        document.getElementById(`pane-${s}`).classList.toggle("hidden", !pill.classList.contains("on"));
+        if (currentLayoutMode === "all") {
+          pill.classList.toggle("on");
+          document.getElementById(`pane-${s}`).classList.toggle("hidden", !pill.classList.contains("on"));
+        } else {
+          const isCurrentlyOn = pill.classList.contains("on");
+          const onCount = document.querySelectorAll(".toggle-pill.on").length;
+          if (isCurrentlyOn && onCount > 1) {
+            pill.classList.remove("on");
+            document.getElementById(`pane-${s}`).classList.add("hidden");
+            activeSpokeOrder = activeSpokeOrder.filter(x => x !== s);
+          } else if (!isCurrentlyOn) {
+            const limit = currentLayoutMode === "focus" ? 1 : (currentLayoutMode === "pair" ? 2 : 3);
+            activeSpokeOrder = [s, ...activeSpokeOrder.filter(x => x !== s)];
+            if (activeSpokeOrder.length > limit) {
+              activeSpokeOrder = activeSpokeOrder.slice(0, limit);
+            }
+            applyLayoutMode(currentLayoutMode);
+          }
+        }
       });
     });
 
     function flashMessage(msg, isErr) {
       const el = document.getElementById("action-msg");
-      el.style.color = isErr ? "#fca5a5" : "#93c5fd";
+      el.style.color = isErr ? "#be123c" : "#1d4ed8";
       el.textContent = msg;
     }
 
@@ -1277,7 +1946,7 @@
       if (data.ok) {
         document.getElementById("rename-input").value = "";
         applySnapshot(data.snapshot, null);
-        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 11 languages`, false);
+        flashMessage(`✓ Renamed ${data.count} AST occurrence(s) across all 13 languages`, false);
       } else {
         flashMessage(`✗ ${data.error}`, true);
       }
@@ -1289,7 +1958,7 @@
       if (data.ok) {
         applySnapshot(data.snapshot, null);
         if (data.rewrites > 0) {
-          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 11 languages`, false);
+          flashMessage(`⚡ Optimized ${data.rewrites} constant/dead-branch node(s) across all 13 languages`, false);
         } else {
           flashMessage("AST is already in normal form (0 rewrites)", false);
         }
@@ -1302,7 +1971,7 @@
       const hardenBtn = document.getElementById("harden-btn");
       cards.innerHTML = "";
 
-      const color = data.score_pct === 100 ? "#34d399" : "#fbbf24";
+      const color = data.score_pct === 100 ? "#047857" : "#b45309";
       summary.innerHTML = `<span style="color:${color};">🧬 Hub Mutation Score: ${data.score_pct}% (${data.killed}/${data.total_mutants} semantic AST mutants killed in ${data.elapsed_ms}ms)</span>`;
       hardenBtn.disabled = data.survived === 0;
 
@@ -1328,8 +1997,7 @@
     }
 
     document.getElementById("mut-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("mut-drawer");
-      drawer.style.display = "block";
+      openExclusiveDrawer("mut-drawer", "mut-btn");
       document.getElementById("mut-summary").textContent = "Mutating Hub AST & running polyglot unit tests...";
       document.getElementById("mut-cards").innerHTML = "";
       const res = await fetch("/api/mutate", { method: "POST", body: "{}" });
@@ -1344,7 +2012,7 @@
         applySnapshot(data.snapshot, null);
         renderMutationReport(data.mutation);
         if (data.added_assertions > 0) {
-          flashMessage(`🛡 Synthesized ${data.added_assertions} boundary unit test assertion(s) across all 11 languages (${data.before_score_pct}% → ${data.after_score_pct}%)`, false);
+          flashMessage(`🛡 Synthesized ${data.added_assertions} boundary unit test assertion(s) across all 13 languages (${data.before_score_pct}% → ${data.after_score_pct}%)`, false);
         } else {
           flashMessage("No additional distinguishing boundary inputs found", false);
         }
@@ -1352,16 +2020,15 @@
     });
 
     async function triggerTrace() {
-      const drawer = document.getElementById("trace-drawer");
+      openExclusiveDrawer("trace-drawer", "trace-btn");
       const summary = document.getElementById("trace-summary");
       const cards = document.getElementById("trace-cards");
-      drawer.style.display = "block";
       summary.textContent = "Collecting Hub VM AST statement coverage, hotspots & call graph...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/trace", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.coverage_pct === 100 ? "#34d399" : "#fbbf24";
+      const color = data.coverage_pct === 100 ? "#047857" : "#b45309";
       summary.innerHTML = `<span style="color:${color};">🎯 AST Statement Coverage: ${data.coverage_pct}% (${data.covered_stmts}/${data.total_stmts} statements across main + unit tests)</span>`;
 
       const hotCard = document.createElement("div");
@@ -1389,16 +2056,15 @@
     }
 
     async function triggerVerify() {
-      const drawer = document.getElementById("verify-drawer");
+      openExclusiveDrawer("verify-drawer", "verify-btn");
       const summary = document.getElementById("verify-summary");
       const cards = document.getElementById("verify-cards");
-      drawer.style.display = "block";
       summary.textContent = "Running Cousot interval abstract interpretation + concolic Hub VM counterexample search...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/verify", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.refuted > 0 ? "#f87171" : (data.all_safe ? "#34d399" : "#fbbf24");
+      const color = data.refuted > 0 ? "#be123c" : (data.all_safe ? "#047857" : "#b45309");
       summary.innerHTML = `<span style="color:${color};">🛡 Symbolic Safety Verifier: ${data.proven_safe}/${data.total_obligations} proven safe · ${data.refuted} refuted · ${(data.unreachable_branches || []).length} UNSAT dead branch(es) (${data.elapsed_ms}ms)</span>`;
 
       const obs = data.obligations || [];
@@ -1467,8 +2133,7 @@
     document.getElementById("merge-fork-btn").addEventListener("click", forkCurrentHubIntoMerge);
 
     document.getElementById("merge-btn").addEventListener("click", () => {
-      const drawer = document.getElementById("merge-drawer");
-      drawer.style.display = "block";
+      openExclusiveDrawer("merge-drawer", "merge-btn");
       forkCurrentHubIntoMerge();
     });
 
@@ -1489,16 +2154,16 @@
       const data = await res.json();
       if (!data.ok) {
         const d = data.diagnostic;
-        summary.innerHTML = `<span style="color:#f87171;">✗ Syntax error in ${d ? d.language : "fork"}: ${d ? `L${d.line}:${d.col} ${d.message}` : (data.error || "failed")}</span>`;
+        summary.innerHTML = `<span style="color:#be123c;">✗ Syntax error in ${d ? d.language : "fork"}: ${d ? `L${d.line}:${d.col} ${d.message}` : (data.error || "failed")}</span>`;
         return;
       }
 
       if (data.clean) {
         applySnapshot(data.snapshot, null);
         forkCurrentHubIntoMerge();
-        summary.innerHTML = `<span style="color:#34d399;">✓ Clean 3-Way Hub AST Merge! Applied ${(data.applied_changes || []).length} concurrent cross-language edit(s) across all 11 spokes</span>`;
+        summary.innerHTML = `<span style="color:#047857;">✓ Clean 3-Way Hub AST Merge! Applied ${(data.applied_changes || []).length} concurrent cross-language edit(s) across all 13 spokes</span>`;
       } else {
-        summary.innerHTML = `<span style="color:#f87171;">⚠ Semantic Merge Conflict (${(data.conflicts || []).length} conflict(s)) — Hub held safely at base revision</span>`;
+        summary.innerHTML = `<span style="color:#be123c;">⚠ Semantic Merge Conflict (${(data.conflicts || []).length} conflict(s)) — Hub held safely at base revision</span>`;
       }
 
       const appCard = document.createElement("div");
@@ -1522,21 +2187,20 @@
     document.getElementById("safety-pill").addEventListener("click", triggerVerify);
 
     document.getElementById("wasm-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("wasm-drawer");
+      openExclusiveDrawer("wasm-drawer", "wasm-btn");
       const summary = document.getElementById("wasm-summary");
       const cards = document.getElementById("wasm-cards");
-      drawer.style.display = "block";
       summary.textContent = "Compiling Hub AST to W3C WebAssembly 1.0 binary (.wasm) + .wat & running in V8 JIT...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/wasm", { method: "POST", body: "{}" });
       const data = await res.json();
       if (!data.ok) {
-        summary.innerHTML = `<span style="color:#f87171;">✗ Wasm Compilation Error: ${data.error || "failed"}</span>`;
+        summary.innerHTML = `<span style="color:#be123c;">✗ Wasm Compilation Error: ${data.error || "failed"}</span>`;
         return;
       }
       lastWasmBase64 = data.wasm_b64;
-      const color = data.jit_ok ? "#34d399" : "#f87171";
+      const color = data.jit_ok ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">📦 WebAssembly 1.0 Binary: ${data.wasm_size_bytes} bytes (Code: ${data.code_bytes}B, Data: ${data.data_bytes}B, ${data.func_count} funcs) · V8 JIT: ${data.tests_passed}/${data.tests_total} tests passed (${data.duration_ms}ms)</span>`;
 
       const jitCard = document.createElement("div");
@@ -1624,7 +2288,6 @@
       const cards = document.getElementById("debug-cards");
       cards.innerHTML = "";
 
-      // Update 13-spoke header badges with active line number at this step
       SPOKES.forEach(sp => {
         const delta = document.getElementById(`delta-${sp}`);
         const ln = st.spoke_lines && st.spoke_lines[sp];
@@ -1670,9 +2333,8 @@
     }
 
     async function triggerDebug(sliceTarget) {
-      const drawer = document.getElementById("debug-drawer");
+      openExclusiveDrawer("debug-drawer", "debug-btn");
       const summary = document.getElementById("debug-summary");
-      drawer.style.display = "block";
       summary.textContent = "Recording Hub VM time-travel trace & 13-spoke statement line map...";
 
       const res = await fetch("/api/debug", {
@@ -1682,7 +2344,7 @@
       });
       const data = await res.json();
       lastDebugReport = data;
-      const color = data.trace_ok ? "#f472b6" : "#f87171";
+      const color = data.trace_ok ? "#6d28d9" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">⏱ Time-Travel Trace: ${data.total_steps} steps recorded (max depth ${data.max_depth}) · Scrub slider to highlight all 13 languages simultaneously</span>`;
       const slider = document.getElementById("debug-slider");
       slider.max = Math.max(0, (data.steps || []).length - 1);
@@ -1709,17 +2371,16 @@
     });
 
     document.getElementById("complexity-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("complexity-drawer");
+      openExclusiveDrawer("complexity-drawer", "complexity-btn");
       const summary = document.getElementById("complexity-summary");
       const cards = document.getElementById("complexity-cards");
-      drawer.style.display = "block";
       summary.textContent = "Profiling static & empirical Big-O scaling (N=4..64), gas breakdown & 13-spoke density...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/complexity", { method: "POST", body: "{}" });
       const data = await res.json();
       const mg = data.module_gas || {};
-      summary.innerHTML = `<span style="color:#38bdf8;">📈 Dominant Complexity: ${data.dominant_big_o} · Max Cyclomatic: ${data.max_cyclomatic} · Max Loop Depth: ${data.max_loop_depth} · Module Gas: ${mg.total_gas} (compute:${mg.compute_gas} mem:${mg.memory_gas} alloc:${mg.alloc_gas} branch:${mg.branch_gas}) · Wasm: ${data.wasm_bytes}B</span>`;
+      summary.innerHTML = `<span style="color:#1d4ed8;">📈 Dominant Complexity: ${data.dominant_big_o} · Max Cyclomatic: ${data.max_cyclomatic} · Max Loop Depth: ${data.max_loop_depth} · Module Gas: ${mg.total_gas} (compute:${mg.compute_gas} mem:${mg.memory_gas} alloc:${mg.alloc_gas} branch:${mg.branch_gas}) · Wasm: ${data.wasm_bytes}B</span>`;
 
       (data.functions || []).forEach(fn => {
         const card = document.createElement("div");
@@ -1746,10 +2407,9 @@
     });
 
     document.getElementById("qc-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("qc-drawer");
+      openExclusiveDrawer("qc-drawer", "qc-btn");
       const summary = document.getElementById("qc-summary");
       const cards = document.getElementById("qc-cards");
-      drawer.style.display = "block";
       summary.textContent = "Running property-based QuickCheck, optimizer equivalence & counterexample shrinking...";
       cards.innerHTML = "";
 
@@ -1759,7 +2419,7 @@
         body: JSON.stringify({ trials: "64" })
       });
       const data = await res.json();
-      const color = data.all_passed ? "#34d399" : "#f87171";
+      const color = data.all_passed ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">🎲 QuickCheck Suite: ${data.total_trials} trials across ${data.total_functions} functions · ${data.optimizer_checks} optimizer equivalence checks · ${data.total_invariants} algebraic invariant(s) discovered (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(f => {
@@ -1786,10 +2446,9 @@
     });
 
     async function triggerRepair(injectDemo) {
-      const drawer = document.getElementById("repair-drawer");
+      openExclusiveDrawer("repair-drawer", "repair-btn");
       const summary = document.getElementById("repair-summary");
       const cards = document.getElementById("repair-cards");
-      drawer.style.display = "block";
       summary.textContent = "Running backward-slice fault localization & 4-gate CEGIS AST patch synthesis...";
       cards.innerHTML = "";
 
@@ -1804,11 +2463,11 @@
       }
 
       if (data.already_healthy) {
-        summary.innerHTML = `<span style="color:#34d399;">✓ Module is already healthy (${data.tests_passed_after}/${data.tests_total} tests pass, 0 refuted obligations). Click "🧪 Inject Bug & Auto-Repair" to demo live CEGIS synthesis!</span>`;
+        summary.innerHTML = `<span style="color:#047857;">✓ Module is already healthy (${data.tests_passed_after}/${data.tests_total} tests pass, 0 refuted obligations). Click "🧪 Inject Bug & Auto-Repair" to demo live CEGIS synthesis!</span>`;
         return;
       }
 
-      const color = data.repaired ? "#34d399" : "#f87171";
+      const color = data.repaired ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">🩹 CEGIS Auto-Repair: ${data.repaired ? "VERIFIED PATCH SYNTHESIZED" : "UNRESOLVED"} · Evaluated ${data.candidates_evaluated} candidate(s) in ${data.elapsed_ms}ms · Tests: ${data.tests_passed_before}/${data.tests_total} → ${data.tests_passed_after}/${data.tests_total} · QuickCheck: ${data.quickcheck_passed ? "OK" : "FAIL"}</span>`;
 
       if (data.injected_bug) {
@@ -1839,10 +2498,9 @@
     document.getElementById("repair-demo-btn").addEventListener("click", () => triggerRepair(true));
 
     async function triggerSynth(specStr, injectFlag) {
-      const drawer = document.getElementById("synth-drawer");
+      openExclusiveDrawer("synth-drawer", "synth-btn");
       const summary = document.getElementById("synth-summary");
       const cards = document.getElementById("synth-cards");
-      drawer.style.display = "block";
       summary.textContent = "Enumerating observational-equivalence pruned Hub AST candidates against I/O examples...";
       cards.innerHTML = "";
 
@@ -1853,13 +2511,13 @@
       });
       const data = await res.json();
       if (!data.ok) {
-        summary.innerHTML = `<span style="color:#f87171;">✗ Synthesis Error: ${data.error || "failed"}</span>`;
+        summary.innerHTML = `<span style="color:#be123c;">✗ Synthesis Error: ${data.error || "failed"}</span>`;
         return;
       }
       if (data.snapshot) {
         applySnapshot(data.snapshot, null);
       }
-      const color = data.synthesized ? "#34d399" : "#f87171";
+      const color = data.synthesized ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">✨ PBE Synthesis (${data.signature}): ${data.synthesized ? "VERIFIED AST SYNTHESIZED" : "UNRESOLVED"} · ${data.examples_count} I/O examples · ${data.candidates_enumerated} candidates (${data.observationally_unique} unique, ${data.pruned_equivalents} pruned) in ${data.elapsed_ms}ms</span>`;
 
       const sumCard = document.createElement("div");
@@ -1896,16 +2554,15 @@
     });
 
     document.getElementById("cfg-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("cfg-drawer");
+      openExclusiveDrawer("cfg-drawer", "cfg-btn");
       const summary = document.getElementById("cfg-summary");
       const cards = document.getElementById("cfg-cards");
-      drawer.style.display = "block";
       summary.textContent = "Building Basic-Block Control-Flow Graphs, Dominator Sets & Natural Loop Back-Edges...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/cfg", { method: "POST", body: "{}" });
       const data = await res.json();
-      summary.innerHTML = `<span style="color:#38bdf8;">🕸 Control-Flow Graph: ${data.total_blocks} basic blocks · ${data.total_edges} edges · ${data.total_natural_loops} natural loop(s) across ${(data.functions || []).length} functions</span>`;
+      summary.innerHTML = `<span style="color:#1d4ed8;">🕸 Control-Flow Graph: ${data.total_blocks} basic blocks · ${data.total_edges} edges · ${data.total_natural_loops} natural loop(s) across ${(data.functions || []).length} functions</span>`;
 
       (data.functions || []).forEach(fn => {
         const card = document.createElement("div");
@@ -1922,16 +2579,15 @@
     });
 
     document.getElementById("ssa-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("ssa-drawer");
+      openExclusiveDrawer("ssa-drawer", "ssa-btn");
       const summary = document.getElementById("ssa-summary");
       const cards = document.getElementById("ssa-cards");
-      drawer.style.display = "block";
       summary.textContent = "Computing Cytron SSA Dominance Frontiers, φ-nodes, backward liveness & Def-Use chains...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/ssa", { method: "POST", body: "{}" });
       const data = await res.json();
-      summary.innerHTML = `<span style="color:#38bdf8;">🧬 Cytron SSA Form: ${data.total_phi_nodes} φ-node(s) · ${data.total_ssa_defs} SSA definitions · ${data.total_dead_stores} dead store(s) across ${data.total_blocks} basic blocks (${data.elapsed_ms}ms)</span>`;
+      summary.innerHTML = `<span style="color:#1d4ed8;">🧬 Cytron SSA Form: ${data.total_phi_nodes} φ-node(s) · ${data.total_ssa_defs} SSA definitions · ${data.total_dead_stores} dead store(s) across ${data.total_blocks} basic blocks (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
         const card = document.createElement("div");
@@ -1946,16 +2602,15 @@
     });
 
     document.getElementById("contracts-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("contracts-drawer");
+      openExclusiveDrawer("contracts-drawer", "contracts-btn");
       const summary = document.getElementById("contracts-summary");
       const cards = document.getElementById("contracts-cards");
-      drawer.style.display = "block";
       summary.textContent = "Inferring Hoare contracts (requires / loop_invariant / ensures) & proving Dijkstra Weakest-Precondition VCs...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/contracts", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_verified ? "#34d399" : "#fbbf24";
+      const color = data.all_verified ? "#047857" : "#b45309";
       summary.innerHTML = `<span style="color:${color};">📜 Hoare Contracts & WP Verifier: ${data.proven_vcs}/${data.total_vcs} Verification Conditions proven · ${data.total_requires} requires · ${data.total_invariants} loop invariants · ${data.total_ensures} ensures (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -1976,10 +2631,9 @@
     });
 
     async function triggerConcolic(injectFlag) {
-      const drawer = document.getElementById("concolic-drawer");
+      openExclusiveDrawer("concolic-drawer", "concolic-btn");
       const summary = document.getElementById("concolic-summary");
       const cards = document.getElementById("concolic-cards");
-      drawer.style.display = "block";
       summary.textContent = "Running whitebox concolic path exploration & boundary-negation solver across all Hub functions...";
       cards.innerHTML = "";
 
@@ -1992,7 +2646,7 @@
       if (data.snapshot && injectFlag) {
         applySnapshot(data.snapshot, null);
       }
-      const color = data.branch_coverage_pct >= 80 ? "#34d399" : "#38bdf8";
+      const color = data.branch_coverage_pct >= 80 ? "#047857" : "#1d4ed8";
       summary.innerHTML = `<span style="color:${color};">🧭 Whitebox Concolic Explorer: ${data.total_paths} distinct execution paths · ${data.branch_coverage_pct}% branch coverage (${data.covered_branches}/${data.total_branches} branches) · ${data.synthesized_assertions_count} path-covering assertion(s) (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2011,16 +2665,15 @@
     document.getElementById("concolic-inject-btn").addEventListener("click", () => triggerConcolic(true));
 
     document.getElementById("security-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("security-drawer");
+      openExclusiveDrawer("security-drawer", "security-btn");
       const summary = document.getElementById("security-summary");
       const cards = document.getElementById("security-cards");
-      drawer.style.display = "block";
       summary.textContent = "Auditing Denning information-flow taint lattice, dominating sanitizers & constant-time side-channels...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/security", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_sinks_safe ? "#34d399" : "#fbbf24";
+      const color = data.all_sinks_safe ? "#047857" : "#b45309";
       summary.innerHTML = `<span style="color:${color};">🔒 Taint & Security Audit: ${data.safe_sinks}/${data.total_sinks} sensitive sinks guarded · ${data.unsanitized_sinks} unsanitized · ${data.total_sanitizers} sanitizer(s) · ${data.total_flows} flow edge(s) (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2040,10 +2693,9 @@
     });
 
     async function triggerEGraph(applyFlag) {
-      const drawer = document.getElementById("egraph-drawer");
+      openExclusiveDrawer("egraph-drawer", "egraph-btn");
       const summary = document.getElementById("egraph-summary");
       const cards = document.getElementById("egraph-cards");
-      drawer.style.display = "block";
       summary.textContent = "Running Equality Saturation, Congruence Closure & minimum-gas AST extraction...";
       cards.innerHTML = "";
 
@@ -2056,7 +2708,7 @@
       if (data.snapshot && applyFlag) {
         applySnapshot(data.snapshot, null);
       }
-      const color = data.translation_validated ? "#34d399" : "#f87171";
+      const color = data.translation_validated ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">🔮 E-Graph Superoptimizer: ${data.total_eclasses} E-Classes · ${data.total_enodes} E-Nodes · ${data.total_unions} congruence unions (${data.saturation_iterations} iters) · ${data.expressions_optimized} rewrite(s) · Gas: ${data.cost_before} → ${data.cost_after} (saved ${data.gas_saved}) · Validated: ${data.translation_validated} (${data.elapsed_ms}ms)</span>`;
 
       const rwCard = document.createElement("div");
@@ -2082,10 +2734,9 @@
     document.getElementById("egraph-apply-btn").addEventListener("click", () => triggerEGraph(true));
 
     async function triggerPeval(applyFlag) {
-      const drawer = document.getElementById("peval-drawer");
+      openExclusiveDrawer("peval-drawer", "peval-btn");
       const summary = document.getElementById("peval-summary");
       const cards = document.getElementById("peval-cards");
-      drawer.style.display = "block";
       summary.textContent = "Running Futamura interprocedural specialization, static branch folding & E-Graph superoptimization...";
       cards.innerHTML = "";
 
@@ -2098,7 +2749,7 @@
       if (data.snapshot && applyFlag) {
         applySnapshot(data.snapshot, null);
       }
-      const color = data.translation_validated ? "#34d399" : "#f87171";
+      const color = data.translation_validated ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">⚡ Futamura Partial Evaluator: ${data.specialized_calls} specialized call(s) · ${data.residual_functions_synthesized} residual fn(s) · ${data.static_branches_folded} static branch(es) folded · ${data.loops_unrolled} loop(s) unrolled · VM Steps: ${data.vm_steps_before} → ${data.vm_steps_after} · Gas: ${data.gas_before} → ${data.gas_after} (${data.elapsed_ms}ms)</span>`;
 
       const specCard = document.createElement("div");
@@ -2128,16 +2779,15 @@
     document.getElementById("peval-apply-btn").addEventListener("click", () => triggerPeval(true));
 
     document.getElementById("polyhedral-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("polyhedral-drawer");
+      openExclusiveDrawer("polyhedral-drawer", "polyhedral-btn");
       const summary = document.getElementById("polyhedral-summary");
       const cards = document.getElementById("polyhedral-cards");
-      drawer.style.display = "block";
       summary.textContent = "Analyzing affine iteration domains, Bernstein dependence vectors, associative monoid reductions & 13-spoke SIMD / Map-Reduce kernels...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/polyhedral", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.vectorizable_loops > 0 ? "#34d399" : "#38bdf8";
+      const color = data.vectorizable_loops > 0 ? "#047857" : "#1d4ed8";
       summary.innerHTML = `<span style="color:${color};">🧮 Polyhedral Loop Vectorizer: ${data.total_loops} loop(s) analyzed · ${data.vectorizable_loops} SIMD-vectorizable · ${data.map_reduce_loops} Map-Reduce parallelizable · ${data.total_reductions} associative monoid reduction(s) · Max 4-lane SIMD speedup: ${data.max_simd4_speedup}x (${data.elapsed_ms}ms)</span>`;
 
       (data.loops || []).forEach(lp => {
@@ -2158,16 +2808,15 @@
     });
 
     document.getElementById("wcet-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("wcet-drawer");
+      openExclusiveDrawer("wcet-drawer", "wcet-btn");
       const summary = document.getElementById("wcet-summary");
       const cards = document.getElementById("wcet-cards");
-      drawer.style.display = "block";
       summary.textContent = "Synthesizing Floyd-Turing well-founded ranking functions V(σ) & IPET symbolic BCET/WCET cycle bounds...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/wcet", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_terminating ? "#34d399" : "#f87171";
+      const color = data.all_terminating ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">⏳ Termination & IPET WCET Prover: ${data.proven_terminating_loops}/${data.total_loops_audited} loop(s) proven terminating · ${data.diverging_or_unproven_loops} unbounded/diverging · Module BCET(N=64): ${data.module_bcet_cycles_n64} cycles · WCET(N=64): ${data.module_wcet_cycles_n64} cycles (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2189,10 +2838,9 @@
     });
 
     async function triggerRegAlloc(kVal) {
-      const drawer = document.getElementById("regalloc-drawer");
+      openExclusiveDrawer("regalloc-drawer", "regalloc-btn");
       const summary = document.getElementById("regalloc-summary");
       const cards = document.getElementById("regalloc-cards");
-      drawer.style.display = "block";
       summary.textContent = `Running Chaitin-Briggs Kempe K=${kVal} graph coloring, Poletto-Sarkar linear scan & AArch64 / x86_64 codegen...`;
       cards.innerHTML = "";
 
@@ -2202,7 +2850,7 @@
         body: JSON.stringify({ k: String(kVal) })
       });
       const data = await res.json();
-      const color = data.total_spills === 0 ? "#34d399" : "#fbbf24";
+      const color = data.total_spills === 0 ? "#047857" : "#b45309";
       summary.innerHTML = `<span style="color:${color};">🎛 Chaitin-Briggs Register Allocator (K=${data.k_registers}): ${data.total_virtual_regs} virtual regs · ${data.total_interference_edges} interference edges · Max pressure: ${data.max_register_pressure} · Coalesced moves: ${data.total_coalesced_moves} · Spills: ${data.total_spills} · AArch64: ${data.total_aarch64_insts} insts · x86_64: ${data.total_x86_64_insts} insts (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2223,16 +2871,15 @@
     document.getElementById("regalloc-k3-btn").addEventListener("click", () => triggerRegAlloc(3));
 
     document.getElementById("escape-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("escape-drawer");
+      openExclusiveDrawer("escape-drawer", "escape-btn");
       const summary = document.getElementById("escape-summary");
       const cards = document.getElementById("escape-cards");
-      drawer.style.display = "block";
       summary.textContent = "Auditing heap allocation escape lattice, Scalar Replacement of Aggregates (SROA) & RVO across 13 languages...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/escape", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.heap_reduction_pct >= 80 ? "#34d399" : "#38bdf8";
+      const color = data.heap_reduction_pct >= 80 ? "#047857" : "#1d4ed8";
       summary.innerHTML = `<span style="color:${color};">📦 Escape & SROA Analyzer: ${data.total_alloc_sites} allocation site(s) · ${data.stack_promoted_sites} stack/SROA promoted · ${data.rvo_eliminated_sites} RVO return-slot · ${data.sroa_scalarized_fields} scalarized field(s) · ${data.total_bytes_saved_per_run}B heap saved/run (${data.heap_reduction_pct}% heap elision, ${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2253,16 +2900,15 @@
     });
 
     document.getElementById("microarch-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("microarch-drawer");
+      openExclusiveDrawer("microarch-drawer", "microarch-btn");
       const summary = document.getElementById("microarch-summary");
       const cards = document.getElementById("microarch-cards");
-      drawer.style.display = "block";
       summary.textContent = "Simulating 4-wide Out-of-Order Superscalar ROB, 64-entry 2-Bit Bimodal Branch Predictor & 32KB 8-Way Set-Associative L1D Cache...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/microarch", { method: "POST", body: "{}" });
       const data = await res.json();
-      summary.innerHTML = `<span style="color:#34d399;">🖥 Superscalar Hardware Sim: ${data.total_uops_retired} μops retired · ${data.total_in_order_cycles}c In-Order ➔ ${data.total_ooo_cycles}c Out-of-Order (IPC: ${data.superscalar_ipc} · ${data.ooo_speedup}x OoO speedup) · Branch Acc: ${data.branch_accuracy_pct}% (${data.branch_mispredictions} mispredicts) · L1D Hit Rate: ${data.l1d_hit_rate_pct}% (${data.elapsed_ms}ms)</span>`;
+      summary.innerHTML = `<span style="color:#047857;">🖥 Superscalar Hardware Sim: ${data.total_uops_retired} μops retired · ${data.total_in_order_cycles}c In-Order ➔ ${data.total_ooo_cycles}c Out-of-Order (IPC: ${data.superscalar_ipc} · ${data.ooo_speedup}x OoO speedup) · Branch Acc: ${data.branch_accuracy_pct}% (${data.branch_mispredictions} mispredicts) · L1D Hit Rate: ${data.l1d_hit_rate_pct}% (${data.elapsed_ms}ms)</span>`;
 
       const brCard = document.createElement("div");
       brCard.className = "run-card";
@@ -2293,16 +2939,15 @@
     });
 
     document.getElementById("schedule-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("schedule-drawer");
+      openExclusiveDrawer("schedule-drawer", "schedule-btn");
       const summary = document.getElementById("schedule-summary");
       const cards = document.getElementById("schedule-cards");
-      drawer.style.display = "block";
       summary.textContent = "Building Instruction Data-Dependence DAG (RAW/WAR/WAW) & running Gibbons-Muchnick Critical-Path List Scheduling...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/schedule", { method: "POST", body: "{}" });
       const data = await res.json();
-      summary.innerHTML = `<span style="color:#34d399;">📐 Critical-Path List Scheduler: ${data.total_instructions} instructions · ${data.total_dag_edges} DAG edges · ${data.total_cycles_before}c ➔ ${data.total_cycles_after}c (${data.total_bubbles_eliminated} stall bubble(s) eliminated · ${data.total_reordered_insts} reordered · ${data.overall_speedup}x speedup, ${data.elapsed_ms}ms)</span>`;
+      summary.innerHTML = `<span style="color:#047857;">📐 Critical-Path List Scheduler: ${data.total_instructions} instructions · ${data.total_dag_edges} DAG edges · ${data.total_cycles_before}c ➔ ${data.total_cycles_after}c (${data.total_bubbles_eliminated} stall bubble(s) eliminated · ${data.total_reordered_insts} reordered · ${data.overall_speedup}x speedup, ${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
         const card = document.createElement("div");
@@ -2318,10 +2963,9 @@
     });
 
     async function triggerAutoDiff(injectFlag) {
-      const drawer = document.getElementById("autodiff-drawer");
+      openExclusiveDrawer("autodiff-drawer", "autodiff-btn");
       const summary = document.getElementById("autodiff-summary");
       const cards = document.getElementById("autodiff-cards");
-      drawer.style.display = "block";
       summary.textContent = "Computing Forward-Mode Dual Numbers (a + bε) & Reverse-Mode Wengert Tape Adjoints across all Hub functions...";
       cards.innerHTML = "";
 
@@ -2334,7 +2978,7 @@
       if (data.snapshot && injectFlag) {
         applySnapshot(data.snapshot, null);
       }
-      const color = data.all_gradients_verified ? "#34d399" : "#38bdf8";
+      const color = data.all_gradients_verified ? "#047857" : "#1d4ed8";
       summary.innerHTML = `<span style="color:${color};">∇ Forward/Reverse AutoDiff: ${data.verified_partials}/${data.total_partials} partials verified (Dual == Reverse Tape) · ${data.total_tape_nodes} Wengert tape nodes · Max Lipschitz L=${data.max_lipschitz_bound} · Synthesized \`${data.synthesized_grad_fn_name}\` (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2361,16 +3005,15 @@
     document.getElementById("autodiff-inject-btn").addEventListener("click", () => triggerAutoDiff(true));
 
     document.getElementById("stability-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("stability-drawer");
+      openExclusiveDrawer("stability-drawer", "stability-btn");
       const summary = document.getElementById("stability-summary");
       const cards = document.getElementById("stability-cards");
-      drawer.style.display = "block";
       summary.textContent = "Auditing condition number κ_f, Lipschitz bound L_f, truncating division quantization & 64-bit overflow hazards...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/stability", { method: "POST", body: "{}" });
       const data = await res.json();
-      summary.innerHTML = `<span style="color:#34d399;">🔬 Numerical Stability & Lipschitz Auditor: ${data.total_functions} functions · Max Condition κ=${data.max_condition_number} · Max Lipschitz L=${data.max_lipschitz_constant} · ${data.quantization_sites} quantization site(s) · ${data.overflow_sites} overflow guard site(s) (${data.elapsed_ms}ms)</span>`;
+      summary.innerHTML = `<span style="color:#047857;">🔬 Numerical Stability & Lipschitz Auditor: ${data.total_functions} functions · Max Condition κ=${data.max_condition_number} · Max Lipschitz L=${data.max_lipschitz_constant} · ${data.quantization_sites} quantization site(s) · ${data.overflow_sites} overflow guard site(s) (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
         const card = document.createElement("div");
@@ -2390,16 +3033,15 @@
     });
 
     document.getElementById("actors-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("actors-drawer");
+      openExclusiveDrawer("actors-drawer", "actors-btn");
       const summary = document.getElementById("actors-summary");
       const cards = document.getElementById("actors-cards");
-      drawer.style.display = "block";
       summary.textContent = "Auditing Lamport Vector Clocks VC(e), Happens-Before (→) ordering, Wait-For Graph Deadlock Freedom & 13-Spoke Actor Lowerings...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/actors", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = (data.all_data_race_free && data.all_deadlock_free) ? "#34d399" : "#f87171";
+      const color = (data.all_data_race_free && data.all_deadlock_free) ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">📡 Lamport Vector-Clock & Actor Verifier: ${data.total_actor_stages} actor stage(s) · ${data.total_vc_events} Vector-Clock events · ${data.total_races_detected} data race(s) · ${data.total_wait_for_cycles} deadlock cycle(s) · DRF=${data.all_data_race_free} (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2420,16 +3062,15 @@
     });
 
     document.getElementById("modelcheck-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("modelcheck-drawer");
+      openExclusiveDrawer("modelcheck-drawer", "modelcheck-btn");
       const summary = document.getElementById("modelcheck-summary");
       const cards = document.getElementById("modelcheck-cards");
-      drawer.style.display = "block";
       summary.textContent = "Exploring Kripke state space M=(S, S0, R, L), proving Temporal Safety (□I), Liveness (□◇) & Linearizability, and synthesizing TLA+ specs...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/modelcheck", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_verified ? "#34d399" : "#f87171";
+      const color = data.all_verified ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">📐 TLA+ & Bounded Model Checker: ${data.total_reachable_states} reachable state(s) · ${data.total_transitions} transition(s) · ${data.verified_properties}/${data.total_properties} temporal & linearizability properties proven (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2446,16 +3087,15 @@
     });
 
     document.getElementById("zk-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("zk-drawer");
+      openExclusiveDrawer("zk-drawer", "zk-btn");
       const summary = document.getElementById("zk-summary");
       const cards = document.getElementById("zk-cards");
-      drawer.style.display = "block";
       summary.textContent = "Arithmetizing Hub AST into Rank-1 Constraint System (R1CS) <A_i, w> * <B_i, w> == <C_i, w> (mod p) & verifying Zero-Knowledge Witness...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/zk", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_circuits_satisfied ? "#34d399" : "#f87171";
+      const color = data.all_circuits_satisfied ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">🔐 ZK R1CS Circuit Prover (${data.field_modulus_str}): ${data.total_wires} wires · ${data.satisfied_constraints}/${data.total_constraints} R1CS constraints satisfied (100% <A_i, w> * <B_i, w> ≡ <C_i, w> mod p, ${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2475,16 +3115,15 @@
     });
 
     document.getElementById("sql-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("sql-drawer");
+      openExclusiveDrawer("sql-drawer", "sql-btn");
       const summary = document.getElementById("sql-summary");
       const cards = document.getElementById("sql-cards");
-      drawer.style.display = "block";
       summary.textContent = "Lifting Hub loops into Relational Algebra (σ, π, Γ), applying Selection Pushdown & synthesizing ANSI SQL + 13-Spoke DataFrame queries...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/sql", { method: "POST", body: "{}" });
       const data = await res.json();
-      summary.innerHTML = `<span style="color:#34d399;">🗄 Relational Algebra & Vectorized SQL Optimizer: ${data.query_lifted_functions}/${data.total_functions} functions lifted · ${data.total_pushed_predicates} selection pushdown(s) · Volcano ${data.total_volcano_cycles}c ➔ Vectorized Columnar ${data.total_columnar_cycles}c (${data.overall_columnar_speedup}x speedup, ${data.elapsed_ms}ms)</span>`;
+      summary.innerHTML = `<span style="color:#047857;">🗄 Relational Algebra & Vectorized SQL Optimizer: ${data.query_lifted_functions}/${data.total_functions} functions lifted · ${data.total_pushed_predicates} selection pushdown(s) · Volcano ${data.total_volcano_cycles}c ➔ Vectorized Columnar ${data.total_columnar_cycles}c (${data.overall_columnar_speedup}x speedup, ${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
         const card = document.createElement("div");
@@ -2504,16 +3143,15 @@
     });
 
     document.getElementById("refinement-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("refinement-drawer");
+      openExclusiveDrawer("refinement-drawer", "refinement-btn");
       const summary = document.getElementById("refinement-summary");
       const cards = document.getElementById("refinement-cards");
-      drawer.style.display = "block";
       summary.textContent = "Inferring Liquid Refinement Types { ν: T | φ(ν) }, solving Constrained Horn Clauses (CHC) & synthesizing 13-Spoke Dependent / Branded Types...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/refinement", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_subtypes_verified ? "#34d399" : "#f87171";
+      const color = data.all_subtypes_verified ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">💎 Liquid Refinement Type & CHC Prover: ${data.total_refined_bindings} refined bindings · ${data.total_qualifiers_inferred} qualifiers · ${data.discharged_horn_clauses}/${data.total_horn_clauses} Constrained Horn Clauses discharged (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2537,16 +3175,15 @@
     });
 
     document.getElementById("prob-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("prob-drawer");
+      openExclusiveDrawer("prob-drawer", "prob-btn");
       const summary = document.getElementById("prob-summary");
       const cards = document.getElementById("prob-cards");
-      drawer.style.display = "block";
       summary.textContent = "Running Metropolis-Hastings MCMC particles & computing Shannon Entropy H(X), H(Y), Conditional H(X|Y) & Mutual Information I(X; Y)...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/prob", { method: "POST", body: "{}" });
       const data = await res.json();
-      summary.innerHTML = `<span style="color:#34d399;">🎲 MCMC & Quantitative Information Flow (QIF): ${data.total_mcmc_samples} MCMC particles · Max Output Entropy H(Y)=${data.max_output_entropy_bits} bits · Max Mutual Information I(X;Y)=${data.max_mutual_info_bits} bits (${data.elapsed_ms}ms)</span>`;
+      summary.innerHTML = `<span style="color:#047857;">🎲 MCMC & Quantitative Information Flow (QIF): ${data.total_mcmc_samples} MCMC particles · Max Output Entropy H(Y)=${data.max_output_entropy_bits} bits · Max Mutual Information I(X;Y)=${data.max_mutual_info_bits} bits (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
         const card = document.createElement("div");
@@ -2571,16 +3208,15 @@
     });
 
     document.getElementById("quantum-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("quantum-drawer");
+      openExclusiveDrawer("quantum-drawer", "quantum-btn");
       const summary = document.getElementById("quantum-summary");
       const cards = document.getElementById("quantum-cards");
-      drawer.style.display = "block";
       summary.textContent = "Compiling Hub functions into Reversible Bennett-Toffoli Quantum Circuits (F ➔ Copy ➔ F† Uncomputation) & OpenQASM 3.0...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/quantum", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_ancillas_uncomputed ? "#34d399" : "#f87171";
+      const color = data.all_ancillas_uncomputed ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">⚛ Reversible Quantum Circuit Compiler: ${data.total_qubits_allocated} qubits · ${data.total_reversible_gates} reversible gates (${data.total_toffoli_gates} Toffoli / ${data.total_clifford_t_gates} Clifford+T) · Garbage-Free Uncomputed=${data.all_ancillas_uncomputed} · Max Grover Speedup=${data.max_grover_speedup}x (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2605,16 +3241,15 @@
     });
 
     document.getElementById("automata-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("automata-drawer");
+      openExclusiveDrawer("automata-drawer", "automata-btn");
       const summary = document.getElementById("automata-summary");
       const cards = document.getElementById("automata-cards");
-      drawer.style.display = "block";
       summary.textContent = "Running Angluin L* active observation-table learning & Myhill-Nerode equivalence-class DFA minimization...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/automata", { method: "POST", body: "{}" });
       const data = await res.json();
-      summary.innerHTML = `<span style="color:#34d399;">🤖 Angluin L* & Myhill-Nerode Minimal DFA Synthesizer: ${data.total_unminimized_states} raw states ➔ ${data.total_minimal_states} minimal states (${data.total_lstar_queries} L* queries · ${data.overall_branchless_speedup}x branchless table speedup, ${data.elapsed_ms}ms)</span>`;
+      summary.innerHTML = `<span style="color:#047857;">🤖 Angluin L* & Myhill-Nerode Minimal DFA Synthesizer: ${data.total_unminimized_states} raw states ➔ ${data.total_minimal_states} minimal states (${data.total_lstar_queries} L* queries · ${data.overall_branchless_speedup}x branchless table speedup, ${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
         const card = document.createElement("div");
@@ -2644,16 +3279,15 @@
     });
 
     document.getElementById("hls-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("hls-drawer");
+      openExclusiveDrawer("hls-drawer", "hls-btn");
       const summary = document.getElementById("hls-summary");
       const cards = document.getElementById("hls-cards");
-      drawer.style.display = "block";
       summary.textContent = "Scheduling Hub CDFG via ASAP/ALAP Mobility into Finite-State Machine with Datapath (FSMD) & generating IEEE-1800 SystemVerilog RTL...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/hls", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_pipelined_ii_1 ? "#34d399" : "#fcd34d";
+      const color = data.all_pipelined_ii_1 ? "#047857" : "#b45309";
       summary.innerHTML = `<span style="color:${color};">🔌 High-Level Synthesis (HLS) SystemVerilog RTL: ${data.total_cdfg_ops} CDFG ops · ${data.total_fsmd_states} FSMD states · LUT6=${data.total_lut6} · FF=${data.total_flip_flops} · DSP48E2=${data.total_dsp48} · Min F_max=${data.min_fmax_mhz} MHz (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2677,16 +3311,15 @@
     });
 
     document.getElementById("gpu-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("gpu-drawer");
+      openExclusiveDrawer("gpu-drawer", "gpu-btn");
       const summary = document.getElementById("gpu-summary");
       const cards = document.getElementById("gpu-cards");
-      drawer.style.display = "block";
       summary.textContent = "Synthesizing 32-Lane Warp SIMT GPU Kernels (CUDA PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C) & auditing warp divergence / 32-bank shared memory...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/gpu", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.total_bank_conflicts === 0 ? "#34d399" : "#fcd34d";
+      const color = data.total_bank_conflicts === 0 ? "#047857" : "#b45309";
       summary.innerHTML = `<span style="color:${color};">🚀 SIMT GPU Compute Kernel Synthesizer: ${data.total_gpu_kernels} kernels · Avg SM Occupancy=${data.avg_sm_occupancy_pct}% · Avg Warp Efficiency=${data.avg_warp_efficiency_pct}% · Bank Conflicts=${data.total_bank_conflicts} · Max GPU Speedup=${data.max_gpu_speedup}x (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2720,16 +3353,15 @@
     });
 
     document.getElementById("fhe-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("fhe-drawer");
+      openExclusiveDrawer("fhe-drawer", "fhe-btn");
       const summary = document.getElementById("fhe-summary");
       const cards = document.getElementById("fhe-cards");
-      drawer.style.display = "block";
       summary.textContent = "Compiling Hub functions into Fully Homomorphic Encryption (FHE) Ring-LWE Blinded Circuits & tracking RNS noise budget...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/fhe", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_decryptions_verified ? "#34d399" : "#f87171";
+      const color = data.all_decryptions_verified ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">🛡 FHE Ring-LWE Blinded Circuit Compiler: ${data.total_fhe_gates} gates · ${data.total_relinearizations} relinearizations · ${data.total_oblivious_muxes} oblivious PBS muxes · Max Depth=${data.max_multiplicative_depth} · Min Noise Margin=${data.min_remaining_noise_bits} bits · Decrypt Verified=${data.all_decryptions_verified} (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2755,16 +3387,15 @@
     });
 
     document.getElementById("seplogic-btn").addEventListener("click", async () => {
-      const drawer = document.getElementById("seplogic-drawer");
+      openExclusiveDrawer("seplogic-drawer", "seplogic-btn");
       const summary = document.getElementById("seplogic-summary");
       const cards = document.getElementById("seplogic-cards");
-      drawer.style.display = "block";
       summary.textContent = "Running Symbolic Execution over Reynolds Separation Logic Heaps (emp, x ↦ v, P * Q, P -* Q) & Boyland Fractional Permissions...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/seplogic", { method: "POST", body: "{}" });
       const data = await res.json();
-      const color = data.all_memory_safe ? "#34d399" : "#f87171";
+      const color = data.all_memory_safe ? "#047857" : "#be123c";
       summary.innerHTML = `<span style="color:${color};">🧩 Reynolds Separation Logic Prover: ${data.total_heap_cells} disjoint heap cells (ℓ_i ↦ v_i) · ${data.total_proof_steps} Frame-Rule steps · UAF=${data.use_after_free_bugs} · DoubleFree=${data.double_free_bugs} · Leaks=${data.memory_leak_bugs} · Aliasing=${data.aliasing_bugs} (${data.elapsed_ms}ms)</span>`;
 
       (data.functions || []).forEach(fn => {
@@ -2818,27 +3449,26 @@
     });
 
     async function triggerRunAll() {
-      const drawer = document.getElementById("run-drawer");
+      openExclusiveDrawer("run-drawer", "run-btn");
       const summary = document.getElementById("run-summary");
       const cards = document.getElementById("run-cards");
-      drawer.style.display = "block";
       summary.textContent = "Executing Hub VM + Wasm (V8 JIT) + rustc + zig + clang -std=c11 + clang++ (PCH) + swiftc + javac + go + python3 + ruby + luajit + perl + node in parallel...";
       cards.innerHTML = "";
 
       const res = await fetch("/api/run", { method: "POST", body: "{}" });
       const data = await res.json();
       if (data.outputs_match) {
-        summary.innerHTML = `<span style="color:#34d399;">✓ 14/14 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
+        summary.innerHTML = `<span style="color:#047857;">✓ 14/14 Execution Engines Succeeded (${data.wall_time_ms}ms parallel wall time) — Byte-for-Byte Identical Output</span>`;
       } else {
-        summary.innerHTML = `<span style="color:#f87171;">Runtime Check Completed (${data.wall_time_ms}ms — inspect outputs below)</span>`;
+        summary.innerHTML = `<span style="color:#be123c;">Runtime Check Completed (${data.wall_time_ms}ms — inspect outputs below)</span>`;
       }
 
       (data.results || []).forEach(r => {
         const card = document.createElement("div");
         card.className = "run-card";
         const badge = r.ok
-          ? `<span style="color:#34d399;">✓ ${r.duration_ms}ms</span>`
-          : `<span style="color:#f87171;">✗ failed (${r.duration_ms}ms)</span>`;
+          ? `<span style="color:#047857;">✓ ${r.duration_ms}ms</span>`
+          : `<span style="color:#be123c;">✗ failed (${r.duration_ms}ms)</span>`;
         const outText = (r.stdout || "") + (r.stderr ? `\n[stderr]\n${r.stderr}` : "");
         card.innerHTML = `<div style="display:flex;justify-content:space-between;"><strong>${r.language}</strong>${badge}</div><pre></pre>`;
         card.querySelector("pre").textContent = outText.trim() || "(no stdout)";
@@ -2855,6 +3485,7 @@
     });
 
     (async function init() {
+      applyLayoutMode("split");
       const res = await fetch("/api/state");
       const data = await res.json();
       const sel = document.getElementById("sample-select");
