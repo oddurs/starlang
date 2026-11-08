@@ -1289,8 +1289,18 @@ impl EGraph {
         }
         let (cost, node) = best.get(&root)?;
         let expr = match node {
-            ENode::Int(v) => Expr::Int(*v),
-            ENode::FloatBits(b) => Expr::Float(f64::from_bits(*b)),
+            ENode::Int(v) => canonical_int_expr(*v),
+            ENode::FloatBits(b) => {
+                let f = f64::from_bits(*b);
+                if f < 0.0 {
+                    Expr::Unary {
+                        op: UnaryOp::Neg,
+                        expr: Box::new(Expr::Float(-f)),
+                    }
+                } else {
+                    Expr::Float(f)
+                }
+            }
             ENode::Bool(b) => Expr::Bool(*b),
             ENode::Str(s) => Expr::Str(s.clone()),
             ENode::Var(v) => Expr::Var(v.clone()),
@@ -2059,7 +2069,7 @@ fn extract_and_record(
     let root = eg.find(cid);
     let (extracted, ext_cost) = eg.extract_expr(root, best, orig);
 
-    let (chosen, chosen_cost) = if ext_cost < orig_cost {
+    let (chosen, chosen_cost) = if ext_cost < orig_cost && extracted != *orig {
         (extracted, ext_cost)
     } else {
         (orig.clone(), orig_cost)
@@ -2246,15 +2256,47 @@ pub fn partial_eval_module(hub: &HubModule) -> PartialEvalReport {
     }
 }
 
+fn const_int_lit(e: &Expr) -> Option<i64> {
+    match e {
+        Expr::Int(v) => Some(*v),
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: inner,
+        } => {
+            if let Expr::Int(v) = inner.as_ref() {
+                v.checked_neg()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn canonical_int_expr(v: i64) -> Expr {
+    if v < 0 && v > i64::MIN {
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: Box::new(Expr::Int(-v)),
+        }
+    } else {
+        Expr::Int(v)
+    }
+}
+
 fn is_static_literal(expr: &Expr) -> bool {
-    matches!(
-        expr,
+    match expr {
         Expr::Int(_)
-            | Expr::Float(_)
-            | Expr::Bool(_)
-            | Expr::Str(_)
-            | Expr::EnumVariant { .. }
-    )
+        | Expr::Float(_)
+        | Expr::Bool(_)
+        | Expr::Str(_)
+        | Expr::EnumVariant { .. } => true,
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: inner,
+        } => matches!(inner.as_ref(), Expr::Int(_) | Expr::Float(_)),
+        _ => false,
+    }
 }
 
 fn collect_modified_vars(stmts: &[Stmt], out: &mut BTreeSet<String>) {
@@ -2604,9 +2646,9 @@ fn peval_stmts(
                     loops_unrolled,
                     alloc_id,
                 );
-                if let (Expr::Int(lo), Expr::Int(hi)) = (&s, &e) {
+                if let (Some(lo), Some(hi)) = (const_int_lit(&s), const_int_lit(&e)) {
                     let has_inner_let = body.iter().any(|st| matches!(st, Stmt::Let { .. }));
-                    if let Some(trip) = hi.checked_sub(*lo) {
+                    if let Some(trip) = hi.checked_sub(lo) {
                         if (0..=4).contains(&trip)
                             && !has_inner_let
                             && !contains_break_continue_or_return(body)
@@ -2618,8 +2660,8 @@ fn peval_stmts(
                             for mv in &mod_vars {
                                 env.remove(mv);
                             }
-                            for idx in *lo..*hi {
-                                env.insert(var.clone(), Expr::Int(idx));
+                            for idx in lo..hi {
+                                env.insert(var.clone(), canonical_int_expr(idx));
                                 let iter_stmts = peval_stmts(
                                     caller_name,
                                     body,
@@ -2867,7 +2909,9 @@ fn try_match_static_arm<'a>(
                     variant: v2,
                 },
             ) if e1 == e2 && v1 == v2 => return Some(&arm.body),
-            (MatchPat::Int(a), Expr::Int(b)) if a == b => return Some(&arm.body),
+            (MatchPat::Int(a), other) if const_int_lit(other) == Some(*a) => {
+                return Some(&arm.body)
+            }
             (MatchPat::Str(a), Expr::Str(b)) if a == b => return Some(&arm.body),
             _ => {}
         }
@@ -3270,14 +3314,20 @@ fn peval_expr(
 
                             for (p, a) in callee.params.iter().zip(eval_args.iter()) {
                                 if is_static_literal(a) {
-                                    let tag = match a {
-                                        Expr::Int(v) if *v >= 0 => format!("i{}", v),
-                                        Expr::Int(v) => format!("in{}", v.unsigned_abs()),
-                                        Expr::EnumVariant { variant, .. } => {
-                                            variant.to_lowercase()
+                                    let tag = if let Some(v) = const_int_lit(a) {
+                                        if v >= 0 {
+                                            format!("i{}", v)
+                                        } else {
+                                            format!("in{}", v.unsigned_abs())
                                         }
-                                        Expr::Bool(b) => format!("b{}", b),
-                                        _ => "const".to_string(),
+                                    } else {
+                                        match a {
+                                            Expr::EnumVariant { variant, .. } => {
+                                                variant.to_lowercase()
+                                            }
+                                            Expr::Bool(b) => format!("b{}", b),
+                                            _ => "const".to_string(),
+                                        }
                                     };
                                     suffix_parts.push(tag);
                                     spec_env.insert(p.name.clone(), a.clone());

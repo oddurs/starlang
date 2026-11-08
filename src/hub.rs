@@ -1209,9 +1209,12 @@ pub fn infer_expr_type(
         Expr::Call { func, .. } => fn_ret_types.get(func).cloned(),
         Expr::Intrinsic(intr) => match intr.as_ref() {
             Intrinsic::Len(_) => Some(Type::Int),
-            Intrinsic::Min(a, _) | Intrinsic::Max(a, _) | Intrinsic::Abs(a) => {
-                infer_expr_type(a, env, fn_ret_types, struct_fields, enum_names)
+            Intrinsic::Min(a, b) | Intrinsic::Max(a, b) => {
+                infer_expr_type(a, env, fn_ret_types, struct_fields, enum_names).or_else(|| {
+                    infer_expr_type(b, env, fn_ret_types, struct_fields, enum_names)
+                })
             }
+            Intrinsic::Abs(a) => infer_expr_type(a, env, fn_ret_types, struct_fields, enum_names),
             Intrinsic::Push { .. } | Intrinsic::Print(_) => Some(Type::Void),
             Intrinsic::Contains { .. } => Some(Type::Bool),
             Intrinsic::Upper(_) | Intrinsic::Lower(_) | Intrinsic::ToStr(_) => Some(Type::Str),

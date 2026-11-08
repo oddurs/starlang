@@ -2829,4 +2829,64 @@ fn main() {
         "Expected duplicate field diagnostic, got: {:?}",
         dup_snap.semantic_diagnostics
     );
+
+    // 11. Star S-Expr identifier atoms `inf` and `nan` parse as variables rather than f64::INFINITY/NAN,
+    // and Lua emits `star_eql` for empty-list comparisons and parenthesizes list literal indexing
+    let inf_var_py = "\
+def check_inf_and_empty_list(inf: int, nan: int) -> bool:
+    xs: list[int] = []
+    first: int = [10, 20][0]
+    return (xs == []) and (inf + nan + first == 42)
+
+def main() -> None:
+    print(check_inf_and_empty_list(12, 20))
+";
+    let mut inf_eng = StarEngine::from_source(SpokeId::Python, inf_var_py).unwrap();
+    let lua_inf = inf_eng.project(SpokeId::Lua);
+    assert!(
+        lua_inf.contains("star_eql(xs, {})"),
+        "Lua spoke must emit `star_eql` when comparing list variable to empty list literal: {}",
+        lua_inf
+    );
+    assert!(
+        lua_inf.contains("({ 10, 20 })[1]"),
+        "Lua spoke must parenthesize table constructor before indexing: {}",
+        lua_inf
+    );
+    for spoke in SpokeId::ALL {
+        let code = inf_eng.project(spoke);
+        let snap = inf_eng
+            .apply_edit(spoke, &code)
+            .unwrap_or_else(|d| panic!("GetPut failed on {:?} for inf/nan/empty-list: {}", spoke, d));
+        assert!(
+            snap.semantic_diagnostics.is_empty(),
+            "Unexpected semantic diagnostics after {:?} round-trip: {:?}",
+            spoke,
+            snap.semantic_diagnostics
+        );
+        assert_eq!(snap.live_eval.stdout.trim(), "true");
+    }
+
+    // 12. Futamura partial evaluator specializes negative integer constant arguments (`in5`)
+    let pe_neg_py = "\
+def scale_offset(x: int, bias: int) -> int:
+    if bias < 0:
+        return x - (-bias)
+    return x + bias
+
+def main() -> None:
+    for i in range(0, 3):
+        print(scale_offset(i * 10, -5))
+";
+    let mut pe_neg_eng = StarEngine::from_source(SpokeId::Python, pe_neg_py).unwrap();
+    let (pe_neg_rep, _) = pe_neg_eng.partial_eval(true);
+    assert!(pe_neg_rep.translation_validated);
+    assert!(
+        pe_neg_rep
+            .specializations
+            .iter()
+            .any(|s| s.specialized_name.contains("scale_offset_spec_in5")),
+        "Expected Futamura specialization for negative constant bias=-5, got: {:?}",
+        pe_neg_rep.specializations
+    );
 }

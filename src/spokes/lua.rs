@@ -434,7 +434,11 @@ impl<'a> LuaFormatter<'a> {
                 let resolved_ty = ty
                     .clone()
                     .or_else(|| self.expr_type(value))
-                    .or_else(|| list_hints.get(name).cloned());
+                    .or_else(|| list_hints.get(name).cloned())
+                    .or_else(|| match value {
+                        Expr::List(_) => Some(Type::List(Box::new(Type::Int))),
+                        _ => None,
+                    });
                 if let Some(t) = resolved_ty {
                     self.env.insert(name.clone(), t);
                 }
@@ -704,7 +708,14 @@ impl<'a> LuaFormatter<'a> {
                 }
             }
             Expr::FieldAccess { base, field } => {
-                let b = if matches!(base.as_ref(), Expr::Binary { .. } | Expr::Unary { .. }) {
+                let b = if matches!(
+                    base.as_ref(),
+                    Expr::Binary { .. }
+                        | Expr::Unary { .. }
+                        | Expr::List(_)
+                        | Expr::Str(_)
+                        | Expr::StructInit { .. }
+                ) {
                     format!("({})", self.fmt_expr(base))
                 } else {
                     self.fmt_expr(base)
@@ -712,7 +723,14 @@ impl<'a> LuaFormatter<'a> {
                 format!("{}.{}", b, field)
             }
             Expr::Index { base, index } => {
-                let b = if matches!(base.as_ref(), Expr::Binary { .. } | Expr::Unary { .. }) {
+                let b = if matches!(
+                    base.as_ref(),
+                    Expr::Binary { .. }
+                        | Expr::Unary { .. }
+                        | Expr::List(_)
+                        | Expr::Str(_)
+                        | Expr::StructInit { .. }
+                ) {
                     format!("({})", self.fmt_expr(base))
                 } else {
                     self.fmt_expr(base)
@@ -765,7 +783,15 @@ impl<'a> LuaFormatter<'a> {
                             || self
                                 .expr_type(right)
                                 .map(|t| self.is_deep_eq_type(&t))
-                                .unwrap_or(false);
+                                .unwrap_or(false)
+                            || matches!(
+                                left.as_ref(),
+                                Expr::List(_) | Expr::StructInit { .. }
+                            )
+                            || matches!(
+                                right.as_ref(),
+                                Expr::List(_) | Expr::StructInit { .. }
+                            );
                         if deep {
                             let fn_name = if *op == BinOp::Eq {
                                 "star_eql"

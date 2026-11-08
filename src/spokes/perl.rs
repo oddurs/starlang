@@ -397,14 +397,18 @@ impl<'a> PerlFormatter<'a> {
                 let resolved_ty = ty
                     .clone()
                     .or_else(|| self.expr_type(value))
-                    .or_else(|| list_hints.get(name).cloned());
+                    .or_else(|| list_hints.get(name).cloned())
+                    .or_else(|| match value {
+                        Expr::List(_) => Some(Type::List(Box::new(Type::Int))),
+                        _ => None,
+                    });
                 if let Some(t) = &resolved_ty {
                     self.env.insert(name.clone(), t.clone());
                 }
                 if let Some(explicit_ty) = ty {
                     out.push_str(&format!("{}# @type {}\n", pad, self.fmt_type(explicit_ty)));
                 } else if matches!(value, Expr::List(items) if items.is_empty()) {
-                    if let Some(inferred) = &resolved_ty {
+                    if let Some(inferred) = list_hints.get(name) {
                         out.push_str(&format!("{}# @type {}\n", pad, self.fmt_type(inferred)));
                     }
                 }
@@ -667,7 +671,8 @@ impl<'a> PerlFormatter<'a> {
             }
             Expr::Unary { op, expr: inner } => {
                 let inner_str = self.fmt_expr(inner);
-                let wrap = matches!(inner.as_ref(), Expr::Binary { .. } | Expr::Unary { .. });
+                let wrap = matches!(inner.as_ref(), Expr::Binary { .. } | Expr::Unary { .. })
+                    || (*op == UnaryOp::Neg && inner_str.starts_with('-'));
                 match op {
                     UnaryOp::Neg => {
                         if wrap {

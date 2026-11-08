@@ -487,6 +487,7 @@ fn lex_sexpr(src: &str) -> Result<Vec<STok>, Diagnostic> {
             && chars[i] != '('
             && chars[i] != ')'
             && chars[i] != ';'
+            && chars[i] != '"'
         {
             i += 1;
             col += 1;
@@ -1103,8 +1104,13 @@ impl SExprParser {
                 if let Ok(i) = a.parse::<i64>() {
                     return Ok(Expr::Int(i));
                 }
-                if let Ok(f) = a.parse::<f64>() {
-                    return Ok(Expr::Float(f));
+                let looks_numeric = a.starts_with(|c: char| c.is_ascii_digit())
+                    || (a.starts_with('-')
+                        && a.chars().nth(1).is_some_and(|c| c.is_ascii_digit()));
+                if looks_numeric {
+                    if let Ok(f) = a.parse::<f64>() {
+                        return Ok(Expr::Float(f));
+                    }
                 }
                 if let Some((ename, vname)) = a.split_once("::") {
                     return Ok(Expr::EnumVariant {
