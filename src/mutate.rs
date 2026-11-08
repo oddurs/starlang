@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use crate::eval::{eval_fn_call, eval_tests, Value};
 use crate::hub::{
-    AssignOp, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, Metadata, Stmt, TestDecl, Type,
-    UnaryOp,
+    AssignOp, AssignTarget, BinOp, Expr, FnDecl, HubModule, Intrinsic, Item, Metadata, Stmt,
+    TestDecl, Type, UnaryOp,
 };
 use crate::lens::SpokeId;
 use crate::reconcile::reconcile_modules;
@@ -387,7 +387,12 @@ fn collect_stmt_specs(stmts: &[Stmt], site: &mut usize, out: &mut Vec<MutationSp
     for stmt in stmts {
         match stmt {
             Stmt::Let { value, .. } => collect_expr_specs(value, site, out),
-            Stmt::Assign { op, value, .. } => {
+            Stmt::Assign {
+                target, op, value, ..
+            } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    collect_expr_specs(index, site, out);
+                }
                 let muts = assign_mutations(*op);
                 if !muts.is_empty() {
                     let s = *site;
@@ -526,7 +531,15 @@ fn apply_stmt_mutation(stmts: &mut [Stmt], site: &mut usize, target: usize, vari
     for stmt in stmts {
         match stmt {
             Stmt::Let { value, .. } => apply_expr_mutation(value, site, target, variant),
-            Stmt::Assign { op, value, .. } => {
+            Stmt::Assign {
+                target: assign_target,
+                op,
+                value,
+                ..
+            } => {
+                if let AssignTarget::Index { index, .. } = assign_target {
+                    apply_expr_mutation(index, site, target, variant);
+                }
                 let muts = assign_mutations(*op);
                 if !muts.is_empty() {
                     if *site == target {
@@ -724,7 +737,13 @@ fn harvest_stmts(
 ) {
     for stmt in stmts {
         match stmt {
-            Stmt::Let { value, .. } | Stmt::Assign { value, .. } => {
+            Stmt::Let { value, .. } => {
+                harvest_expr(value, ints, floats, strs);
+            }
+            Stmt::Assign { target, value, .. } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    harvest_expr(index, ints, floats, strs);
+                }
                 harvest_expr(value, ints, floats, strs);
             }
             Stmt::If {
@@ -800,6 +819,12 @@ fn harvest_expr(
         } => {
             if let Expr::Int(v) = inner.as_ref() {
                 ints.insert(v.saturating_neg());
+            } else if let Expr::Float(v) = inner.as_ref() {
+                for cand in [-*v, -*v - 1.0, -*v + 1.0] {
+                    if !floats.iter().any(|x| (*x - cand).abs() < 1e-9) {
+                        floats.push(cand);
+                    }
+                }
             }
             harvest_expr(inner, ints, floats, strs);
         }

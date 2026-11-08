@@ -3378,5 +3378,94 @@ def test_banner() -> None:
             fuzz.failures.join("\n\n")
         );
     }
+
+    // 8. Pass 12: Central Optimizer division purity, Concolic short-circuiting & empty-list lifting,
+    //    and Time-Travel Debugger UTF-8 len + lexical block shadowing differential equivalence
+    let div_guard_star = r#"(fn div_mul_zero ((param x Int) (param y Int)) -> Int
+  (return (* (/ x y) 0)))
+
+(fn const_float_fold () -> Str
+  (let f (+ (min (neg 2.5) 1.5) (+ (max 3.0 0.5) (abs (neg 4.0)))))
+  (return (+ (to-str f) (+ ":" (to-str (len "café"))))))
+"#;
+    let mut div_opt_eng = StarEngine::from_source(SpokeId::Star, div_guard_star).unwrap();
+    let (_, rewrites) = div_opt_eng.optimize();
+    assert!(rewrites >= 4, "Expected float/len constant folding rewrites, got {}", rewrites);
+    // `(x / y) * 0` must NOT erase division by zero when `y == 0`!
+    assert!(
+        starlang::eval::eval_fn_call(
+            div_opt_eng.hub(),
+            "div_mul_zero",
+            &[starlang::hub::Expr::Int(10), starlang::hub::Expr::Int(0)],
+            1000
+        )
+        .is_err(),
+        "Optimizer illegally folded `(x / y) * 0` to `0`, erasing division-by-zero fault!"
+    );
+    assert_eq!(
+        starlang::eval::eval_fn_call(
+            div_opt_eng.hub(),
+            "const_float_fold",
+            &[],
+            1000
+        )
+        .unwrap(),
+        starlang::eval::Value::Str("4.5:5".to_string())
+    );
+
+    let concolic_guard_star = r#"(fn guarded_probe ((param xs (List Int)) (param i Int) (param d Float)) -> Int
+  (if (and (>= i 0) (and (< i (len xs)) (> (index xs i) 0)))
+    (then
+      (if (and (!= d 0.0) (> (/ (max d 2.0) (min d 1.0)) 0.0))
+        (then (return (index xs i)))
+        (else (return 1))))
+    (else (return 0))))
+
+(fn main () -> Void
+  (let sample (list 5 10))
+  (let outer_val 42)
+  (if (> (len "café") 4)
+    (then
+      (let inner_val 99)
+      (print inner_val))
+    (else (print 0)))
+  (print outer_val (call guarded_probe sample 0 2.0)))
+"#;
+    let mut conc_eng = StarEngine::from_source(SpokeId::Star, concolic_guard_star).unwrap();
+    let (conc_rep, _) = conc_eng.concolic(true);
+    assert!(
+        conc_rep.all_synthesized_tests_pass,
+        "Expected all synthesized concolic tests to pass"
+    );
+    assert!(conc_rep.total_paths >= 3);
+    // Verify every spoke view of the concolic-hardened module round-trips cleanly
+    let star_conc = &conc_rep.views_by_spoke["star"];
+    let conc_hub_eng = StarEngine::from_source(SpokeId::Star, star_conc).unwrap();
+    for spoke in SpokeId::ALL {
+        let code = conc_hub_eng.project(spoke);
+        let reparsed = lens_for(spoke)
+            .put(&code, conc_hub_eng.hub())
+            .unwrap_or_else(|e| panic!("Concolic spoke {:?} failed Put: {}\n{}", spoke, e, code));
+        assert_eq!(&reparsed, conc_hub_eng.hub(), "Concolic GetPut drift on {:?}", spoke);
+    }
+
+    // Verify Time-Travel Debugger matches HubVm on UTF-8 `len("café") == 5` and block-scoped `let shadow`
+    let shadow_star = r#"(fn main () -> Void
+  (let shadow 42)
+  (if (> (len "café") 4)
+    (then
+      (let shadow 99)
+      (print shadow))
+    (else (print 0)))
+  (print shadow))
+"#;
+    let shadow_eng = StarEngine::from_source(SpokeId::Star, shadow_star).unwrap();
+    let tt_trace = shadow_eng.time_travel(None);
+    assert!(tt_trace.ok, "Time-travel trace failed: {:?}", tt_trace.fault);
+    assert_eq!(
+        tt_trace.final_stdout.trim(),
+        "99\n42",
+        "Time-travel debugger diverged from HubVm on UTF-8 len or lexical block shadowing"
+    );
 }
 

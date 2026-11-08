@@ -750,6 +750,7 @@ fn format_repro_across_spokes(
         comments: Vec::new(),
         meta: Metadata::new(),
     }));
+    crate::hub::normalize_module(&mut mini);
 
     let mut out = BTreeMap::new();
     let needle_paren = format!("{}(", fn_name);

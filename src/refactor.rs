@@ -1058,6 +1058,34 @@ fn canonical_int_expr(v: i64) -> Expr {
     }
 }
 
+fn const_float(e: &Expr) -> Option<f64> {
+    match e {
+        Expr::Float(v) => Some(*v),
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: inner,
+        } => {
+            if let Expr::Float(v) = inner.as_ref() {
+                Some(-*v)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn canonical_float_expr(v: f64) -> Expr {
+    if v < 0.0 {
+        Expr::Unary {
+            op: UnaryOp::Neg,
+            expr: Box::new(Expr::Float(-v)),
+        }
+    } else {
+        Expr::Float(if v == 0.0 { 0.0 } else { v })
+    }
+}
+
 fn is_pure_expr(e: &Expr) -> bool {
     match e {
         Expr::Int(_)
@@ -1070,7 +1098,15 @@ fn is_pure_expr(e: &Expr) -> bool {
         Expr::StructInit { fields, .. } => fields.iter().all(|(_, v)| is_pure_expr(v)),
         Expr::FieldAccess { base, .. } => is_pure_expr(base),
         Expr::Unary { expr: inner, .. } => is_pure_expr(inner),
-        Expr::Binary { left, right, .. } => is_pure_expr(left) && is_pure_expr(right),
+        Expr::Binary { op, left, right } => {
+            if matches!(op, BinOp::Div | BinOp::IntDiv | BinOp::Mod) {
+                let nonzero_divisor = const_int(right).is_some_and(|v| v != 0)
+                    || const_float(right).is_some_and(|v| v != 0.0);
+                is_pure_expr(left) && nonzero_divisor
+            } else {
+                is_pure_expr(left) && is_pure_expr(right)
+            }
+        }
         _ => false,
     }
 }
@@ -1236,27 +1272,41 @@ fn opt_expr(expr: &mut Expr, rewrites: &mut usize) {
             }
 
             let folded: Option<Expr> = match intr.as_ref() {
+                Intrinsic::Len(Expr::Str(s)) => Some(Expr::Int(s.len() as i64)),
+                Intrinsic::Len(Expr::List(items)) if items.iter().all(is_pure_expr) => {
+                    Some(Expr::Int(items.len() as i64))
+                }
                 Intrinsic::Min(a, b) => match (const_int(a), const_int(b)) {
                     (Some(x), Some(y)) => Some(canonical_int_expr(x.min(y))),
-                    _ => None,
+                    _ => match (const_float(a), const_float(b)) {
+                        (Some(x), Some(y)) => Some(canonical_float_expr(x.min(y))),
+                        _ => None,
+                    },
                 },
                 Intrinsic::Max(a, b) => match (const_int(a), const_int(b)) {
                     (Some(x), Some(y)) => Some(canonical_int_expr(x.max(y))),
-                    _ => None,
+                    _ => match (const_float(a), const_float(b)) {
+                        (Some(x), Some(y)) => Some(canonical_float_expr(x.max(y))),
+                        _ => None,
+                    },
                 },
                 Intrinsic::Abs(a) => const_int(a)
                     .and_then(|x| x.checked_abs())
-                    .map(canonical_int_expr),
+                    .map(canonical_int_expr)
+                    .or_else(|| const_float(a).map(|x| canonical_float_expr(x.abs()))),
                 Intrinsic::Upper(Expr::Str(s)) => Some(Expr::Str(s.to_uppercase())),
                 Intrinsic::Lower(Expr::Str(s)) => Some(Expr::Str(s.to_lowercase())),
                 Intrinsic::ToStr(e) => match const_int(e) {
                     Some(v) => Some(Expr::Str(v.to_string())),
-                    None => match e {
-                        Expr::Bool(b) => {
-                            Some(Expr::Str(if *b { "true" } else { "false" }.to_string()))
-                        }
-                        Expr::Str(s) => Some(Expr::Str(s.clone())),
-                        _ => None,
+                    None => match const_float(e) {
+                        Some(f) => Some(Expr::Str(crate::eval::Value::Float(f).display_str())),
+                        None => match e {
+                            Expr::Bool(b) => {
+                                Some(Expr::Str(if *b { "true" } else { "false" }.to_string()))
+                            }
+                            Expr::Str(s) => Some(Expr::Str(s.clone())),
+                            _ => None,
+                        },
                     },
                 },
                 _ => None,

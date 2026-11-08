@@ -200,29 +200,91 @@ pub fn explore_concolic_paths(hub: &HubModule) -> ConcolicReport {
 
         let mut paths: Vec<ConcolicPath> = Vec::new();
         let mut test_stmts: Vec<Stmt> = Vec::new();
+        let mut fn_synth_asserts = 0usize;
+        let mut empty_list_counter = 0usize;
 
         for (_, (args, ret_val, mut cpath)) in seen_paths {
             cpath.path_id = paths.len() + 1;
-            if let (Some(arg_exprs), Some(ret_expr)) = (
-                args.iter().map(value_to_ast_expr).collect::<Option<Vec<_>>>(),
-                value_to_ast_expr(&ret_val),
-            ) {
-                let id = next_node_id;
-                next_node_id += 1;
-                test_stmts.push(Stmt::AssertEq {
-                    id,
-                    left: Expr::Call {
-                        func: f.name.clone(),
-                        args: arg_exprs,
-                    },
-                    right: ret_expr,
-                    meta: Metadata::new(),
-                });
+            let mut setup_stmts: Vec<Stmt> = Vec::new();
+            let mut call_args: Vec<Expr> = Vec::with_capacity(args.len());
+            let mut args_ok = true;
+            for (p_idx, arg_val) in args.iter().enumerate() {
+                if matches!(arg_val, Value::List(items) if items.is_empty()) {
+                    if let Some(param) = f.params.get(p_idx) {
+                        empty_list_counter += 1;
+                        let aname = format!("empty_arg_{}", empty_list_counter);
+                        let lid = next_node_id;
+                        next_node_id += 1;
+                        setup_stmts.push(Stmt::Let {
+                            id: lid,
+                            name: aname.clone(),
+                            mutable: false,
+                            ty: Some(param.ty.clone()),
+                            value: Expr::List(Vec::new()),
+                            meta: Metadata::new(),
+                        });
+                        call_args.push(Expr::Var(aname));
+                    } else {
+                        args_ok = false;
+                        break;
+                    }
+                } else if let Some(arg_expr) = value_to_ast_expr(arg_val) {
+                    call_args.push(arg_expr);
+                } else {
+                    args_ok = false;
+                    break;
+                }
+            }
+
+            if args_ok {
+                let call_expr = Expr::Call {
+                    func: f.name.clone(),
+                    args: call_args,
+                };
+                match &ret_val {
+                    Value::List(items) if items.is_empty() => {
+                        empty_list_counter += 1;
+                        let vname = format!("expected_empty_{}", empty_list_counter);
+                        let lid = next_node_id;
+                        next_node_id += 1;
+                        setup_stmts.push(Stmt::Let {
+                            id: lid,
+                            name: vname.clone(),
+                            mutable: false,
+                            ty: Some(f.ret_ty.clone()),
+                            value: Expr::List(Vec::new()),
+                            meta: Metadata::new(),
+                        });
+                        let id = next_node_id;
+                        next_node_id += 1;
+                        setup_stmts.push(Stmt::AssertEq {
+                            id,
+                            left: call_expr,
+                            right: Expr::Var(vname),
+                            meta: Metadata::new(),
+                        });
+                        test_stmts.extend(setup_stmts);
+                        fn_synth_asserts += 1;
+                    }
+                    _ => {
+                        if let Some(ret_expr) = value_to_ast_expr(&ret_val) {
+                            let id = next_node_id;
+                            next_node_id += 1;
+                            setup_stmts.push(Stmt::AssertEq {
+                                id,
+                                left: call_expr,
+                                right: ret_expr,
+                                meta: Metadata::new(),
+                            });
+                            test_stmts.extend(setup_stmts);
+                            fn_synth_asserts += 1;
+                        }
+                    }
+                }
             }
             paths.push(cpath);
         }
 
-        let fn_synth_asserts = test_stmts.len();
         if !test_stmts.is_empty() {
             let tid = next_node_id;
             next_node_id += 1;
@@ -271,6 +333,7 @@ pub fn explore_concolic_paths(hub: &HubModule) -> ConcolicReport {
         });
         hub_with_tests.items.push(Item::Test(td.clone()));
     }
+    crate::hub::normalize_module(&mut hub_with_tests);
 
     let test_results = eval_tests_default(&hub_with_tests);
     let all_synthesized_tests_pass = test_results.iter().all(|tr| tr.passed);
@@ -455,11 +518,18 @@ fn solve_concolic_boundary_inputs(
     enums: &BTreeMap<String, EnumDecl>,
     structs: &BTreeMap<String, StructDecl>,
 ) -> Vec<Vec<Value>> {
-    let mut boundary_ints: BTreeSet<i64> = [-5, -1, 0, 1, 10, 50, 100, 250, 600]
+    let mut extracted_ints: BTreeSet<i64> = BTreeSet::new();
+    extract_int_constants_from_stmts(&f.body, &mut extracted_ints);
+    let mut int_pool: Vec<i64> = Vec::new();
+    for v in [0, 1, -1]
         .into_iter()
-        .collect();
-    extract_int_constants_from_stmts(&f.body, &mut boundary_ints);
-    let int_pool: Vec<i64> = boundary_ints.into_iter().collect();
+        .chain(extracted_ints)
+        .chain([-5, 10, 50, 100, 250, 600])
+    {
+        if !int_pool.contains(&v) {
+            int_pool.push(v);
+        }
+    }
 
     // Build per-parameter domain of boundary values
     let mut param_domains: Vec<Vec<Value>> = Vec::with_capacity(f.params.len());
@@ -468,13 +538,14 @@ fn solve_concolic_boundary_inputs(
         param_domains.push(dom);
     }
 
-    // Take cartesian product up to 48 combinations so every branch & loop pattern is explored
+    // Take cartesian product up to 256 combinations, iterating `val` outer and `prefix` inner
+    // so every earlier parameter combination is paired with high-priority values of later parameters.
     let mut results: Vec<Vec<Value>> = vec![Vec::new()];
     for dom in param_domains {
         let mut next = Vec::new();
-        for prefix in &results {
-            for val in &dom {
-                if next.len() < 64 {
+        for val in &dom {
+            for prefix in &results {
+                if next.len() < 256 {
                     let mut row = prefix.clone();
                     row.push(val.clone());
                     next.push(row);
@@ -588,6 +659,30 @@ fn eval_concolic_block(
     trace: &mut ConcolicTrace,
     ret_slot: &mut Value,
 ) -> Result<FlowSignal, String> {
+    let mut block_lets: Vec<(String, Option<Value>)> = Vec::new();
+    let res = eval_concolic_block_inner(stmts, env, fns, enums, trace, ret_slot, &mut block_lets);
+    for (name, prev) in block_lets.into_iter().rev() {
+        match prev {
+            Some(v) => {
+                env.insert(name, v);
+            }
+            None => {
+                env.remove(&name);
+            }
+        }
+    }
+    res
+}
+
+fn eval_concolic_block_inner(
+    stmts: &[Stmt],
+    env: &mut BTreeMap<String, Value>,
+    fns: &BTreeMap<String, FnDecl>,
+    enums: &BTreeMap<String, EnumDecl>,
+    trace: &mut ConcolicTrace,
+    ret_slot: &mut Value,
+    block_lets: &mut Vec<(String, Option<Value>)>,
+) -> Result<FlowSignal, String> {
     for s in stmts {
         trace.steps += 1;
         if trace.steps > 2_000 {
@@ -597,7 +692,7 @@ fn eval_concolic_block(
             Stmt::Comment { .. } => {}
             Stmt::Let { name, value, .. } => {
                 let v = eval_concolic_expr(value, env, fns, enums)?;
-                env.insert(name.clone(), v);
+                block_lets.push((name.clone(), env.insert(name.clone(), v)));
             }
             Stmt::Assign {
                 target, op, value, ..
@@ -646,7 +741,11 @@ fn eval_concolic_block(
                                 let cur = items[i as usize].clone();
                                 items[i as usize] = apply_op(op, cur, rhs);
                                 env.insert(base.clone(), Value::List(items));
+                            } else {
+                                return Err("index out of bounds".to_string());
                             }
+                        } else {
+                            return Err("invalid index assignment".to_string());
                         }
                     }
                 }
@@ -760,6 +859,8 @@ fn eval_concolic_block(
                         .constraints
                         .push(format!("len({}) > 0", format_cond_expr(iter)));
                 }
+                let prev_var = env.get(var).cloned();
+                block_lets.push((var.clone(), prev_var));
                 for item in items {
                     env.insert(var.clone(), item);
                     let sig = eval_concolic_block(body, env, fns, enums, trace, ret_slot)?;
@@ -789,6 +890,8 @@ fn eval_concolic_block(
                 } else {
                     trace.branch_slots.push(format!("range#{}:nonempty", id));
                 }
+                let prev_var = env.get(var).cloned();
+                block_lets.push((var.clone(), prev_var));
                 for idx in s_idx..e_idx {
                     env.insert(var.clone(), Value::Int(idx));
                     let sig = eval_concolic_block(body, env, fns, enums, trace, ret_slot)?;
@@ -900,6 +1003,30 @@ fn eval_concolic_expr(
             }
         }
         Expr::Binary { op, left, right } => {
+            if *op == BinOp::And {
+                let Value::Bool(l) = eval_concolic_expr(left, env, fns, enums)? else {
+                    return Err("&& expects Bool".to_string());
+                };
+                if !l {
+                    return Ok(Value::Bool(false));
+                }
+                let Value::Bool(r) = eval_concolic_expr(right, env, fns, enums)? else {
+                    return Err("&& expects Bool".to_string());
+                };
+                return Ok(Value::Bool(r));
+            }
+            if *op == BinOp::Or {
+                let Value::Bool(l) = eval_concolic_expr(left, env, fns, enums)? else {
+                    return Err("|| expects Bool".to_string());
+                };
+                if l {
+                    return Ok(Value::Bool(true));
+                }
+                let Value::Bool(r) = eval_concolic_expr(right, env, fns, enums)? else {
+                    return Err("|| expects Bool".to_string());
+                };
+                return Ok(Value::Bool(r));
+            }
             let l = eval_concolic_expr(left, env, fns, enums)?;
             let r = eval_concolic_expr(right, env, fns, enums)?;
             match (op, l, r) {
@@ -918,7 +1045,11 @@ fn eval_concolic_expr(
                     }
                 }
                 (BinOp::IntDiv | BinOp::Div, Value::Float(a), Value::Float(b)) => {
-                    Ok(Value::Float(a / b))
+                    if b == 0.0 {
+                        Err("float division by zero".to_string())
+                    } else {
+                        Ok(Value::Float(a / b))
+                    }
                 }
                 (BinOp::Mod, Value::Int(a), Value::Int(b)) => {
                     if b == 0 {
@@ -941,8 +1072,6 @@ fn eval_concolic_expr(
                 (BinOp::Ge, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
                 (BinOp::Ge, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
                 (BinOp::Ge, Value::Str(a), Value::Str(b)) => Ok(Value::Bool(a >= b)),
-                (BinOp::And, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
-                (BinOp::Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
                 _ => Err("binary op mismatch".to_string()),
             }
         }
@@ -964,37 +1093,31 @@ fn eval_concolic_expr(
                 _ => Err("len expects list/str".to_string()),
             },
             Intrinsic::Abs(x) => match eval_concolic_expr(x, env, fns, enums)? {
-                Value::Int(n) => Ok(Value::Int(n.saturating_abs())),
+                Value::Int(n) => Ok(Value::Int(n.wrapping_abs())),
                 Value::Float(f) => Ok(Value::Float(f.abs())),
                 _ => Err("abs expects number".to_string()),
             },
             Intrinsic::Min(a, b) => {
-                let Value::Int(x) = eval_concolic_expr(a, env, fns, enums)? else {
-                    return Err("min expects Int".to_string());
-                };
-                let Value::Int(y) = eval_concolic_expr(b, env, fns, enums)? else {
-                    return Err("min expects Int".to_string());
-                };
-                Ok(Value::Int(x.min(y)))
+                let va = eval_concolic_expr(a, env, fns, enums)?;
+                let vb = eval_concolic_expr(b, env, fns, enums)?;
+                match (va, vb) {
+                    (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x.min(y))),
+                    (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x.min(y))),
+                    _ => Err("min expects matching numeric args".to_string()),
+                }
             }
             Intrinsic::Max(a, b) => {
-                let Value::Int(x) = eval_concolic_expr(a, env, fns, enums)? else {
-                    return Err("max expects Int".to_string());
-                };
-                let Value::Int(y) = eval_concolic_expr(b, env, fns, enums)? else {
-                    return Err("max expects Int".to_string());
-                };
-                Ok(Value::Int(x.max(y)))
+                let va = eval_concolic_expr(a, env, fns, enums)?;
+                let vb = eval_concolic_expr(b, env, fns, enums)?;
+                match (va, vb) {
+                    (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x.max(y))),
+                    (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x.max(y))),
+                    _ => Err("max expects matching numeric args".to_string()),
+                }
             }
             Intrinsic::ToStr(x) => {
                 let v = eval_concolic_expr(x, env, fns, enums)?;
-                Ok(Value::Str(match v {
-                    Value::Int(n) => n.to_string(),
-                    Value::Float(f) => format!("{}", f),
-                    Value::Bool(b) => b.to_string(),
-                    Value::Str(s) => s,
-                    _ => format_val_compact(&v),
-                }))
+                Ok(Value::Str(v.display_str()))
             }
             Intrinsic::Upper(x) => {
                 let Value::Str(s) = eval_concolic_expr(x, env, fns, enums)? else {
@@ -1090,7 +1213,9 @@ fn format_val_compact(v: &Value) -> String {
 fn value_to_ast_expr(v: &Value) -> Option<Expr> {
     match v {
         Value::Int(n) => {
-            if *n < 0 && *n > i64::MIN {
+            if *n == i64::MIN {
+                None
+            } else if *n < 0 {
                 Some(Expr::Unary {
                     op: UnaryOp::Neg,
                     expr: Box::new(Expr::Int(-*n)),
@@ -1100,7 +1225,9 @@ fn value_to_ast_expr(v: &Value) -> Option<Expr> {
             }
         }
         Value::Float(f) => {
-            if *f < 0.0 {
+            if !f.is_finite() {
+                None
+            } else if *f < 0.0 {
                 Some(Expr::Unary {
                     op: UnaryOp::Neg,
                     expr: Box::new(Expr::Float(-*f)),
@@ -1116,6 +1243,9 @@ fn value_to_ast_expr(v: &Value) -> Option<Expr> {
             variant: variant.clone(),
         }),
         Value::List(items) => {
+            if items.is_empty() {
+                return None;
+            }
             let mut out = Vec::with_capacity(items.len());
             for it in items {
                 out.push(value_to_ast_expr(it)?);

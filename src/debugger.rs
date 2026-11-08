@@ -480,13 +480,46 @@ impl<'a> Recorder<'a> {
         stmts: &[Stmt],
         env: &mut BTreeMap<String, Value>,
     ) -> Result<DebugFlow, String> {
+        let mut block_lets: Vec<(String, Option<Value>)> = Vec::new();
+        let mut out_flow = DebugFlow::Next;
+        let mut err_out: Option<String> = None;
         for stmt in stmts {
-            let flow = self.exec_stmt(fn_name, stmt, env)?;
-            if !matches!(flow, DebugFlow::Next) {
-                return Ok(flow);
+            match stmt {
+                Stmt::Let { name, .. }
+                | Stmt::ForRange { var: name, .. }
+                | Stmt::ForEach { var: name, .. } => {
+                    block_lets.push((name.clone(), env.get(name).cloned()));
+                }
+                _ => {}
+            }
+            match self.exec_stmt(fn_name, stmt, env) {
+                Ok(flow) => {
+                    if !matches!(flow, DebugFlow::Next) {
+                        out_flow = flow;
+                        break;
+                    }
+                }
+                Err(e) => {
+                    err_out = Some(e);
+                    break;
+                }
             }
         }
-        Ok(DebugFlow::Next)
+        for (name, prev) in block_lets.into_iter().rev() {
+            match prev {
+                Some(v) => {
+                    env.insert(name, v);
+                }
+                None => {
+                    env.remove(&name);
+                }
+            }
+        }
+        if let Some(e) = err_out {
+            Err(e)
+        } else {
+            Ok(out_flow)
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1091,7 +1124,7 @@ impl<'a> Recorder<'a> {
             Expr::Intrinsic(intr) => match intr.as_ref() {
                 Intrinsic::Len(x) => match self.eval_expr(fn_name, x, env)? {
                     Value::List(xs) => Ok(Value::Int(xs.len() as i64)),
-                    Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
+                    Value::Str(s) => Ok(Value::Int(s.len() as i64)),
                     _ => Err("len requires List or Str".to_string()),
                 },
                 Intrinsic::Push { list, value } => {
