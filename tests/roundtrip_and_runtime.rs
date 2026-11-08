@@ -3231,26 +3231,29 @@ def test_banner() -> None:
     );
     assert_eq!(pass_run.results[0].stdout, expected_banner_out);
 
-    // 5. Validate structural equality (`==`/`!=`) on List and Struct values across all 13 spokes
+    // 5. Validate structural equality (`==`/`!=`) on List and Struct values, lexicographic string
+    //    ordering (`<`, `<=`, `>`, `>=` including Rust `&str` borrows), and float `to-str` across all 13 spokes
     //    (Warm GetPut, 13x13 PutGetPut) and all 14 native/JIT execution engines!
     let struct_list_eq_star = r#"(struct PairBox
   (field label Str)
   (field nums (List Int)))
 
-(fn check_structural_eq ((param a PairBox) (param b PairBox)) -> Bool
+(fn check_structural_eq ((param a PairBox) (param b PairBox) (param tag Str :rust.pass "ref")) -> Bool
   (let xs (list 1 2 3))
   (let ys (list 1 2 3))
   (let zs (list 1 2 4))
-  (return (and (and (== xs ys) (!= xs zs)) (and (== a b) (!= (get-field a nums) zs)))))
+  (let str_ord (and (and (< tag "omega") (<= "alpha" tag)) (and (> "zebra" tag) (>= tag "alpha"))))
+  (return (and (and (and (== xs ys) (!= xs zs)) (and (== a b) (!= (get-field a nums) zs))) str_ord)))
 
 (fn main () -> Void
   (let p1 (make PairBox (label "ok") (nums (list 10 20))))
   (let p2 (make PairBox (label "ok") (nums (list 10 20))))
-  (print (call check_structural_eq p1 p2)))
+  (let f_str (+ (+ (to-str 1.5) ":") (to-str (neg 2.25))))
+  (print (call check_structural_eq p1 p2 "beta") f_str))
 "#;
     let eq_eng = StarEngine::from_source(SpokeId::Star, struct_list_eq_star).unwrap();
     let eq_hub = eq_eng.hub().clone();
-    assert_eq!(eq_eng.snapshot().live_eval.stdout.trim(), "true");
+    assert_eq!(eq_eng.snapshot().live_eval.stdout.trim(), "true 1.5:-2.25");
     for spoke_a in SpokeId::ALL {
         let lens_a = lens_for(spoke_a);
         let code_a = lens_a.get(&eq_hub);
@@ -3268,12 +3271,27 @@ def test_banner() -> None:
         );
         assert_eq!(
             r.stdout.trim(),
-            "true",
+            "true 1.5:-2.25",
             "Structural equality diverged on engine {}",
             r.language
         );
     }
     assert!(eq_run.outputs_match);
+
+    // Verify typechecker catches field assignment on a non-struct variable
+    let bad_field_assign_star = r#"(fn bad () -> Void
+  (let-mut x 10)
+  (set! (field x missing) 20))
+"#;
+    let bad_eng = StarEngine::from_source(SpokeId::Star, bad_field_assign_star).unwrap();
+    let bad_diags = check_module(bad_eng.hub());
+    assert!(
+        bad_diags
+            .iter()
+            .any(|d| d.message.contains("cannot access field 'missing' on Int")),
+        "Expected field-on-Int diagnostic, got: {:?}",
+        bad_diags
+    );
 
     // 6. Multi-seed property-based fuzzer sweep validating GetPut, Cold Put, Optimizer, E-Graph & Wasm
     for seed in [0x000A_11CE_0001_u64, 0x0B0B_0002_u64, 0xCAFE_F00D_u64] {

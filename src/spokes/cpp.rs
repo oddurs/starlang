@@ -18,7 +18,8 @@ impl LanguageLens for CppLens {
 
     fn get(&self, hub: &HubModule) -> String {
         let mut ctx = CppFmtCtx::from_hub(hub);
-        let (headers, need_lower, need_upper, need_bool_to_str) = ctx.collect_headers(hub);
+        let (headers, need_lower, need_upper, need_bool_to_str, need_float_to_str) =
+            ctx.collect_headers(hub);
 
         let mut out = String::new();
         for h in &headers {
@@ -38,6 +39,11 @@ impl LanguageLens for CppLens {
         if need_bool_to_str {
             out.push_str(
                 "\ninline std::string star_bool_to_str(bool b) {\n    if (b) return \"true\";\n    return \"false\";\n}\n",
+            );
+        }
+        if need_float_to_str {
+            out.push_str(
+                "\ninline std::string star_float_to_str(double v) {\n    char buf[64];\n    std::snprintf(buf, 64, \"%.15g\", v);\n    return std::string(buf);\n}\n",
             );
         }
 
@@ -138,11 +144,12 @@ impl CppFmtCtx {
         }
     }
 
-    fn collect_headers(&mut self, hub: &HubModule) -> (BTreeSet<&'static str>, bool, bool, bool) {
+    fn collect_headers(
+        &mut self,
+        hub: &HubModule,
+    ) -> (BTreeSet<&'static str>, bool, bool, bool, bool) {
         let mut headers = BTreeSet::new();
-        let mut need_lower = false;
-        let mut need_upper = false;
-        let mut need_bool_to_str = false;
+        let mut helpers = (false, false, false, false);
         headers.insert("cstdint");
 
         for item in &hub.items {
@@ -160,28 +167,16 @@ impl CppFmtCtx {
                         self.local_env.insert(p.name.clone(), p.ty.clone());
                     }
                     Self::scan_type_headers(&f.ret_ty, &mut headers);
-                    self.scan_stmts_headers(
-                        &f.body,
-                        &mut headers,
-                        &mut need_lower,
-                        &mut need_upper,
-                        &mut need_bool_to_str,
-                    );
+                    self.scan_stmts_headers(&f.body, &mut headers, &mut helpers);
                 }
                 Item::Test(t) => {
                     headers.insert("cassert");
                     self.local_env.clear();
-                    self.scan_stmts_headers(
-                        &t.body,
-                        &mut headers,
-                        &mut need_lower,
-                        &mut need_upper,
-                        &mut need_bool_to_str,
-                    );
+                    self.scan_stmts_headers(&t.body, &mut headers, &mut helpers);
                 }
             }
         }
-        (headers, need_lower, need_upper, need_bool_to_str)
+        (headers, helpers.0, helpers.1, helpers.2, helpers.3)
     }
 
     fn scan_type_headers(ty: &Type, headers: &mut BTreeSet<&'static str>) {
@@ -201,9 +196,7 @@ impl CppFmtCtx {
         &mut self,
         stmts: &[Stmt],
         headers: &mut BTreeSet<&'static str>,
-        need_lower: &mut bool,
-        need_upper: &mut bool,
-        need_bool_to_str: &mut bool,
+        helpers: &mut (bool, bool, bool, bool),
     ) {
         for s in stmts {
             match s {
@@ -213,22 +206,16 @@ impl CppFmtCtx {
                     if let Some(t) = ty {
                         Self::scan_type_headers(t, headers);
                     }
-                    self.scan_expr_headers(value, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(value, headers, helpers);
                     if let Some(t) = ty.clone().or_else(|| self.expr_ty(value)) {
                         self.local_env.insert(name.clone(), t);
                     }
                 }
                 Stmt::Assign { target, value, .. } => {
                     if let AssignTarget::Index { index, .. } = target {
-                        self.scan_expr_headers(
-                            index,
-                            headers,
-                            need_lower,
-                            need_upper,
-                            need_bool_to_str,
-                        );
+                        self.scan_expr_headers(index, headers, helpers);
                     }
-                    self.scan_expr_headers(value, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(value, headers, helpers);
                 }
                 Stmt::If {
                     cond,
@@ -236,57 +223,39 @@ impl CppFmtCtx {
                     else_body,
                     ..
                 } => {
-                    self.scan_expr_headers(cond, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(cond, headers, helpers);
                     let saved = self.local_env.clone();
-                    self.scan_stmts_headers(
-                        then_body,
-                        headers,
-                        need_lower,
-                        need_upper,
-                        need_bool_to_str,
-                    );
+                    self.scan_stmts_headers(then_body, headers, helpers);
                     self.local_env = saved.clone();
-                    self.scan_stmts_headers(
-                        else_body,
-                        headers,
-                        need_lower,
-                        need_upper,
-                        need_bool_to_str,
-                    );
+                    self.scan_stmts_headers(else_body, headers, helpers);
                     self.local_env = saved;
                 }
                 Stmt::Match { expr, arms, .. } => {
-                    self.scan_expr_headers(expr, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(expr, headers, helpers);
                     for arm in arms {
                         if matches!(&arm.pat, MatchPat::Str(_)) {
                             headers.insert("string");
                         }
                         let saved = self.local_env.clone();
-                        self.scan_stmts_headers(
-                            &arm.body,
-                            headers,
-                            need_lower,
-                            need_upper,
-                            need_bool_to_str,
-                        );
+                        self.scan_stmts_headers(&arm.body, headers, helpers);
                         self.local_env = saved;
                     }
                 }
                 Stmt::While { cond, body, .. } => {
-                    self.scan_expr_headers(cond, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(cond, headers, helpers);
                     let saved = self.local_env.clone();
-                    self.scan_stmts_headers(body, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_stmts_headers(body, headers, helpers);
                     self.local_env = saved;
                 }
                 Stmt::ForEach {
                     var, iter, body, ..
                 } => {
-                    self.scan_expr_headers(iter, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(iter, headers, helpers);
                     let saved = self.local_env.clone();
                     if let Some(Type::List(elem)) = self.expr_ty(iter) {
                         self.local_env.insert(var.clone(), *elem);
                     }
-                    self.scan_stmts_headers(body, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_stmts_headers(body, headers, helpers);
                     self.local_env = saved;
                 }
                 Stmt::ForRange {
@@ -296,39 +265,27 @@ impl CppFmtCtx {
                     body,
                     ..
                 } => {
-                    self.scan_expr_headers(
-                        start,
-                        headers,
-                        need_lower,
-                        need_upper,
-                        need_bool_to_str,
-                    );
-                    self.scan_expr_headers(end, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(start, headers, helpers);
+                    self.scan_expr_headers(end, headers, helpers);
                     let saved = self.local_env.clone();
                     self.local_env.insert(var.clone(), Type::Int);
-                    self.scan_stmts_headers(body, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_stmts_headers(body, headers, helpers);
                     self.local_env = saved;
                 }
                 Stmt::Assert { cond, .. } => {
                     headers.insert("cassert");
-                    self.scan_expr_headers(cond, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(cond, headers, helpers);
                 }
                 Stmt::AssertEq { left, right, .. } => {
                     headers.insert("cassert");
-                    self.scan_expr_headers(left, headers, need_lower, need_upper, need_bool_to_str);
-                    self.scan_expr_headers(
-                        right,
-                        headers,
-                        need_lower,
-                        need_upper,
-                        need_bool_to_str,
-                    );
+                    self.scan_expr_headers(left, headers, helpers);
+                    self.scan_expr_headers(right, headers, helpers);
                 }
                 Stmt::Return {
                     value: Some(e), ..
                 }
                 | Stmt::Expr { expr: e, .. } => {
-                    self.scan_expr_headers(e, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(e, headers, helpers);
                 }
                 _ => {}
             }
@@ -339,9 +296,7 @@ impl CppFmtCtx {
         &self,
         expr: &Expr,
         headers: &mut BTreeSet<&'static str>,
-        need_lower: &mut bool,
-        need_upper: &mut bool,
-        need_bool_to_str: &mut bool,
+        helpers: &mut (bool, bool, bool, bool),
     ) {
         match expr {
             Expr::Str(_) => {
@@ -350,67 +305,72 @@ impl CppFmtCtx {
             Expr::List(items) => {
                 headers.insert("vector");
                 for it in items {
-                    self.scan_expr_headers(it, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(it, headers, helpers);
                 }
             }
             Expr::StructInit { fields, .. } => {
                 for (_, v) in fields {
-                    self.scan_expr_headers(v, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(v, headers, helpers);
                 }
             }
             Expr::FieldAccess { base, .. } => {
-                self.scan_expr_headers(base, headers, need_lower, need_upper, need_bool_to_str);
+                self.scan_expr_headers(base, headers, helpers);
             }
             Expr::Index { base, index } => {
-                self.scan_expr_headers(base, headers, need_lower, need_upper, need_bool_to_str);
-                self.scan_expr_headers(index, headers, need_lower, need_upper, need_bool_to_str);
+                self.scan_expr_headers(base, headers, helpers);
+                self.scan_expr_headers(index, headers, helpers);
             }
             Expr::Unary { expr: inner, .. } => {
-                self.scan_expr_headers(inner, headers, need_lower, need_upper, need_bool_to_str);
+                self.scan_expr_headers(inner, headers, helpers);
             }
             Expr::Binary { left, right, .. } => {
-                self.scan_expr_headers(left, headers, need_lower, need_upper, need_bool_to_str);
-                self.scan_expr_headers(right, headers, need_lower, need_upper, need_bool_to_str);
+                self.scan_expr_headers(left, headers, helpers);
+                self.scan_expr_headers(right, headers, helpers);
             }
             Expr::Call { args, .. } => {
                 for a in args {
-                    self.scan_expr_headers(a, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(a, headers, helpers);
                 }
             }
             Expr::Intrinsic(intr) => match intr.as_ref() {
                 Intrinsic::Print(args) => {
                     headers.insert("iostream");
                     for a in args {
-                        self.scan_expr_headers(a, headers, need_lower, need_upper, need_bool_to_str);
+                        self.scan_expr_headers(a, headers, helpers);
                     }
                 }
                 Intrinsic::Min(a, b) | Intrinsic::Max(a, b) => {
                     headers.insert("algorithm");
-                    self.scan_expr_headers(a, headers, need_lower, need_upper, need_bool_to_str);
-                    self.scan_expr_headers(b, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(a, headers, helpers);
+                    self.scan_expr_headers(b, headers, helpers);
                 }
                 Intrinsic::Abs(a) => {
                     headers.insert("cmath");
-                    self.scan_expr_headers(a, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(a, headers, helpers);
                 }
                 Intrinsic::ToStr(a) => {
                     headers.insert("string");
-                    if self.expr_ty(a) == Some(Type::Bool) {
-                        *need_bool_to_str = true;
+                    match self.expr_ty(a) {
+                        Some(Type::Bool) => helpers.2 = true,
+                        Some(Type::Float) => {
+                            headers.insert("cstdio");
+                            helpers.3 = true;
+                        }
+                        _ => {}
                     }
-                    self.scan_expr_headers(a, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(a, headers, helpers);
                 }
                 Intrinsic::Lower(a) => {
                     headers.insert("string");
                     headers.insert("cctype");
-                    *need_lower = true;
-                    self.scan_expr_headers(a, headers, need_lower, need_upper, need_bool_to_str);
+                    helpers.0 = true;
+                    self.scan_expr_headers(a, headers, helpers);
                 }
                 Intrinsic::Upper(a) => {
                     headers.insert("string");
                     headers.insert("cctype");
-                    *need_upper = true;
-                    self.scan_expr_headers(a, headers, need_lower, need_upper, need_bool_to_str);
+                    helpers.1 = true;
+                    self.scan_expr_headers(a, headers, helpers);
                 }
                 Intrinsic::Contains { haystack, needle } => {
                     if matches!(self.expr_ty(haystack), Some(Type::List(_))) {
@@ -418,34 +378,16 @@ impl CppFmtCtx {
                     } else {
                         headers.insert("string");
                     }
-                    self.scan_expr_headers(
-                        haystack,
-                        headers,
-                        need_lower,
-                        need_upper,
-                        need_bool_to_str,
-                    );
-                    self.scan_expr_headers(
-                        needle,
-                        headers,
-                        need_lower,
-                        need_upper,
-                        need_bool_to_str,
-                    );
+                    self.scan_expr_headers(haystack, headers, helpers);
+                    self.scan_expr_headers(needle, headers, helpers);
                 }
                 Intrinsic::Len(a) => {
-                    self.scan_expr_headers(a, headers, need_lower, need_upper, need_bool_to_str);
+                    self.scan_expr_headers(a, headers, helpers);
                 }
                 Intrinsic::Push { list, value } => {
                     headers.insert("vector");
-                    self.scan_expr_headers(list, headers, need_lower, need_upper, need_bool_to_str);
-                    self.scan_expr_headers(
-                        value,
-                        headers,
-                        need_lower,
-                        need_upper,
-                        need_bool_to_str,
-                    );
+                    self.scan_expr_headers(list, headers, helpers);
+                    self.scan_expr_headers(value, headers, helpers);
                 }
             },
             _ => {}
@@ -1023,15 +965,12 @@ impl CppFmtCtx {
                 }
                 Intrinsic::Upper(e) => format!("star_to_upper({})", self.fmt_expr(e)),
                 Intrinsic::Lower(e) => format!("star_to_lower({})", self.fmt_expr(e)),
-                Intrinsic::ToStr(e) => {
-                    if self.expr_ty(e) == Some(Type::Str) {
-                        format!("std::string({})", self.fmt_expr(e))
-                    } else if self.expr_ty(e) == Some(Type::Bool) {
-                        format!("star_bool_to_str({})", self.fmt_expr(e))
-                    } else {
-                        format!("std::to_string({})", self.fmt_clean_int(e))
-                    }
-                }
+                Intrinsic::ToStr(e) => match self.expr_ty(e) {
+                    Some(Type::Str) => format!("std::string({})", self.fmt_expr(e)),
+                    Some(Type::Bool) => format!("star_bool_to_str({})", self.fmt_expr(e)),
+                    Some(Type::Float) => format!("star_float_to_str({})", self.fmt_expr(e)),
+                    _ => format!("std::to_string({})", self.fmt_clean_int(e)),
+                },
             },
         }
     }
@@ -2482,7 +2421,7 @@ impl CppParser {
                         ("star_to_upper", 1) => {
                             Ok(Expr::intrinsic(Intrinsic::Upper(args.pop().unwrap())))
                         }
-                        ("star_bool_to_str", 1) => {
+                        ("star_bool_to_str" | "star_float_to_str", 1) => {
                             Ok(Expr::intrinsic(Intrinsic::ToStr(args.pop().unwrap())))
                         }
                         _ => Ok(Expr::Call { func: ident, args }),

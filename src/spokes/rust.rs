@@ -611,15 +611,25 @@ impl RustFmtCtx {
                         self.fmt_expr(right)
                     );
                 }
+                let fmt_cmp_side = |side: &Expr| -> String {
+                    if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+                        if let Expr::Var(v) = side {
+                            if self.borrowed_locals.contains(v) {
+                                return self.fmt_owned_expr(side);
+                            }
+                        }
+                    }
+                    self.fmt_expr(side)
+                };
                 let l_str = if needs_parens(left, *op, false) {
-                    format!("({})", self.fmt_expr(left))
+                    format!("({})", fmt_cmp_side(left))
                 } else {
-                    self.fmt_expr(left)
+                    fmt_cmp_side(left)
                 };
                 let r_str = if needs_parens(right, *op, true) {
-                    format!("({})", self.fmt_expr(right))
+                    format!("({})", fmt_cmp_side(right))
                 } else {
-                    self.fmt_expr(right)
+                    fmt_cmp_side(right)
                 };
                 let op_str = match op {
                     BinOp::Add => "+",

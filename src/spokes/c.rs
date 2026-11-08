@@ -63,6 +63,7 @@ impl LanguageLens for CLens {
 struct CUsage {
     headers: BTreeSet<&'static str>,
     need_str_eq: bool,
+    need_str_cmp: bool,
     need_str_concat: bool,
     need_str_contains: bool,
     need_upper: bool,
@@ -132,6 +133,20 @@ impl CFmtCtx {
             );
             rt.push_str(
                 "static inline bool star_str_ne(const char* a, const char* b) { return strcmp(a, b) != 0; }\n",
+            );
+        }
+        if usage.need_str_cmp {
+            rt.push_str(
+                "static inline bool star_str_lt(const char* a, const char* b) { return strcmp(a, b) < 0; }\n",
+            );
+            rt.push_str(
+                "static inline bool star_str_le(const char* a, const char* b) { return strcmp(a, b) <= 0; }\n",
+            );
+            rt.push_str(
+                "static inline bool star_str_gt(const char* a, const char* b) { return strcmp(a, b) > 0; }\n",
+            );
+            rt.push_str(
+                "static inline bool star_str_ge(const char* a, const char* b) { return strcmp(a, b) >= 0; }\n",
             );
         }
         if usage.need_str_concat {
@@ -389,6 +404,7 @@ impl CFmtCtx {
         let mut usage = CUsage {
             headers: BTreeSet::new(),
             need_str_eq: false,
+            need_str_cmp: false,
             need_str_concat: false,
             need_str_contains: false,
             need_upper: false,
@@ -656,7 +672,7 @@ impl CFmtCtx {
                     usage.headers.insert("string.h");
                 }
                 if matches!(op, BinOp::Eq | BinOp::Ne) {
-                    let cmp_ty = lty.or(rty);
+                    let cmp_ty = lty.clone().or(rty.clone());
                     if cmp_ty == Some(Type::Str) {
                         usage.need_str_eq = true;
                         usage.headers.insert("string.h");
@@ -665,6 +681,12 @@ impl CFmtCtx {
                             list_elems.push(*inner);
                         }
                     }
+                }
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+                    && (lty == Some(Type::Str) || rty == Some(Type::Str))
+                {
+                    usage.need_str_cmp = true;
+                    usage.headers.insert("string.h");
                 }
             }
             Expr::Call { func, args } => {
@@ -1321,6 +1343,19 @@ impl CFmtCtx {
                         }
                         _ => {}
                     }
+                }
+
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+                    && (lty == Some(Type::Str) || rty == Some(Type::Str))
+                {
+                    let fn_name = match op {
+                        BinOp::Lt => "star_str_lt",
+                        BinOp::Le => "star_str_le",
+                        BinOp::Gt => "star_str_gt",
+                        BinOp::Ge => "star_str_ge",
+                        _ => unreachable!(),
+                    };
+                    return format!("{}({}, {})", fn_name, self.fmt_expr(left), self.fmt_expr(right));
                 }
 
                 let l_str = if needs_parens(left, *op, false) {
@@ -3128,6 +3163,26 @@ impl CParser {
             }),
             "star_str_ne" if args.len() == 2 => Ok(Expr::Binary {
                 op: BinOp::Ne,
+                left: Box::new(args[0].clone()),
+                right: Box::new(args[1].clone()),
+            }),
+            "star_str_lt" if args.len() == 2 => Ok(Expr::Binary {
+                op: BinOp::Lt,
+                left: Box::new(args[0].clone()),
+                right: Box::new(args[1].clone()),
+            }),
+            "star_str_le" if args.len() == 2 => Ok(Expr::Binary {
+                op: BinOp::Le,
+                left: Box::new(args[0].clone()),
+                right: Box::new(args[1].clone()),
+            }),
+            "star_str_gt" if args.len() == 2 => Ok(Expr::Binary {
+                op: BinOp::Gt,
+                left: Box::new(args[0].clone()),
+                right: Box::new(args[1].clone()),
+            }),
+            "star_str_ge" if args.len() == 2 => Ok(Expr::Binary {
+                op: BinOp::Ge,
                 left: Box::new(args[0].clone()),
                 right: Box::new(args[1].clone()),
             }),

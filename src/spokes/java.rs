@@ -637,6 +637,25 @@ impl JavaEmitter {
                     }
                 }
 
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+                    && (self.expr_ty(left) == Some(Type::Str)
+                        || self.expr_ty(right) == Some(Type::Str))
+                {
+                    let op_str = match op {
+                        BinOp::Lt => "<",
+                        BinOp::Le => "<=",
+                        BinOp::Gt => ">",
+                        BinOp::Ge => ">=",
+                        _ => unreachable!(),
+                    };
+                    return format!(
+                        "{}.compareTo({}) {} 0L",
+                        self.fmt_postfix(left),
+                        self.fmt_expr(right),
+                        op_str
+                    );
+                }
+
                 let l_str = if needs_parens(left, *op, false) {
                     format!("({})", self.fmt_expr(left))
                 } else {
@@ -2028,6 +2047,23 @@ impl JavaParser {
             if let Some(op) = op {
                 self.pos += 1;
                 let right = self.parse_add()?;
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+                    && right == Expr::Int(0)
+                {
+                    if let Expr::Call { func, mut args } = left {
+                        if func == "__star_compare_to" && args.len() == 2 {
+                            let cmp_r = args.pop().unwrap();
+                            let cmp_l = args.pop().unwrap();
+                            left = Expr::Binary {
+                                op,
+                                left: Box::new(cmp_l),
+                                right: Box::new(cmp_r),
+                            };
+                            continue;
+                        }
+                        left = Expr::Call { func, args };
+                    }
+                }
                 left = Expr::Binary {
                     op,
                     left: Box::new(left),
@@ -2202,6 +2238,10 @@ impl JavaParser {
                         }),
                         (_, "toUpperCase", 0) => Expr::intrinsic(Intrinsic::Upper(base)),
                         (_, "toLowerCase", 0) => Expr::intrinsic(Intrinsic::Lower(base)),
+                        (_, "compareTo", 1) => Expr::Call {
+                            func: "__star_compare_to".to_string(),
+                            args: vec![base, args.pop().unwrap()],
+                        },
                         // Support Java record field accessor `stats.count()` when `base` is not a list/str method
                         (_, fname, 0) => Expr::FieldAccess {
                             base: Box::new(base),

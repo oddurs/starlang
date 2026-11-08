@@ -40,6 +40,7 @@ struct ZigUsage {
     need_malloc: bool,
     need_list: bool,
     need_eql: bool,
+    need_str_cmp: bool,
     need_str_concat: bool,
     need_str_contains: bool,
     need_upper: bool,
@@ -330,6 +331,9 @@ impl ZigFormatter {
                         if lty.as_ref().map(|t| self.type_needs_deep_eql(t)).unwrap_or(false) => {
                             u.need_eql = true;
                         }
+                    BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge if lty == Some(Type::Str) => {
+                        u.need_str_cmp = true;
+                    }
                     _ => {}
                 }
             }
@@ -506,6 +510,11 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
     return dst[0..total];
 }
 "#,
+            );
+        }
+        if u.need_str_cmp {
+            rt.push_str(
+                "fn starStrLt(a: []const u8, b: []const u8) bool { return std.mem.order(u8, a, b) == .lt; }\nfn starStrLe(a: []const u8, b: []const u8) bool { return std.mem.order(u8, a, b) != .gt; }\nfn starStrGt(a: []const u8, b: []const u8) bool { return std.mem.order(u8, a, b) == .gt; }\nfn starStrGe(a: []const u8, b: []const u8) bool { return std.mem.order(u8, a, b) != .lt; }\n",
             );
         }
         if u.need_str_contains {
@@ -1169,6 +1178,21 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
                     BinOp::Mod => {
                         return format!(
                             "@rem({}, {})",
+                            self.fmt_expr(left),
+                            self.fmt_expr(right)
+                        );
+                    }
+                    BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge if lty == Some(Type::Str) => {
+                        let fn_name = match op {
+                            BinOp::Lt => "starStrLt",
+                            BinOp::Le => "starStrLe",
+                            BinOp::Gt => "starStrGt",
+                            BinOp::Ge => "starStrGe",
+                            _ => unreachable!(),
+                        };
+                        return format!(
+                            "{}({}, {})",
+                            fn_name,
                             self.fmt_expr(left),
                             self.fmt_expr(right)
                         );
@@ -2989,6 +3013,38 @@ impl<'a> ZigParser<'a> {
                             let mut it = args.into_iter();
                             Ok(Expr::Binary {
                                 op: BinOp::Ne,
+                                left: Box::new(it.next().unwrap()),
+                                right: Box::new(it.next().unwrap()),
+                            })
+                        }
+                        ("starStrLt", 2) => {
+                            let mut it = args.into_iter();
+                            Ok(Expr::Binary {
+                                op: BinOp::Lt,
+                                left: Box::new(it.next().unwrap()),
+                                right: Box::new(it.next().unwrap()),
+                            })
+                        }
+                        ("starStrLe", 2) => {
+                            let mut it = args.into_iter();
+                            Ok(Expr::Binary {
+                                op: BinOp::Le,
+                                left: Box::new(it.next().unwrap()),
+                                right: Box::new(it.next().unwrap()),
+                            })
+                        }
+                        ("starStrGt", 2) => {
+                            let mut it = args.into_iter();
+                            Ok(Expr::Binary {
+                                op: BinOp::Gt,
+                                left: Box::new(it.next().unwrap()),
+                                right: Box::new(it.next().unwrap()),
+                            })
+                        }
+                        ("starStrGe", 2) => {
+                            let mut it = args.into_iter();
+                            Ok(Expr::Binary {
+                                op: BinOp::Ge,
                                 left: Box::new(it.next().unwrap()),
                                 right: Box::new(it.next().unwrap()),
                             })

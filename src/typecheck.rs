@@ -640,11 +640,31 @@ impl HubChecker {
                         if let Some(fty) = fields.get(field) {
                             return Some(fty.clone());
                         }
+                        self.diags.push(SemanticDiagnostic {
+                            node_id,
+                            context: ctx.to_string(),
+                            message: format!("struct '{}' has no field '{}'", sname, field),
+                        });
+                    } else {
+                        self.diags.push(SemanticDiagnostic {
+                            node_id,
+                            context: ctx.to_string(),
+                            message: format!(
+                                "cannot access field '{}' on {}",
+                                field,
+                                base_ty.display()
+                            ),
+                        });
                     }
+                } else {
                     self.diags.push(SemanticDiagnostic {
                         node_id,
                         context: ctx.to_string(),
-                        message: format!("struct '{}' has no field '{}'", sname, field),
+                        message: format!(
+                            "cannot access field '{}' on {}",
+                            field,
+                            base_ty.display()
+                        ),
                     });
                 }
                 None
