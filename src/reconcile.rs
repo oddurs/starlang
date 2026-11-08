@@ -303,6 +303,14 @@ fn prune_incompatible_param_meta(
     }
 }
 
+fn reconcile_ts_type(ty: &mut Type, prev_ty: &Type) {
+    match (ty, prev_ty) {
+        (t @ Type::Int, Type::Float) => *t = Type::Float,
+        (Type::List(inner), Type::List(prev_inner)) => reconcile_ts_type(inner, prev_inner),
+        _ => {}
+    }
+}
+
 fn reconcile_struct(
     s: &mut StructDecl,
     prev: Option<&StructDecl>,
@@ -333,6 +341,9 @@ fn reconcile_struct(
             matched[i] = true;
             field.id = claim_id(Some(pf.id), next_id, used);
             field.meta = merge_meta(&field.meta, Some(&pf.meta), edited_spoke);
+            if edited_spoke == SpokeId::TypeScript {
+                reconcile_ts_type(&mut field.ty, &pf.ty);
+            }
         } else {
             field.id = claim_id(None, next_id, used);
         }
@@ -350,6 +361,11 @@ fn reconcile_fn(
 ) {
     f.id = claim_id(prev.map(|p| p.id), next_id, used);
     f.meta = merge_meta(&f.meta, prev.map(|p| &p.meta), edited_spoke);
+    if edited_spoke == SpokeId::TypeScript {
+        if let Some(pf) = prev {
+            reconcile_ts_type(&mut f.ret_ty, &pf.ret_ty);
+        }
+    }
 
     let prev_params: &[Param] = prev.map(|p| p.params.as_slice()).unwrap_or(&[]);
     let mut matched = vec![false; prev_params.len()];
@@ -371,6 +387,9 @@ fn reconcile_fn(
             matched[i] = true;
             param.id = claim_id(Some(pp.id), next_id, used);
             param.meta = merge_meta(&param.meta, Some(&pp.meta), edited_spoke);
+            if edited_spoke == SpokeId::TypeScript {
+                reconcile_ts_type(&mut param.ty, &pp.ty);
+            }
         } else {
             param.id = claim_id(None, next_id, used);
         }
@@ -464,6 +483,11 @@ fn reconcile_stmts(
                 {
                     *id = claim_id(Some(*pid), next_id, used);
                     *meta = merge_meta(meta, Some(pmeta), edited_spoke);
+                    if edited_spoke == SpokeId::TypeScript {
+                        if let (Some(cur_t), Some(prev_t)) = (ty.as_mut(), pty.as_ref()) {
+                            reconcile_ts_type(cur_t, prev_t);
+                        }
+                    }
                     if ty.is_none()
                         && matches!(
                             edited_spoke,

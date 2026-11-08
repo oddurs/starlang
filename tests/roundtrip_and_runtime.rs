@@ -2781,7 +2781,8 @@ def main() -> None:
     let mut neg_eng = StarEngine::from_source(SpokeId::Python, neg_postfix_py).unwrap();
     let rust_neg = neg_eng.project(SpokeId::Rust);
     assert!(
-        rust_neg.contains("(-5).abs()") && rust_neg.contains("(-5).min("),
+        (rust_neg.contains("(-5 as i64).abs()") || rust_neg.contains("(-5).abs()"))
+            && (rust_neg.contains("(-5 as i64).min(") || rust_neg.contains("(-5).min(")),
         "Rust spoke must parenthesize negative int receiver before `.abs()` / `.min()`: {}",
         rust_neg
     );
@@ -3293,7 +3294,81 @@ def test_banner() -> None:
         bad_diags
     );
 
-    // 6. Multi-seed property-based fuzzer sweep validating GetPut, Cold Put, Optimizer, E-Graph & Wasm
+    // 6. Validate Float `abs`, `min`, `max` on both variables and untyped literals across all 13 spokes
+    //    and all 14 execution engines, plus E-Graph / Futamura PE on Float `x - x`, Str field/call
+    //    concatenation, and ForRange unrolling with `AssignTarget::Index`!
+    let float_intr_star = r#"(struct TagHolder
+  (field prefix Str)
+  (field suffix Str))
+
+(fn make_mid () -> Str
+  (return "-mid-"))
+
+(fn float_and_pe_probe ((param x Float) (param h TagHolder)) -> Str
+  (let zero_f (- x x))
+  (let lit_abs (abs (neg 3.5)))
+  (let lit_min (min 1.5 2.5))
+  (let lit_max (max (neg 1.25) 0.5))
+  (let var_abs (abs x))
+  (let total (+ (+ (+ lit_abs lit_min) (+ lit_max var_abs)) zero_f))
+  (let-mut slots (list 10 20 30))
+  (for-range i 0 3
+    (set! (index slots i) (* (+ i 1) 100)))
+  (let joined (+ (+ (get-field h prefix) (call make_mid)) (get-field h suffix)))
+  (return (+ (+ (+ joined ":") (to-str total)) (+ ":" (to-str (index slots 2))))))
+
+(fn main () -> Void
+  (let h (make TagHolder (prefix "L") (suffix "R")))
+  (print (call float_and_pe_probe (neg 2.0) h)))
+"#;
+    let mut float_eng = StarEngine::from_source(SpokeId::Star, float_intr_star).unwrap();
+    let float_hub = float_eng.hub().clone();
+    assert_eq!(float_eng.snapshot().live_eval.stdout.trim(), "L-mid-R:7.5:300");
+    for spoke_a in SpokeId::ALL {
+        let lens_a = lens_for(spoke_a);
+        let code_a = lens_a.get(&float_hub);
+        let warm_a = lens_a.put(&code_a, &float_hub).unwrap_or_else(|e| {
+            panic!("Float intrinsics Warm GetPut failed on {:?}: {}\n{}", spoke_a, e, code_a)
+        });
+        assert_eq!(warm_a, float_hub, "Float intrinsics GetPut drift on {:?}", spoke_a);
+    }
+    let float_run = run_all_spokes(&float_eng);
+    for r in &float_run.results {
+        assert!(
+            r.ok,
+            "Float intrinsics program failed on engine {}:\nstdout: {}\nstderr: {}",
+            r.language, r.stdout, r.stderr
+        );
+        assert_eq!(
+            r.stdout.trim(),
+            "L-mid-R:7.5:300",
+            "Float intrinsics diverged on engine {}",
+            r.language
+        );
+    }
+    assert!(float_run.outputs_match);
+
+    // Run Futamura Partial Evaluator + E-Graph Superoptimizer on `float_eng` and verify all 14 engines still match!
+    let (pe_rep, pe_snap_opt) = float_eng.partial_eval(true);
+    assert!(pe_rep.translation_validated, "{:?}", pe_rep);
+    assert!(pe_rep.loops_unrolled >= 1, "{:?}", pe_rep);
+    assert_eq!(pe_snap_opt.unwrap().live_eval.stdout.trim(), "L-mid-R:7.5:300");
+    assert!(
+        check_module(float_eng.hub()).is_empty(),
+        "Expected zero type/semantic diagnostics after PE + E-Graph, got: {:?}",
+        check_module(float_eng.hub())
+    );
+    let pe_run = run_all_spokes(&float_eng);
+    for r in &pe_run.results {
+        assert!(
+            r.ok,
+            "Post-PE float intrinsics program failed on engine {}:\nstdout: {}\nstderr: {}",
+            r.language, r.stdout, r.stderr
+        );
+        assert_eq!(r.stdout.trim(), "L-mid-R:7.5:300");
+    }
+
+    // 7. Multi-seed property-based fuzzer sweep validating GetPut, Cold Put, Optimizer, E-Graph & Wasm
     for seed in [0x000A_11CE_0001_u64, 0x0B0B_0002_u64, 0xCAFE_F00D_u64] {
         let fuzz = run_fuzz_suite(seed, 20);
         assert!(

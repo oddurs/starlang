@@ -536,6 +536,36 @@ impl RustFmtCtx {
         }
     }
 
+    fn is_untyped_numeric_expr(expr: &Expr) -> bool {
+        match expr {
+            Expr::Int(_) | Expr::Float(_) => true,
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                expr: inner,
+            } => Self::is_untyped_numeric_expr(inner),
+            Expr::Binary { left, right, .. } => {
+                Self::is_untyped_numeric_expr(left) && Self::is_untyped_numeric_expr(right)
+            }
+            _ => false,
+        }
+    }
+
+    fn fmt_numeric_receiver(&self, expr: &Expr) -> String {
+        if Self::is_untyped_numeric_expr(expr) {
+            let cast_ty = if self.expr_ty(expr) == Some(Type::Float) {
+                "f64"
+            } else {
+                "i64"
+            };
+            match expr {
+                Expr::Binary { .. } => format!("(({}) as {})", self.fmt_expr(expr), cast_ty),
+                _ => format!("({} as {})", self.fmt_expr(expr), cast_ty),
+            }
+        } else {
+            self.fmt_expr_postfix(expr)
+        }
+    }
+
     fn fmt_expr_postfix(&self, expr: &Expr) -> String {
         let s = self.fmt_expr(expr);
         match expr {
@@ -677,12 +707,12 @@ impl RustFmtCtx {
             Expr::Intrinsic(intr) => match intr.as_ref() {
                 Intrinsic::Len(e) => format!("{}.len() as i64", self.fmt_expr_postfix(e)),
                 Intrinsic::Min(a, b) => {
-                    format!("{}.min({})", self.fmt_expr_postfix(a), self.fmt_expr(b))
+                    format!("{}.min({})", self.fmt_numeric_receiver(a), self.fmt_expr(b))
                 }
                 Intrinsic::Max(a, b) => {
-                    format!("{}.max({})", self.fmt_expr_postfix(a), self.fmt_expr(b))
+                    format!("{}.max({})", self.fmt_numeric_receiver(a), self.fmt_expr(b))
                 }
-                Intrinsic::Abs(a) => format!("{}.abs()", self.fmt_expr_postfix(a)),
+                Intrinsic::Abs(a) => format!("{}.abs()", self.fmt_numeric_receiver(a)),
                 Intrinsic::Push { list, value } => {
                     format!(
                         "{}.push({})",

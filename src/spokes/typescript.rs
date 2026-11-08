@@ -52,8 +52,232 @@ impl LanguageLens for TypeScriptLens {
             pos: 0,
             known_structs,
         };
-        let parsed = parser.parse_module()?;
+        let mut parsed = parser.parse_module()?;
+        infer_ts_float_types(&mut parsed);
         Ok(reconcile_modules(parsed, prev_hub, SpokeId::TypeScript))
+    }
+}
+
+fn expr_contains_float(expr: &Expr) -> bool {
+    match expr {
+        Expr::Float(_) => true,
+        Expr::Unary { expr: inner, .. } => expr_contains_float(inner),
+        Expr::Binary { left, right, .. } => expr_contains_float(left) || expr_contains_float(right),
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Abs(a) => expr_contains_float(a),
+            Intrinsic::Min(a, b) | Intrinsic::Max(a, b) => {
+                expr_contains_float(a) || expr_contains_float(b)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn collect_ts_float_calls_and_fields(
+    stmts: &[Stmt],
+    float_param_calls: &mut HashSet<(String, usize)>,
+    float_struct_fields: &mut HashSet<(String, String)>,
+    has_float_return: &mut bool,
+) {
+    fn visit_expr(
+        expr: &Expr,
+        float_param_calls: &mut HashSet<(String, usize)>,
+        float_struct_fields: &mut HashSet<(String, String)>,
+    ) {
+        match expr {
+            Expr::Call { func, args } => {
+                for (i, a) in args.iter().enumerate() {
+                    if expr_contains_float(a) {
+                        float_param_calls.insert((func.clone(), i));
+                    }
+                    visit_expr(a, float_param_calls, float_struct_fields);
+                }
+            }
+            Expr::StructInit { name, fields } => {
+                for (fname, fval) in fields {
+                    if expr_contains_float(fval) {
+                        float_struct_fields.insert((name.clone(), fname.clone()));
+                    }
+                    visit_expr(fval, float_param_calls, float_struct_fields);
+                }
+            }
+            Expr::List(items) => {
+                for it in items {
+                    visit_expr(it, float_param_calls, float_struct_fields);
+                }
+            }
+            Expr::FieldAccess { base, .. } | Expr::Unary { expr: base, .. } => {
+                visit_expr(base, float_param_calls, float_struct_fields);
+            }
+            Expr::Index { base, index }
+            | Expr::Binary {
+                left: base,
+                right: index,
+                ..
+            } => {
+                visit_expr(base, float_param_calls, float_struct_fields);
+                visit_expr(index, float_param_calls, float_struct_fields);
+            }
+            Expr::Intrinsic(intr) => match intr.as_ref() {
+                Intrinsic::Len(a)
+                | Intrinsic::Abs(a)
+                | Intrinsic::Upper(a)
+                | Intrinsic::Lower(a)
+                | Intrinsic::ToStr(a) => visit_expr(a, float_param_calls, float_struct_fields),
+                Intrinsic::Min(a, b)
+                | Intrinsic::Max(a, b)
+                | Intrinsic::Push { list: a, value: b }
+                | Intrinsic::Contains {
+                    haystack: a,
+                    needle: b,
+                } => {
+                    visit_expr(a, float_param_calls, float_struct_fields);
+                    visit_expr(b, float_param_calls, float_struct_fields);
+                }
+                Intrinsic::Print(args) => {
+                    for a in args {
+                        visit_expr(a, float_param_calls, float_struct_fields);
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
+
+    for s in stmts {
+        match s {
+            Stmt::Let { value, .. } | Stmt::Expr { expr: value, .. } | Stmt::Assert { cond: value, .. } => {
+                visit_expr(value, float_param_calls, float_struct_fields);
+            }
+            Stmt::Assign { target, value, .. } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    visit_expr(index, float_param_calls, float_struct_fields);
+                }
+                visit_expr(value, float_param_calls, float_struct_fields);
+            }
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+                ..
+            } => {
+                visit_expr(cond, float_param_calls, float_struct_fields);
+                collect_ts_float_calls_and_fields(
+                    then_body,
+                    float_param_calls,
+                    float_struct_fields,
+                    has_float_return,
+                );
+                collect_ts_float_calls_and_fields(
+                    else_body,
+                    float_param_calls,
+                    float_struct_fields,
+                    has_float_return,
+                );
+            }
+            Stmt::Match { expr, arms, .. } => {
+                visit_expr(expr, float_param_calls, float_struct_fields);
+                for arm in arms {
+                    collect_ts_float_calls_and_fields(
+                        &arm.body,
+                        float_param_calls,
+                        float_struct_fields,
+                        has_float_return,
+                    );
+                }
+            }
+            Stmt::While { cond, body, .. } | Stmt::ForEach { iter: cond, body, .. } => {
+                visit_expr(cond, float_param_calls, float_struct_fields);
+                collect_ts_float_calls_and_fields(
+                    body,
+                    float_param_calls,
+                    float_struct_fields,
+                    has_float_return,
+                );
+            }
+            Stmt::ForRange {
+                start, end, body, ..
+            } => {
+                visit_expr(start, float_param_calls, float_struct_fields);
+                visit_expr(end, float_param_calls, float_struct_fields);
+                collect_ts_float_calls_and_fields(
+                    body,
+                    float_param_calls,
+                    float_struct_fields,
+                    has_float_return,
+                );
+            }
+            Stmt::Return {
+                value: Some(v), ..
+            } => {
+                if expr_contains_float(v) {
+                    *has_float_return = true;
+                }
+                visit_expr(v, float_param_calls, float_struct_fields);
+            }
+            Stmt::AssertEq { left, right, .. } => {
+                visit_expr(left, float_param_calls, float_struct_fields);
+                visit_expr(right, float_param_calls, float_struct_fields);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn infer_ts_float_types(hub: &mut HubModule) {
+    let mut float_param_calls = HashSet::new();
+    let mut float_struct_fields = HashSet::new();
+    let mut float_ret_fns = HashSet::new();
+    for item in &hub.items {
+        match item {
+            Item::Function(f) => {
+                let mut has_float_ret = false;
+                collect_ts_float_calls_and_fields(
+                    &f.body,
+                    &mut float_param_calls,
+                    &mut float_struct_fields,
+                    &mut has_float_ret,
+                );
+                if has_float_ret {
+                    float_ret_fns.insert(f.name.clone());
+                }
+            }
+            Item::Test(t) => {
+                let mut unused = false;
+                collect_ts_float_calls_and_fields(
+                    &t.body,
+                    &mut float_param_calls,
+                    &mut float_struct_fields,
+                    &mut unused,
+                );
+            }
+            _ => {}
+        }
+    }
+    for item in &mut hub.items {
+        match item {
+            Item::Struct(s) => {
+                for fld in &mut s.fields {
+                    if fld.ty == Type::Int
+                        && float_struct_fields.contains(&(s.name.clone(), fld.name.clone()))
+                    {
+                        fld.ty = Type::Float;
+                    }
+                }
+            }
+            Item::Function(f) => {
+                if f.ret_ty == Type::Int && float_ret_fns.contains(&f.name) {
+                    f.ret_ty = Type::Float;
+                }
+                for (i, p) in f.params.iter_mut().enumerate() {
+                    if p.ty == Type::Int && float_param_calls.contains(&(f.name.clone(), i)) {
+                        p.ty = Type::Float;
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 

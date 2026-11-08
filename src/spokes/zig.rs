@@ -580,7 +580,7 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
             );
         }
         if u.need_abs {
-            rt.push_str("fn starAbs(v: anytype) @TypeOf(v) { return if (v < 0) -v else v; }\n");
+            rt.push_str("fn starAbs(v: anytype) if (@TypeOf(v) == comptime_int) i64 else if (@TypeOf(v) == comptime_float) f64 else @TypeOf(v) { return if (v < 0) -v else v; }\n");
         }
         if u.need_println {
             rt.push_str(

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::Instant;
 
 use crate::complexity::analyze_complexity;
@@ -249,6 +249,8 @@ pub struct EClass {
     pub nodes: BTreeSet<ENode>,
     pub parents: Vec<(ENode, EClassId)>,
     pub const_val: Option<ConstDatum>,
+    pub is_non_numeric: bool,
+    pub is_float: bool,
 }
 
 pub struct EGraph {
@@ -260,6 +262,7 @@ pub struct EGraph {
     pub total_unions: usize,
     pub iterations: usize,
     pub non_numeric_vars: BTreeSet<String>,
+    pub float_vars: BTreeSet<String>,
 }
 
 impl Default for EGraph {
@@ -279,6 +282,7 @@ impl EGraph {
             total_unions: 0,
             iterations: 0,
             non_numeric_vars: BTreeSet::new(),
+            float_vars: BTreeSet::new(),
         }
     }
 
@@ -314,6 +318,55 @@ impl EGraph {
             _ => None,
         };
 
+        let is_non_numeric = match &canon {
+            ENode::Str(_)
+            | ENode::Bool(_)
+            | ENode::Upper(_)
+            | ENode::Lower(_)
+            | ENode::ToStr(_)
+            | ENode::List(_)
+            | ENode::StructInit { .. }
+            | ENode::EnumVariant { .. }
+            | ENode::Contains { .. } => true,
+            ENode::Var(v) => self.non_numeric_vars.contains(v),
+            ENode::Binary {
+                op: EBinOp::Add,
+                left,
+                right,
+            } => {
+                let l = self.find(*left);
+                let r = self.find(*right);
+                self.classes.get(&l).is_some_and(|c| c.is_non_numeric)
+                    || self.classes.get(&r).is_some_and(|c| c.is_non_numeric)
+            }
+            _ => false,
+        };
+        let is_float = match &canon {
+            ENode::FloatBits(_) => true,
+            ENode::Var(v) => self.float_vars.contains(v),
+            ENode::Unary {
+                op: EUnaryOp::Neg,
+                arg,
+            }
+            | ENode::Abs(arg) => {
+                let a = self.find(*arg);
+                self.classes.get(&a).is_some_and(|c| c.is_float)
+            }
+            ENode::Binary {
+                op: EBinOp::Add | EBinOp::Sub | EBinOp::Mul | EBinOp::Div,
+                left,
+                right,
+            }
+            | ENode::Min(left, right)
+            | ENode::Max(left, right) => {
+                let l = self.find(*left);
+                let r = self.find(*right);
+                self.classes.get(&l).is_some_and(|c| c.is_float)
+                    || self.classes.get(&r).is_some_and(|c| c.is_float)
+            }
+            _ => false,
+        };
+
         for child in canon.children() {
             let cid = self.find(child);
             if let Some(cclass) = self.classes.get_mut(&cid) {
@@ -330,6 +383,8 @@ impl EGraph {
                 nodes,
                 parents: Vec::new(),
                 const_val,
+                is_non_numeric,
+                is_float,
             },
         );
         self.memo.insert(canon, id);
@@ -493,6 +548,8 @@ impl EGraph {
                 if target.const_val.is_none() {
                     target.const_val = dropped.const_val;
                 }
+                target.is_non_numeric |= dropped.is_non_numeric;
+                target.is_float |= dropped.is_float;
             }
         }
         self.worklist.push(keep);
@@ -571,6 +628,24 @@ impl EGraph {
         self.classes.get(&root).and_then(|c| c.const_val.clone())
     }
 
+    pub fn is_float_class(&self, id: EClassId) -> bool {
+        let root = self.find(id);
+        if matches!(self.const_of(root), Some(ConstDatum::Float(_))) {
+            return true;
+        }
+        let Some(cls) = self.classes.get(&root) else {
+            return false;
+        };
+        if cls.is_float {
+            return true;
+        }
+        cls.nodes.iter().any(|n| match n {
+            ENode::FloatBits(_) => true,
+            ENode::Var(v) => self.float_vars.contains(v),
+            _ => false,
+        })
+    }
+
     pub fn is_numeric_class(&self, id: EClassId) -> bool {
         let root = self.find(id);
         if matches!(
@@ -582,10 +657,13 @@ impl EGraph {
         let Some(cls) = self.classes.get(&root) else {
             return false;
         };
+        if cls.is_non_numeric {
+            return false;
+        }
         let mut has_numeric = matches!(
             self.const_of(root),
             Some(ConstDatum::Int(_) | ConstDatum::Float(_))
-        );
+        ) || cls.is_float;
         for n in &cls.nodes {
             match n {
                 ENode::Str(_)
@@ -752,14 +830,26 @@ impl EGraph {
             }
             ENode::Min(a, b) => match (self.const_of(*a)?, self.const_of(*b)?) {
                 (ConstDatum::Int(x), ConstDatum::Int(y)) => Some(ENode::Int(x.min(y))),
+                (ConstDatum::Float(x), ConstDatum::Float(y)) => {
+                    let r = if x < y { x } else { y };
+                    Some(ENode::FloatBits((if r == 0.0 { 0.0 } else { r }).to_bits()))
+                }
                 _ => None,
             },
             ENode::Max(a, b) => match (self.const_of(*a)?, self.const_of(*b)?) {
                 (ConstDatum::Int(x), ConstDatum::Int(y)) => Some(ENode::Int(x.max(y))),
+                (ConstDatum::Float(x), ConstDatum::Float(y)) => {
+                    let r = if x > y { x } else { y };
+                    Some(ENode::FloatBits((if r == 0.0 { 0.0 } else { r }).to_bits()))
+                }
                 _ => None,
             },
             ENode::Abs(a) => match self.const_of(*a)? {
                 ConstDatum::Int(x) => x.checked_abs().map(ENode::Int),
+                ConstDatum::Float(x) => {
+                    let r = x.abs();
+                    Some(ENode::FloatBits((if r == 0.0 { 0.0 } else { r }).to_bits()))
+                }
                 _ => None,
             },
             ENode::Upper(a) => match self.const_of(*a)? {
@@ -782,7 +872,7 @@ impl EGraph {
                 for n in &cls.nodes {
                     match n {
                         ENode::List(items) => return Some(ENode::Int(items.len() as i64)),
-                        ENode::Str(s) => return Some(ENode::Int(s.chars().count() as i64)),
+                        ENode::Str(s) => return Some(ENode::Int(s.len() as i64)),
                         _ => {}
                     }
                 }
@@ -896,7 +986,11 @@ impl EGraph {
                                         && self.is_numeric_class(l)
                                         && self.is_pure_class(l)
                                     {
-                                        let two = self.add(ENode::Int(2));
+                                        let two = if self.is_float_class(l) {
+                                            self.add(ENode::FloatBits(2.0_f64.to_bits()))
+                                        } else {
+                                            self.add(ENode::Int(2))
+                                        };
                                         let mul2 = self.add(ENode::Binary {
                                             op: EBinOp::Mul,
                                             left: l,
@@ -1044,8 +1138,15 @@ impl EGraph {
                                     if matches!(r_const, Some(ConstDatum::Int(0))) {
                                         pending_merges.push((cid, l, "sub-zero"));
                                     }
-                                    if l == r && self.is_pure_class(l) {
-                                        let zero = self.add(ENode::Int(0));
+                                    if l == r
+                                        && self.is_numeric_class(l)
+                                        && self.is_pure_class(l)
+                                    {
+                                        let zero = if self.is_float_class(l) {
+                                            self.add(ENode::FloatBits(0.0_f64.to_bits()))
+                                        } else {
+                                            self.add(ENode::Int(0))
+                                        };
                                         pending_merges.push((cid, zero, "sub-self"));
                                     }
 
@@ -1776,17 +1877,60 @@ pub fn superoptimize_egraph(hub: &HubModule) -> EGraphReport {
     let mut eg = EGraph::new();
 
     // 1. Seed the E-Graph with all expressions in the module
+    let mut fn_ret_types: HashMap<String, crate::hub::Type> = HashMap::new();
+    let mut struct_fields: HashMap<String, HashMap<String, crate::hub::Type>> = HashMap::new();
+    let mut enum_names: HashSet<String> = HashSet::new();
     for item in &hub.items {
         match item {
             Item::Function(f) => {
+                fn_ret_types.insert(f.name.clone(), f.ret_ty.clone());
+            }
+            Item::Struct(s) => {
+                let mut fmap = HashMap::new();
+                for fld in &s.fields {
+                    fmap.insert(fld.name.clone(), fld.ty.clone());
+                }
+                struct_fields.insert(s.name.clone(), fmap);
+            }
+            Item::Enum(e) => {
+                enum_names.insert(e.name.clone());
+            }
+            _ => {}
+        }
+    }
+
+    for item in &hub.items {
+        match item {
+            Item::Function(f) => {
+                let mut env: HashMap<String, crate::hub::Type> = HashMap::new();
                 for p in &f.params {
-                    if !matches!(p.ty, crate::hub::Type::Int | crate::hub::Type::Float) {
+                    env.insert(p.name.clone(), p.ty.clone());
+                    if p.ty == crate::hub::Type::Float {
+                        eg.float_vars.insert(p.name.clone());
+                    } else if p.ty != crate::hub::Type::Int {
                         eg.non_numeric_vars.insert(p.name.clone());
                     }
                 }
-                seed_stmts_in_egraph(&mut eg, &f.body);
+                seed_stmts_in_egraph(
+                    &mut eg,
+                    &f.body,
+                    &mut env,
+                    &fn_ret_types,
+                    &struct_fields,
+                    &enum_names,
+                );
             }
-            Item::Test(t) => seed_stmts_in_egraph(&mut eg, &t.body),
+            Item::Test(t) => {
+                let mut env: HashMap<String, crate::hub::Type> = HashMap::new();
+                seed_stmts_in_egraph(
+                    &mut eg,
+                    &t.body,
+                    &mut env,
+                    &fn_ret_types,
+                    &struct_fields,
+                    &enum_names,
+                );
+            }
             _ => {}
         }
     }
@@ -1875,44 +2019,114 @@ pub fn superoptimize_egraph(hub: &HubModule) -> EGraphReport {
     }
 }
 
-fn seed_stmts_in_egraph(eg: &mut EGraph, stmts: &[Stmt]) {
+fn seed_expr_in_egraph(
+    eg: &mut EGraph,
+    expr: &Expr,
+    env: &HashMap<String, crate::hub::Type>,
+    fn_ret_types: &HashMap<String, crate::hub::Type>,
+    struct_fields: &HashMap<String, HashMap<String, crate::hub::Type>>,
+    enum_names: &HashSet<String>,
+) -> EClassId {
+    match expr {
+        Expr::List(items) => {
+            for e in items {
+                seed_expr_in_egraph(eg, e, env, fn_ret_types, struct_fields, enum_names);
+            }
+        }
+        Expr::StructInit { fields, .. } => {
+            for (_, v) in fields {
+                seed_expr_in_egraph(eg, v, env, fn_ret_types, struct_fields, enum_names);
+            }
+        }
+        Expr::FieldAccess { base, .. } | Expr::Unary { expr: base, .. } => {
+            seed_expr_in_egraph(eg, base, env, fn_ret_types, struct_fields, enum_names);
+        }
+        Expr::Index { base, index } => {
+            seed_expr_in_egraph(eg, base, env, fn_ret_types, struct_fields, enum_names);
+            seed_expr_in_egraph(eg, index, env, fn_ret_types, struct_fields, enum_names);
+        }
+        Expr::Binary { left, right, .. } => {
+            seed_expr_in_egraph(eg, left, env, fn_ret_types, struct_fields, enum_names);
+            seed_expr_in_egraph(eg, right, env, fn_ret_types, struct_fields, enum_names);
+        }
+        Expr::Call { args, .. } => {
+            for a in args {
+                seed_expr_in_egraph(eg, a, env, fn_ret_types, struct_fields, enum_names);
+            }
+        }
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Len(a)
+            | Intrinsic::Abs(a)
+            | Intrinsic::Upper(a)
+            | Intrinsic::Lower(a)
+            | Intrinsic::ToStr(a) => {
+                seed_expr_in_egraph(eg, a, env, fn_ret_types, struct_fields, enum_names);
+            }
+            Intrinsic::Min(a, b)
+            | Intrinsic::Max(a, b)
+            | Intrinsic::Push { list: a, value: b }
+            | Intrinsic::Contains {
+                haystack: a,
+                needle: b,
+            } => {
+                seed_expr_in_egraph(eg, a, env, fn_ret_types, struct_fields, enum_names);
+                seed_expr_in_egraph(eg, b, env, fn_ret_types, struct_fields, enum_names);
+            }
+            Intrinsic::Print(args) => {
+                for a in args {
+                    seed_expr_in_egraph(eg, a, env, fn_ret_types, struct_fields, enum_names);
+                }
+            }
+        },
+        _ => {}
+    }
+    let cid = eg.add_expr(expr);
+    let root = eg.find(cid);
+    if let Some(ty) = crate::hub::infer_expr_type(expr, env, fn_ret_types, struct_fields, enum_names)
+    {
+        if let Some(cls) = eg.classes.get_mut(&root) {
+            if ty == crate::hub::Type::Float {
+                cls.is_float = true;
+            } else if ty != crate::hub::Type::Int {
+                cls.is_non_numeric = true;
+            }
+        }
+    }
+    root
+}
+
+fn seed_stmts_in_egraph(
+    eg: &mut EGraph,
+    stmts: &[Stmt],
+    env: &mut HashMap<String, crate::hub::Type>,
+    fn_ret_types: &HashMap<String, crate::hub::Type>,
+    struct_fields: &HashMap<String, HashMap<String, crate::hub::Type>>,
+    enum_names: &HashSet<String>,
+) {
     for stmt in stmts {
         match stmt {
             Stmt::Comment { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => {}
             Stmt::Let {
                 name, ty, value, ..
             } => {
-                if let Some(t) = ty {
-                    if !matches!(t, crate::hub::Type::Int | crate::hub::Type::Float) {
+                let inferred = ty.clone().or_else(|| {
+                    crate::hub::infer_expr_type(value, env, fn_ret_types, struct_fields, enum_names)
+                });
+                if let Some(t) = inferred {
+                    env.insert(name.clone(), t.clone());
+                    if t == crate::hub::Type::Float {
+                        eg.float_vars.insert(name.clone());
+                    } else if t != crate::hub::Type::Int {
                         eg.non_numeric_vars.insert(name.clone());
                     }
-                } else if matches!(
-                    value,
-                    Expr::Str(_)
-                        | Expr::Bool(_)
-                        | Expr::List(_)
-                        | Expr::StructInit { .. }
-                        | Expr::EnumVariant { .. }
-                ) || matches!(
-                    value,
-                    Expr::Intrinsic(intr)
-                        if matches!(
-                            intr.as_ref(),
-                            Intrinsic::Upper(_)
-                                | Intrinsic::Lower(_)
-                                | Intrinsic::ToStr(_)
-                                | Intrinsic::Contains { .. }
-                        )
-                ) {
-                    eg.non_numeric_vars.insert(name.clone());
                 }
-                eg.add_expr(value);
+                seed_expr_in_egraph(eg, value, env, fn_ret_types, struct_fields, enum_names);
             }
             Stmt::Assign { target, value, .. } => {
                 if let AssignTarget::Index { index, .. } = target {
-                    eg.add_expr(index);
+                    seed_expr_in_egraph(eg, index, env, fn_ret_types, struct_fields, enum_names);
                 }
-                eg.add_expr(value);
+                seed_expr_in_egraph(eg, value, env, fn_ret_types, struct_fields, enum_names);
             }
             Stmt::If {
                 cond,
@@ -1920,45 +2134,110 @@ fn seed_stmts_in_egraph(eg: &mut EGraph, stmts: &[Stmt]) {
                 else_body,
                 ..
             } => {
-                eg.add_expr(cond);
-                seed_stmts_in_egraph(eg, then_body);
-                seed_stmts_in_egraph(eg, else_body);
+                seed_expr_in_egraph(eg, cond, env, fn_ret_types, struct_fields, enum_names);
+                let mut then_env = env.clone();
+                seed_stmts_in_egraph(
+                    eg,
+                    then_body,
+                    &mut then_env,
+                    fn_ret_types,
+                    struct_fields,
+                    enum_names,
+                );
+                let mut else_env = env.clone();
+                seed_stmts_in_egraph(
+                    eg,
+                    else_body,
+                    &mut else_env,
+                    fn_ret_types,
+                    struct_fields,
+                    enum_names,
+                );
             }
             Stmt::Match { expr, arms, .. } => {
-                eg.add_expr(expr);
+                seed_expr_in_egraph(eg, expr, env, fn_ret_types, struct_fields, enum_names);
                 for arm in arms {
-                    seed_stmts_in_egraph(eg, &arm.body);
+                    let mut arm_env = env.clone();
+                    seed_stmts_in_egraph(
+                        eg,
+                        &arm.body,
+                        &mut arm_env,
+                        fn_ret_types,
+                        struct_fields,
+                        enum_names,
+                    );
                 }
             }
             Stmt::While { cond, body, .. } => {
-                eg.add_expr(cond);
-                seed_stmts_in_egraph(eg, body);
+                seed_expr_in_egraph(eg, cond, env, fn_ret_types, struct_fields, enum_names);
+                let mut body_env = env.clone();
+                seed_stmts_in_egraph(
+                    eg,
+                    body,
+                    &mut body_env,
+                    fn_ret_types,
+                    struct_fields,
+                    enum_names,
+                );
             }
-            Stmt::ForEach { iter, body, .. } => {
-                eg.add_expr(iter);
-                seed_stmts_in_egraph(eg, body);
+            Stmt::ForEach {
+                var, iter, body, ..
+            } => {
+                seed_expr_in_egraph(eg, iter, env, fn_ret_types, struct_fields, enum_names);
+                let mut body_env = env.clone();
+                if let Some(crate::hub::Type::List(elem_ty)) =
+                    crate::hub::infer_expr_type(iter, env, fn_ret_types, struct_fields, enum_names)
+                {
+                    body_env.insert(var.clone(), (*elem_ty).clone());
+                    if *elem_ty == crate::hub::Type::Float {
+                        eg.float_vars.insert(var.clone());
+                    } else if *elem_ty != crate::hub::Type::Int {
+                        eg.non_numeric_vars.insert(var.clone());
+                    }
+                }
+                seed_stmts_in_egraph(
+                    eg,
+                    body,
+                    &mut body_env,
+                    fn_ret_types,
+                    struct_fields,
+                    enum_names,
+                );
             }
             Stmt::ForRange {
-                start, end, body, ..
+                var,
+                start,
+                end,
+                body,
+                ..
             } => {
-                eg.add_expr(start);
-                eg.add_expr(end);
-                seed_stmts_in_egraph(eg, body);
+                seed_expr_in_egraph(eg, start, env, fn_ret_types, struct_fields, enum_names);
+                seed_expr_in_egraph(eg, end, env, fn_ret_types, struct_fields, enum_names);
+                let mut body_env = env.clone();
+                body_env.insert(var.clone(), crate::hub::Type::Int);
+                seed_stmts_in_egraph(
+                    eg,
+                    body,
+                    &mut body_env,
+                    fn_ret_types,
+                    struct_fields,
+                    enum_names,
+                );
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
-                    eg.add_expr(v);
+                    seed_expr_in_egraph(eg, v, env, fn_ret_types, struct_fields, enum_names);
                 }
             }
             Stmt::Assert { cond, .. } => {
-                eg.add_expr(cond);
+                seed_expr_in_egraph(eg, cond, env, fn_ret_types, struct_fields, enum_names);
             }
             Stmt::AssertEq { left, right, .. } => {
-                eg.add_expr(left);
-                eg.add_expr(right);
+                seed_expr_in_egraph(eg, left, env, fn_ret_types, struct_fields, enum_names);
+                seed_expr_in_egraph(eg, right, env, fn_ret_types, struct_fields, enum_names);
             }
             Stmt::Expr { expr, .. } => {
-                eg.add_expr(expr);
+                seed_expr_in_egraph(eg, expr, env, fn_ret_types, struct_fields, enum_names);
             }
         }
     }
@@ -2643,6 +2922,23 @@ fn peval_stmts(
                 value,
                 meta,
             } => {
+                let new_target = match target {
+                    AssignTarget::Index { base, index } => AssignTarget::Index {
+                        base: base.clone(),
+                        index: peval_expr(
+                            caller_name,
+                            index,
+                            env,
+                            fns_map,
+                            synthesized_fns,
+                            specializations,
+                            static_branches_folded,
+                            loops_unrolled,
+                            alloc_id,
+                        ),
+                    },
+                    other => other.clone(),
+                };
                 let v = peval_expr(
                     caller_name,
                     value,
@@ -2654,10 +2950,10 @@ fn peval_stmts(
                     loops_unrolled,
                     alloc_id,
                 );
-                env.remove(target.root_var());
+                env.remove(new_target.root_var());
                 out.push(Stmt::Assign {
                     id: *id,
-                    target: target.clone(),
+                    target: new_target,
                     op: *op,
                     value: v,
                     meta: meta.clone(),
