@@ -3,42 +3,97 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StarLang Studio — 13-Spoke Bidirectional Compiler & Formal Verification Workbench</title>
+  <title>StarLang Studio — 13-Spoke Bidirectional Compiler &amp; Formal Verification Workbench</title>
   <style>
+    /* =========================================================================
+       STARLANG DESIGN SYSTEM (SLDS v1.0) — FOUNDATIONAL TOKENS
+       ========================================================================= */
     :root {
-      --bg: #f8fafc;
+      /* Neutral Scale (Cool Zinc / Alabaster Dark-on-Light) */
+      --ds-gray-25:  #fcfcfd;
+      --ds-gray-50:  #f8fafc;
+      --ds-gray-100: #f1f5f9;
+      --ds-gray-150: #eaeff5;
+      --ds-gray-200: #e2e8f0;
+      --ds-gray-300: #cbd5e1;
+      --ds-gray-400: #94a3b8;
+      --ds-gray-500: #64748b;
+      --ds-gray-600: #475569;
+      --ds-gray-700: #334155;
+      --ds-gray-800: #1e293b;
+      --ds-gray-900: #0f172a;
+      --ds-gray-950: #09090b;
+
+      /* Semantic Surfaces */
+      --bg: var(--ds-gray-50);
       --surface: #ffffff;
-      --surface-subtle: #f1f5f9;
-      --surface-muted: #f8fafc;
-      --surface-hover: #f1f5f9;
-      --border: #e2e8f0;
-      --border-strong: #cbd5e1;
-      --text: #09090b;
-      --text-secondary: #334155;
-      --muted: #64748b;
+      --surface-subtle: var(--ds-gray-100);
+      --surface-muted: var(--ds-gray-25);
+      --surface-hover: var(--ds-gray-100);
+      --surface-glass: rgba(255, 255, 255, 0.88);
+
+      /* Borders & Dividers */
+      --border: var(--ds-gray-200);
+      --border-strong: var(--ds-gray-300);
+      --border-focus: #2563eb;
+
+      /* Ink & Typography */
+      --text: var(--ds-gray-950);
+      --text-secondary: var(--ds-gray-700);
+      --muted: var(--ds-gray-500);
+      --subtle-ink: var(--ds-gray-400);
+
+      /* Brand & Interactive Accents */
+      --primary-bg: var(--ds-gray-950);
+      --primary-hover: #27272a;
+      --primary-text: #ffffff;
+
       --accent: #2563eb;
       --accent-soft: #eff6ff;
       --accent-border: #bfdbfe;
-      --primary-bg: #09090b;
-      --primary-hover: #27272a;
-      --primary-text: #ffffff;
-      --lift: #d97706;
-      --lift-soft: #fffbeb;
-      --lift-border: #fde68a;
+
+      /* Semantic Status Tokens (High-Contrast Dark-on-Light) */
       --ok: #047857;
       --ok-soft: #ecfdf5;
       --ok-border: #a7f3d0;
-      --err: #be123c;
-      --err-soft: #fff1f2;
-      --err-border: #fecdd3;
+
+      --lift: #b45309;
+      --lift-soft: #fffbeb;
+      --lift-border: #fde68a;
+
       --warn: #b45309;
       --warn-soft: #fffbeb;
       --warn-border: #fde68a;
-      --shadow-xs: 0 1px 2px rgba(9, 9, 11, 0.04);
-      --shadow-sm: 0 1px 3px rgba(9, 9, 11, 0.06), 0 1px 2px rgba(9, 9, 11, 0.04);
-      --shadow-md: 0 4px 12px rgba(9, 9, 11, 0.07);
+
+      --err: #be123c;
+      --err-soft: #fff1f2;
+      --err-border: #fecdd3;
+
+      --violet: #6d28d9;
+      --violet-soft: #f5f3ff;
+      --violet-border: #ddd6fe;
+
+      /* Elevation & Shadows */
+      --shadow-2xs: 0 1px 1px rgba(9, 9, 11, 0.03);
+      --shadow-xs:  0 1px 2px rgba(9, 9, 11, 0.04);
+      --shadow-sm:  0 1px 3px rgba(9, 9, 11, 0.05), 0 1px 2px rgba(9, 9, 11, 0.03);
+      --shadow-md:  0 4px 12px -2px rgba(9, 9, 11, 0.08), 0 2px 6px -1px rgba(9, 9, 11, 0.04);
+      --shadow-lg:  0 16px 36px -6px rgba(9, 9, 11, 0.14), 0 4px 12px -2px rgba(9, 9, 11, 0.06);
+      --ring-focus: 0 0 0 3px rgba(37, 99, 235, 0.14);
+
+      /* Radii & Spacing */
+      --radius-xs: 4px;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 10px;
+      --radius-xl: 12px;
+
+      /* Typography Families */
       --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
       --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+      /* Motion Physics */
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     * { box-sizing: border-box; }
@@ -52,7 +107,9 @@
       background: var(--bg);
       color: var(--text);
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
       letter-spacing: -0.011em;
+      font-variant-numeric: tabular-nums;
     }
 
     body {
@@ -60,58 +117,149 @@
       flex-direction: column;
     }
 
+    /* Custom Minimalist Scrollbars */
+    ::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--ds-gray-300);
+      border-radius: 999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--ds-gray-400);
+    }
+
     /* =========================================================================
-       ZONE 1: TOP APPLICATION BAR (Minimalist Single-Row App Header)
+       SLDS ATOMIC COMPONENTS: BUTTONS, INPUTS, SELECTS, BADGES, KBD
+       ========================================================================= */
+    select, button, input[type="text"] {
+      font-family: var(--font-sans);
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.3;
+      transition: background 0.12s var(--ease-out), border-color 0.12s var(--ease-out), box-shadow 0.12s var(--ease-out), transform 0.08s ease;
+      box-shadow: var(--shadow-2xs);
+    }
+
+    select:hover, button:hover:not(:disabled) {
+      background: var(--surface-hover);
+      border-color: var(--border-strong);
+    }
+
+    button:active:not(:disabled) {
+      transform: translateY(0.5px);
+    }
+
+    select:focus, input[type="text"]:focus, button:focus-visible {
+      outline: none;
+      border-color: var(--border-focus);
+      box-shadow: var(--ring-focus);
+    }
+
+    button {
+      cursor: pointer;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    button:disabled {
+      opacity: 0.38;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    kbd.ds-kbd {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 4px;
+      border-radius: 4px;
+      background: var(--ds-gray-100);
+      border: 1px solid var(--ds-gray-200);
+      color: var(--ds-gray-600);
+      box-shadow: 0 1px 0 var(--ds-gray-200);
+      line-height: 1.2;
+    }
+
+    .ds-icon-btn {
+      padding: 2px 6px;
+      font-size: 10.5px;
+      font-weight: 600;
+      border-radius: 5px;
+      color: var(--text-secondary);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+    .ds-icon-btn:hover:not(:disabled) {
+      background: var(--surface-subtle);
+      color: var(--text);
+    }
+
+    /* =========================================================================
+       ZONE 1: TOP APPLICATION BAR (48px Precision Header)
        ========================================================================= */
     header.app-topbar {
-      height: 52px;
-      padding: 0 16px;
+      height: 50px;
+      padding: 0 14px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       flex-shrink: 0;
-      z-index: 20;
+      z-index: 30;
     }
 
     .topbar-left {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       min-width: 0;
     }
 
     .brand-mark {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
       font-weight: 700;
-      font-size: 14px;
+      font-size: 13.5px;
       color: var(--text);
       white-space: nowrap;
-      letter-spacing: -0.02em;
+      letter-spacing: -0.025em;
     }
 
     .brand-star {
-      width: 24px;
-      height: 24px;
+      width: 22px;
+      height: 22px;
       border-radius: 6px;
       background: var(--primary-bg);
       color: var(--primary-text);
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 13px;
+      font-size: 12px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.2);
     }
 
     .version-badge {
       font-family: var(--font-mono);
-      font-size: 10.5px;
+      font-size: 10px;
       font-weight: 600;
-      padding: 2px 6px;
-      border-radius: 5px;
+      padding: 1.5px 5.5px;
+      border-radius: 4px;
       background: var(--surface-subtle);
       color: var(--text-secondary);
       border: 1px solid var(--border);
@@ -122,15 +270,24 @@
       position: relative;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 3px 8px;
-      border-radius: 6px;
+      gap: 5px;
+      padding: 3.5px 8px;
+      border-radius: var(--radius-sm);
       background: var(--surface-muted);
       border: 1px solid var(--border);
-      font-size: 11.5px;
-      font-weight: 500;
+      font-size: 11px;
+      font-weight: 600;
       color: var(--text-secondary);
       cursor: default;
+      white-space: nowrap;
+    }
+
+    .topology-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0 2px var(--ok-soft);
     }
 
     .topology-pill:hover .topology-popover {
@@ -144,26 +301,29 @@
       left: 0;
       background: var(--surface);
       border: 1px solid var(--border-strong);
-      border-radius: 10px;
+      border-radius: var(--radius-lg);
       padding: 12px 14px;
-      box-shadow: var(--shadow-md);
-      z-index: 100;
+      box-shadow: var(--shadow-lg);
+      z-index: 120;
       flex-direction: column;
-      gap: 6px;
-      width: 260px;
+      gap: 8px;
+      width: 270px;
     }
 
     .topology-popover-title {
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 10.5px;
+      font-weight: 700;
       color: var(--muted);
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.05em;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
 
     svg.star-svg {
-      width: 168px;
-      height: 60px;
+      width: 176px;
+      height: 64px;
       flex-shrink: 0;
       align-self: center;
     }
@@ -175,58 +335,34 @@
 
     .divider-v {
       width: 1px;
-      height: 20px;
+      height: 18px;
       background: var(--border);
       flex-shrink: 0;
     }
 
-    /* Controls: Inputs, Selects, Buttons */
-    select, button, input[type="text"] {
-      font-family: var(--font-sans);
-      background: var(--surface);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 5px 10px;
-      font-size: 12px;
-      font-weight: 500;
-      line-height: 1.3;
-      transition: all 0.12s ease;
-      box-shadow: var(--shadow-xs);
-    }
-
-    select:hover, button:hover:not(:disabled) {
-      background: var(--surface-hover);
-      border-color: var(--border-strong);
-    }
-
-    select:focus, input[type="text"]:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
-    }
-
     #sample-select {
-      max-width: 250px;
+      max-width: 230px;
       font-weight: 600;
+      font-size: 11.5px;
       color: var(--text);
       background-color: var(--surface-muted);
+      padding: 4px 8px;
     }
 
     .history-group {
       display: inline-flex;
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       overflow: hidden;
-      box-shadow: var(--shadow-xs);
+      box-shadow: var(--shadow-2xs);
     }
 
     .history-group button {
       border: none;
       border-radius: 0;
       box-shadow: none;
-      padding: 5px 8px;
-      font-size: 11.5px;
+      padding: 4px 8px;
+      font-size: 11px;
       background: var(--surface);
     }
 
@@ -234,18 +370,11 @@
       border-left: 1px solid var(--border);
     }
 
-    button { cursor: pointer; user-select: none; }
-    button:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-      box-shadow: none;
-    }
-
-    /* Center Telemetry Strip */
+    /* Center Live Telemetry Strip */
     .topbar-center {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       overflow-x: auto;
       scrollbar-width: none;
     }
@@ -256,7 +385,7 @@
       font-size: 11px;
       font-weight: 500;
       padding: 3px 8px;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       background: var(--surface-muted);
       border: 1px solid var(--border);
       color: var(--text-secondary);
@@ -264,6 +393,7 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
+      transition: all 0.12s ease;
     }
 
     #hub-rev {
@@ -274,7 +404,7 @@
       background: var(--surface-subtle);
       border: 1px solid var(--border);
       padding: 3px 8px;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       white-space: nowrap;
     }
 
@@ -283,7 +413,7 @@
       font-size: 11px;
       font-weight: 600;
       padding: 3px 8px;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       background: var(--ok-soft);
       border: 1px solid var(--ok-border);
       color: var(--ok);
@@ -295,8 +425,9 @@
       background: var(--ok-soft);
       border-color: var(--ok-border);
       color: var(--ok);
+      font-weight: 600;
     }
-    .safety-pill:hover { filter: brightness(0.97); }
+    .safety-pill:hover { filter: brightness(0.96); }
     .safety-pill.warn {
       background: var(--warn-soft);
       border-color: var(--warn-border);
@@ -304,18 +435,22 @@
     }
 
     .test-pill {
+      cursor: pointer;
       background: var(--accent-soft);
       border-color: var(--accent-border);
       color: #1d4ed8;
+      font-weight: 600;
     }
+    .test-pill:hover { filter: brightness(0.96); }
 
     .cov-pill {
       cursor: pointer;
       background: var(--ok-soft);
       border-color: var(--ok-border);
       color: var(--ok);
+      font-weight: 600;
     }
-    .cov-pill:hover { filter: brightness(0.97); }
+    .cov-pill:hover { filter: brightness(0.96); }
     .cov-pill.warn {
       background: var(--warn-soft);
       border-color: var(--warn-border);
@@ -323,13 +458,15 @@
     }
 
     .vm-preview {
-      max-width: 280px;
+      cursor: pointer;
+      max-width: 240px;
       overflow: hidden;
       text-overflow: ellipsis;
       background: var(--surface-muted);
       border-color: var(--border);
       color: var(--text);
     }
+    .vm-preview:hover { border-color: var(--border-strong); }
 
     .vm-preview.err, .test-pill.err, .safety-pill.err {
       background: var(--err-soft);
@@ -341,8 +478,22 @@
     .topbar-right {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       flex-shrink: 0;
+    }
+
+    .cmd-trigger-btn {
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 4px 8px;
+      font-size: 11.5px;
+      font-weight: 500;
+      gap: 8px;
+    }
+    .cmd-trigger-btn:hover {
+      color: var(--text);
+      border-color: var(--border-strong);
     }
 
     button.run-btn {
@@ -350,8 +501,10 @@
       border-color: var(--primary-bg);
       color: var(--primary-text);
       font-weight: 600;
-      padding: 6px 12px;
+      padding: 5px 11px;
+      font-size: 11.5px;
       letter-spacing: -0.01em;
+      box-shadow: 0 1px 2px rgba(9, 9, 11, 0.15);
     }
     button.run-btn:hover:not(:disabled) {
       background: var(--primary-hover);
@@ -364,23 +517,22 @@
       border-color: var(--border-strong);
       color: var(--text);
       font-weight: 600;
-    }
-    button.opt-btn:hover:not(:disabled) {
-      background: var(--surface-subtle);
+      font-size: 11.5px;
+      padding: 5px 9px;
     }
 
     /* =========================================================================
        ZONE 2: WORKSPACE CONTROL BAR (Layout Switcher + 13 Spoke Pills)
        ========================================================================= */
     .workspace-bar {
-      min-height: 42px;
-      padding: 6px 16px;
-      background: var(--surface-muted);
+      min-height: 40px;
+      padding: 5px 14px;
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
       flex-shrink: 0;
     }
@@ -388,7 +540,7 @@
     .workspace-left {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
     }
 
@@ -423,12 +575,12 @@
     .spoke-toggles {
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 3px;
       flex-wrap: wrap;
     }
 
     .toggle-pill {
-      padding: 3px 9px;
+      padding: 3px 8px;
       border-radius: 6px;
       border: 1px solid transparent;
       background: transparent;
@@ -438,6 +590,18 @@
       cursor: pointer;
       user-select: none;
       transition: all 0.1s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .toggle-pill::before {
+      content: "";
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--ds-gray-300);
+      transition: background 0.12s ease;
     }
 
     .toggle-pill:hover {
@@ -446,11 +610,14 @@
     }
 
     .toggle-pill.on {
-      background: var(--surface);
+      background: var(--surface-subtle);
       border-color: var(--border-strong);
       color: var(--text);
       font-weight: 600;
-      box-shadow: var(--shadow-xs);
+    }
+
+    .toggle-pill.on::before {
+      background: var(--primary-bg);
     }
 
     .workspace-right {
@@ -461,26 +628,34 @@
     }
 
     .meta-pill {
-      background: var(--surface);
+      background: var(--surface-muted);
       border: 1px solid var(--border);
       color: var(--text-secondary);
       padding: 2px 7px;
       border-radius: 5px;
       font-family: var(--font-mono);
-      font-size: 10.5px;
+      font-size: 10px;
       font-weight: 500;
     }
 
     .action-msg {
       color: var(--accent);
-      font-size: 11.5px;
+      font-size: 11px;
       font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      border: 1px solid var(--accent-border);
+      display: none;
+    }
+    .action-msg:not(:empty) {
+      display: inline-flex;
     }
 
     /* Collapsible Refactor Drawer Bar */
     .refactor-bar {
-      padding: 6px 16px;
-      background: var(--surface);
+      padding: 6px 14px;
+      background: var(--surface-muted);
       border-bottom: 1px solid var(--border);
       display: none;
       align-items: center;
@@ -502,17 +677,18 @@
 
     .sem-bar {
       display: none;
-      padding: 6px 16px;
+      padding: 6px 14px;
       background: var(--warn-soft);
       border-bottom: 1px solid var(--warn-border);
       color: var(--warn);
       font-family: var(--font-mono);
-      font-size: 11.5px;
+      font-size: 11px;
+      font-weight: 500;
       flex-shrink: 0;
     }
 
     /* =========================================================================
-       ZONE 3: POLYGLOT EDITOR WORKSPACE CANVAS
+       ZONE 3: POLYGLOT EDITOR WORKSPACE CANVAS (With Line-Number Gutters)
        ========================================================================= */
     main.grid {
       flex: 1;
@@ -521,7 +697,7 @@
       grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
       grid-auto-rows: minmax(220px, 1fr);
       gap: 10px;
-      padding: 12px 16px;
+      padding: 10px 14px;
       overflow-y: auto;
       background: var(--bg);
     }
@@ -538,15 +714,19 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
       grid-auto-rows: 1fr;
     }
+    main.grid.mode-quad {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-auto-rows: repeat(2, minmax(220px, 1fr));
+    }
     main.grid.mode-all {
       grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      grid-auto-rows: minmax(240px, 1fr);
+      grid-auto-rows: minmax(250px, 1fr);
     }
 
     .pane {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-md);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -554,9 +734,13 @@
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
     .pane.hidden { display: none; }
+    .pane:focus-within {
+      border-color: var(--ds-gray-400);
+      box-shadow: var(--shadow-md);
+    }
     .pane.active-edit {
       border-color: var(--lift);
-      box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.12);
+      box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.12);
     }
     .pane.has-error {
       border-color: var(--err);
@@ -564,7 +748,8 @@
     }
 
     .pane-header {
-      padding: 7px 12px;
+      height: 36px;
+      padding: 0 10px;
       background: var(--surface-muted);
       border-bottom: 1px solid var(--border);
       display: flex;
@@ -576,24 +761,56 @@
       flex-shrink: 0;
     }
 
-    .pane-header code {
+    .pane-title-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .lang-monogram {
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: var(--ds-gray-900);
+      color: #ffffff;
+      letter-spacing: 0.02em;
+    }
+
+    .pane-title-text {
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .pane-ext {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
       color: var(--muted);
       font-weight: 500;
+    }
+
+    .pane-metrics {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--subtle-ink);
+      font-weight: 500;
+      margin-left: 2px;
     }
 
     .badges-right {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
     }
 
     .delta-badge {
       font-family: var(--font-mono);
-      font-size: 10.5px;
+      font-size: 10px;
       font-weight: 600;
-      padding: 1px 6px;
+      padding: 1.5px 6px;
       border-radius: 4px;
       background: var(--accent-soft);
       border: 1px solid var(--accent-border);
@@ -602,9 +819,9 @@
     }
 
     .status {
-      font-size: 10.5px;
+      font-size: 10px;
       font-weight: 600;
-      padding: 2px 7px;
+      padding: 1.5px 7px;
       border-radius: 999px;
       background: var(--ok-soft);
       border: 1px solid var(--ok-border);
@@ -621,7 +838,45 @@
       color: var(--err);
     }
 
-    textarea {
+    /* Code Editor Body with Synchronized Gutter */
+    .editor-body {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      position: relative;
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .line-gutter {
+      width: 38px;
+      padding: 10px 6px 10px 0;
+      background: var(--surface-muted);
+      border-right: 1px solid var(--ds-gray-150);
+      color: var(--subtle-ink);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 19.5px;
+      text-align: right;
+      user-select: none;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .line-gutter span {
+      display: block;
+      height: 19.5px;
+      padding-right: 2px;
+    }
+
+    .line-gutter span.active-line {
+      color: var(--accent);
+      font-weight: 700;
+      background: var(--accent-soft);
+      border-right: 2px solid var(--accent);
+    }
+
+    .editor-body textarea {
       flex: 1;
       width: 100%;
       background: var(--surface);
@@ -629,11 +884,13 @@
       border: none;
       outline: none;
       resize: none;
-      padding: 12px 14px;
+      padding: 10px 12px;
       font-family: var(--font-mono);
       font-size: 12px;
-      line-height: 1.52;
+      line-height: 19.5px;
       tab-size: 4;
+      overflow-y: auto;
+      white-space: pre;
     }
 
     .diag-bar {
@@ -649,21 +906,43 @@
     .pane.has-error .diag-bar { display: block; }
 
     /* =========================================================================
-       ZONE 4: CATEGORIZED INSPECTOR WORKBENCH DOCK (Bottom Panel)
+       ZONE 4: RESIZABLE CATEGORIZED INSPECTOR WORKBENCH DOCK
        ========================================================================= */
+    .dock-resizer {
+      height: 5px;
+      background: var(--border);
+      cursor: ns-resize;
+      flex-shrink: 0;
+      position: relative;
+      transition: background 0.15s ease;
+      z-index: 25;
+    }
+    .dock-resizer:hover, .dock-resizer.dragging {
+      background: var(--accent);
+    }
+    .dock-resizer::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 1px;
+      transform: translateX(-50%);
+      width: 32px;
+      height: 3px;
+      border-radius: 999px;
+      background: var(--ds-gray-400);
+    }
+
     aside.inspector-dock {
       background: var(--surface);
-      border-top: 1px solid var(--border-strong);
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
-      max-height: 54vh;
-      box-shadow: 0 -2px 10px rgba(9, 9, 11, 0.04);
-      z-index: 15;
+      max-height: 75vh;
+      z-index: 20;
     }
 
     .dock-nav {
-      padding: 6px 16px;
+      padding: 5px 14px;
       background: var(--surface-muted);
       border-bottom: 1px solid var(--border);
       display: flex;
@@ -676,7 +955,7 @@
     .dock-tabs {
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 3px;
       flex-wrap: wrap;
     }
 
@@ -686,8 +965,8 @@
       color: var(--muted);
       font-size: 11.5px;
       font-weight: 600;
-      padding: 4px 10px;
-      border-radius: 6px;
+      padding: 4px 9px;
+      border-radius: var(--radius-sm);
       box-shadow: none;
     }
     .dock-tab:hover {
@@ -698,30 +977,44 @@
       background: var(--surface);
       border-color: var(--border-strong);
       color: var(--text);
-      box-shadow: var(--shadow-xs);
+      box-shadow: var(--shadow-2xs);
+    }
+
+    .tab-count {
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      font-weight: 600;
+      padding: 0.5px 4.5px;
+      border-radius: 999px;
+      background: var(--surface-subtle);
+      color: var(--muted);
+    }
+    .dock-tab.active .tab-count {
+      background: var(--ds-gray-900);
+      color: #ffffff;
     }
 
     .dock-search-wrap {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
     }
 
     #tool-search {
-      width: 190px;
+      width: 185px;
       padding: 4px 9px;
       font-size: 11.5px;
       background: var(--surface);
     }
 
-    /* Tool Strip inside Dock (Clean, Uniform Minimalist App Buttons) */
+    /* Categorized Tool Strip */
     .controls {
-      padding: 7px 16px;
+      padding: 6px 14px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       flex-wrap: wrap;
       overflow-x: auto;
     }
@@ -732,9 +1025,9 @@
       color: var(--text-secondary);
       font-size: 11.5px;
       font-weight: 500;
-      padding: 4px 10px;
-      border-radius: 6px;
-      box-shadow: var(--shadow-xs);
+      padding: 4px 9px;
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow-2xs);
       white-space: nowrap;
     }
 
@@ -769,14 +1062,18 @@
     /* Inspector Drawers */
     .dock-drawers {
       overflow-y: auto;
-      max-height: calc(54vh - 84px);
+      height: var(--dock-body-height, 260px);
       background: var(--bg);
+    }
+    .dock-drawers.collapsed {
+      height: 0 !important;
+      overflow: hidden;
     }
 
     #run-drawer, #trace-drawer, #mut-drawer, #verify-drawer, #merge-drawer, #wasm-drawer, #debug-drawer, #complexity-drawer, #qc-drawer, #repair-drawer, #synth-drawer, #cfg-drawer, #ssa-drawer, #contracts-drawer, #concolic-drawer, #security-drawer, #egraph-drawer, #peval-drawer, #polyhedral-drawer, #wcet-drawer, #regalloc-drawer, #escape-drawer, #microarch-drawer, #schedule-drawer, #autodiff-drawer, #stability-drawer, #actors-drawer, #modelcheck-drawer, #zk-drawer, #sql-drawer, #refinement-drawer, #prob-drawer, #quantum-drawer, #automata-drawer, #hls-drawer, #gpu-drawer, #fhe-drawer, #seplogic-drawer {
       display: none;
       background: var(--bg);
-      padding: 12px 16px;
+      padding: 12px 14px;
     }
 
     .run-header {
@@ -788,8 +1085,8 @@
       padding: 8px 12px;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 12.5px;
+      border-radius: var(--radius-md);
+      font-size: 12px;
       font-weight: 600;
       color: var(--text);
       box-shadow: var(--shadow-xs);
@@ -797,19 +1094,24 @@
 
     .run-cards {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
       gap: 10px;
     }
 
     .run-card {
+      position: relative;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-md);
       padding: 12px;
       font-family: var(--font-mono);
       font-size: 11.5px;
       color: var(--text);
       box-shadow: var(--shadow-xs);
+      transition: border-color 0.12s ease;
+    }
+    .run-card:hover {
+      border-color: var(--border-strong);
     }
 
     .run-card strong {
@@ -819,7 +1121,25 @@
       color: var(--text);
       display: block;
       padding-bottom: 6px;
+      padding-right: 52px;
       border-bottom: 1px solid var(--surface-subtle);
+    }
+
+    .card-copy-btn {
+      position: absolute;
+      top: 9px;
+      right: 10px;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      box-shadow: none;
+    }
+    .card-copy-btn:hover {
+      color: var(--text);
+      background: var(--surface-subtle);
     }
 
     .run-card pre {
@@ -828,7 +1148,7 @@
       color: var(--text-secondary);
       font-family: var(--font-mono);
       font-size: 11px;
-      line-height: 1.5;
+      line-height: 1.52;
     }
 
     .merge-grid {
@@ -841,7 +1161,7 @@
     .merge-box {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-md);
       display: flex;
       flex-direction: column;
       min-height: 200px;
@@ -859,6 +1179,154 @@
       font-size: 12px;
       font-weight: 600;
     }
+
+    .merge-box textarea {
+      flex: 1;
+      border: none;
+      outline: none;
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.5;
+      resize: none;
+    }
+
+    /* =========================================================================
+       SLDS COMMAND PALETTE (⌘K) & DESIGN SYSTEM SHEET MODALS
+       ========================================================================= */
+    .ds-modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(9, 9, 11, 0.35);
+      backdrop-filter: blur(3px);
+      z-index: 200;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 10vh;
+    }
+    .ds-modal-backdrop.open {
+      display: flex;
+    }
+
+    .cmd-palette {
+      width: 560px;
+      max-width: 92vw;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .cmd-input-row {
+      display: flex;
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      gap: 10px;
+    }
+
+    .cmd-input-row input {
+      flex: 1;
+      border: none;
+      box-shadow: none;
+      font-size: 13.5px;
+      padding: 0;
+      background: transparent;
+    }
+    .cmd-input-row input:focus {
+      box-shadow: none;
+    }
+
+    .cmd-list {
+      max-height: 360px;
+      overflow-y: auto;
+      padding: 6px;
+    }
+
+    .cmd-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 12.5px;
+      color: var(--text);
+    }
+    .cmd-item:hover, .cmd-item.selected {
+      background: var(--surface-subtle);
+    }
+    .cmd-item-cat {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--muted);
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+    }
+
+    /* Design System Spec Sheet Modal */
+    .ds-sheet {
+      width: 720px;
+      max-width: 94vw;
+      max-height: 80vh;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .ds-sheet-hdr {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--surface-muted);
+    }
+    .ds-sheet-body {
+      padding: 16px;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 14px;
+    }
+    .ds-token-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      background: var(--surface-muted);
+    }
+    .ds-token-card h4 {
+      margin: 0 0 8px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    .ds-swatch-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 11.5px;
+      font-family: var(--font-mono);
+    }
+    .ds-swatch {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      border: 1px solid rgba(9,9,11,0.12);
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -874,10 +1342,14 @@
       </div>
 
       <!-- Compact Hub-and-Spoke Topology Pill with Hover Map -->
-      <div class="topology-pill" title="Hover to inspect 13-Spoke Hub Topology">
+      <div class="topology-pill" title="Hover to inspect live 13-Spoke Hub Topology">
+        <span class="topology-dot"></span>
         <span>13-Spoke Hub</span>
         <div class="topology-popover">
-          <span class="topology-popover-title">Bidirectional Hub-and-Spoke AST</span>
+          <div class="topology-popover-title">
+            <span>Bidirectional Hub AST</span>
+            <span>Put / Get Lenses</span>
+          </div>
           <svg class="star-svg" viewBox="0 0 176 74">
             <line id="edge-rust" class="edge" x1="88" y1="37" x2="24" y2="5" />
             <line id="edge-zig" class="edge" x1="88" y1="37" x2="24" y2="16" />
@@ -925,16 +1397,21 @@
     <div class="topbar-center">
       <span id="hub-rev">Hub rev #1</span>
       <span id="typecheck-pill">✓ Hub Typecheck: OK</span>
-      <span class="safety-pill" id="safety-pill" title="Click to inspect symbolic safety proofs, crash counterexamples & UNSAT dead branches">🛡 Safety: —</span>
-      <span class="test-pill" id="test-pill">✓ Tests: —</span>
-      <span class="cov-pill" id="cov-pill" title="Click to inspect call trace & uncovered AST branches">🎯 Coverage: —</span>
-      <span class="vm-preview" id="vm-preview">⚡ Hub VM: ...</span>
+      <span class="safety-pill" id="safety-pill" title="Click to inspect symbolic safety proofs, crash counterexamples &amp; UNSAT dead branches">🛡 Safety: —</span>
+      <span class="test-pill" id="test-pill" title="Click to run QuickCheck &amp; polyglot unit test suite">✓ Tests: —</span>
+      <span class="cov-pill" id="cov-pill" title="Click to inspect call trace &amp; uncovered AST branches">🎯 Coverage: —</span>
+      <span class="vm-preview" id="vm-preview" title="Click to open Time-Travel Debugger">⚡ Hub VM: ...</span>
     </div>
 
     <!-- Primary Global Actions -->
     <div class="topbar-right">
+      <button class="cmd-trigger-btn" id="cmd-palette-btn" title="Open Command Palette (Cmd/Ctrl+K)">
+        <span>Command...</span>
+        <kbd class="ds-kbd">⌘K</kbd>
+      </button>
+      <button id="ds-open-btn" title="Inspect StarLang Design System (SLDS v1.0)">✦ Design System</button>
       <button id="toggle-refactor-btn" title="Toggle cross-language semantic rename bar">✎ Refactor</button>
-      <button class="opt-btn" id="opt-btn" title="Constant-fold & prune dead branches across all 13 languages">⚡ Optimize</button>
+      <button class="opt-btn" id="opt-btn" title="Constant-fold &amp; prune dead branches across all 13 languages">⚡ Optimize</button>
       <button class="run-btn" id="run-btn" title="Execute across Hub VM, Wasm, rustc, zig, clang, clang++, swiftc, javac, go, python3, ruby, luajit, perl, and node (Cmd/Ctrl+Enter)">▶ Run All 14 Engines</button>
     </div>
   </header>
@@ -945,10 +1422,11 @@
   <div class="workspace-bar">
     <div class="workspace-left">
       <div class="layout-switcher" role="group" aria-label="Workspace Layout">
-        <button class="layout-btn" data-layout="focus" id="layout-focus-btn" title="Focus on 1 language pane">Focus (1)</button>
-        <button class="layout-btn" data-layout="pair" id="layout-pair-btn" title="Side-by-side 2-language comparison">Pair (2)</button>
-        <button class="layout-btn active" data-layout="split" id="layout-split-btn" title="3-pane split workbench">Split (3)</button>
-        <button class="layout-btn" data-layout="all" id="layout-all-btn" title="Show all 13 language spokes in a grid">All 13 Grid</button>
+        <button class="layout-btn" data-layout="focus" id="layout-focus-btn" title="Single full-width editor (1)">Focus (1)</button>
+        <button class="layout-btn" data-layout="pair" id="layout-pair-btn" title="Side-by-side 2-language comparison (2)">Pair (2)</button>
+        <button class="layout-btn active" data-layout="split" id="layout-split-btn" title="3-pane split workbench (3)">Split (3)</button>
+        <button class="layout-btn" data-layout="quad" id="layout-quad-btn" title="2x2 4-pane workbench (4)">Quad (4)</button>
+        <button class="layout-btn" data-layout="all" id="layout-all-btn" title="Show all 13 language spokes simultaneously">All 13 Grid</button>
       </div>
 
       <div class="divider-v"></div>
@@ -991,165 +1469,298 @@
   <div class="sem-bar" id="sem-bar"></div>
 
   <!-- =========================================================================
-       ZONE 3: POLYGLOT CODE WORKSPACE CANVAS
+       ZONE 3: POLYGLOT CODE WORKSPACE CANVAS (With Synchronized Line Gutters)
        ========================================================================= -->
   <main class="grid mode-split" id="editor-grid">
-    <section class="pane" id="pane-rust">
+    <section class="pane" id="pane-rust" data-spoke="rust">
       <div class="pane-header">
-        <span>Rust <code>.rs</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="rust">RS</span>
+          <span class="pane-title-text">Rust</span>
+          <code class="pane-ext">.rs</code>
+          <span class="pane-metrics" id="metrics-rust">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-rust"></span>
           <span class="status" id="status-rust">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="rust" title="Copy Rust source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="rust" title="Toggle single-pane focus for Rust">⤢</button>
         </div>
       </div>
-      <textarea id="ed-rust" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-rust" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-rust" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-rust"></div>
     </section>
 
-    <section class="pane hidden" id="pane-zig">
+    <section class="pane hidden" id="pane-zig" data-spoke="zig">
       <div class="pane-header">
-        <span>Zig 0.16 <code>.zig</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="zig">ZIG</span>
+          <span class="pane-title-text">Zig 0.16</span>
+          <code class="pane-ext">.zig</code>
+          <span class="pane-metrics" id="metrics-zig">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-zig"></span>
           <span class="status" id="status-zig">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="zig" title="Copy Zig 0.16 source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="zig" title="Toggle single-pane focus for Zig 0.16">⤢</button>
         </div>
       </div>
-      <textarea id="ed-zig" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-zig" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-zig" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-zig"></div>
     </section>
 
-    <section class="pane hidden" id="pane-c">
+    <section class="pane hidden" id="pane-c" data-spoke="c">
       <div class="pane-header">
-        <span>ISO C11 <code>.c</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="c">C11</span>
+          <span class="pane-title-text">ISO C11</span>
+          <code class="pane-ext">.c</code>
+          <span class="pane-metrics" id="metrics-c">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-c"></span>
           <span class="status" id="status-c">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="c" title="Copy ISO C11 source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="c" title="Toggle single-pane focus for ISO C11">⤢</button>
         </div>
       </div>
-      <textarea id="ed-c" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-c" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-c" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-c"></div>
     </section>
 
-    <section class="pane hidden" id="pane-cpp">
+    <section class="pane hidden" id="pane-cpp" data-spoke="cpp">
       <div class="pane-header">
-        <span>Modern C++ <code>.cpp</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="cpp">C++</span>
+          <span class="pane-title-text">Modern C++</span>
+          <code class="pane-ext">.cpp</code>
+          <span class="pane-metrics" id="metrics-cpp">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-cpp"></span>
           <span class="status" id="status-cpp">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="cpp" title="Copy Modern C++ source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="cpp" title="Toggle single-pane focus for Modern C++">⤢</button>
         </div>
       </div>
-      <textarea id="ed-cpp" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-cpp" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-cpp" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-cpp"></div>
     </section>
 
-    <section class="pane hidden" id="pane-swift">
+    <section class="pane hidden" id="pane-swift" data-spoke="swift">
       <div class="pane-header">
-        <span>Swift 6 <code>.swift</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="swift">SW</span>
+          <span class="pane-title-text">Swift 6</span>
+          <code class="pane-ext">.swift</code>
+          <span class="pane-metrics" id="metrics-swift">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-swift"></span>
           <span class="status" id="status-swift">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="swift" title="Copy Swift 6 source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="swift" title="Toggle single-pane focus for Swift 6">⤢</button>
         </div>
       </div>
-      <textarea id="ed-swift" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-swift" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-swift" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-swift"></div>
     </section>
 
-    <section class="pane hidden" id="pane-java">
+    <section class="pane hidden" id="pane-java" data-spoke="java">
       <div class="pane-header">
-        <span>Java 21 <code>.java</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="java">JV</span>
+          <span class="pane-title-text">Java 21</span>
+          <code class="pane-ext">.java</code>
+          <span class="pane-metrics" id="metrics-java">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-java"></span>
           <span class="status" id="status-java">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="java" title="Copy Java 21 source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="java" title="Toggle single-pane focus for Java 21">⤢</button>
         </div>
       </div>
-      <textarea id="ed-java" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-java" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-java" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-java"></div>
     </section>
 
-    <section class="pane hidden" id="pane-go">
+    <section class="pane hidden" id="pane-go" data-spoke="go">
       <div class="pane-header">
-        <span>Go <code>.go</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="go">GO</span>
+          <span class="pane-title-text">Go</span>
+          <code class="pane-ext">.go</code>
+          <span class="pane-metrics" id="metrics-go">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-go"></span>
           <span class="status" id="status-go">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="go" title="Copy Go source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="go" title="Toggle single-pane focus for Go">⤢</button>
         </div>
       </div>
-      <textarea id="ed-go" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-go" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-go" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-go"></div>
     </section>
 
-    <section class="pane" id="pane-python">
+    <section class="pane" id="pane-python" data-spoke="python">
       <div class="pane-header">
-        <span>Python <code>.py</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="python">PY</span>
+          <span class="pane-title-text">Python</span>
+          <code class="pane-ext">.py</code>
+          <span class="pane-metrics" id="metrics-python">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-python"></span>
           <span class="status" id="status-python">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="python" title="Copy Python source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="python" title="Toggle single-pane focus for Python">⤢</button>
         </div>
       </div>
-      <textarea id="ed-python" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-python" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-python" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-python"></div>
     </section>
 
-    <section class="pane hidden" id="pane-ruby">
+    <section class="pane hidden" id="pane-ruby" data-spoke="ruby">
       <div class="pane-header">
-        <span>Ruby + RBS <code>.rb</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="ruby">RB</span>
+          <span class="pane-title-text">Ruby + RBS</span>
+          <code class="pane-ext">.rb</code>
+          <span class="pane-metrics" id="metrics-ruby">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-ruby"></span>
           <span class="status" id="status-ruby">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="ruby" title="Copy Ruby + RBS source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="ruby" title="Toggle single-pane focus for Ruby + RBS">⤢</button>
         </div>
       </div>
-      <textarea id="ed-ruby" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-ruby" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-ruby" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-ruby"></div>
     </section>
 
-    <section class="pane hidden" id="pane-lua">
+    <section class="pane hidden" id="pane-lua" data-spoke="lua">
       <div class="pane-header">
-        <span>LuaJIT <code>.lua</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="lua">LUA</span>
+          <span class="pane-title-text">LuaJIT</span>
+          <code class="pane-ext">.lua</code>
+          <span class="pane-metrics" id="metrics-lua">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-lua"></span>
           <span class="status" id="status-lua">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="lua" title="Copy LuaJIT source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="lua" title="Toggle single-pane focus for LuaJIT">⤢</button>
         </div>
       </div>
-      <textarea id="ed-lua" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-lua" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-lua" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-lua"></div>
     </section>
 
-    <section class="pane hidden" id="pane-perl">
+    <section class="pane hidden" id="pane-perl" data-spoke="perl">
       <div class="pane-header">
-        <span>Perl 5.34 <code>.pl</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="perl">PL</span>
+          <span class="pane-title-text">Perl 5.34</span>
+          <code class="pane-ext">.pl</code>
+          <span class="pane-metrics" id="metrics-perl">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-perl"></span>
           <span class="status" id="status-perl">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="perl" title="Copy Perl 5.34 source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="perl" title="Toggle single-pane focus for Perl 5.34">⤢</button>
         </div>
       </div>
-      <textarea id="ed-perl" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-perl" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-perl" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-perl"></div>
     </section>
 
-    <section class="pane" id="pane-typescript">
+    <section class="pane" id="pane-typescript" data-spoke="typescript">
       <div class="pane-header">
-        <span>TypeScript <code>.ts</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="typescript">TS</span>
+          <span class="pane-title-text">TypeScript</span>
+          <code class="pane-ext">.ts</code>
+          <span class="pane-metrics" id="metrics-typescript">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-typescript"></span>
           <span class="status" id="status-typescript">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="typescript" title="Copy TypeScript source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="typescript" title="Toggle single-pane focus for TypeScript">⤢</button>
         </div>
       </div>
-      <textarea id="ed-typescript" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-typescript" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-typescript" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-typescript"></div>
     </section>
 
-    <section class="pane hidden" id="pane-star">
+    <section class="pane hidden" id="pane-star" data-spoke="star">
       <div class="pane-header">
-        <span>Star Hub IR <code>.star</code></span>
+        <div class="pane-title-group">
+          <span class="lang-monogram" data-lang="star">IR</span>
+          <span class="pane-title-text">Star Hub IR</span>
+          <code class="pane-ext">.star</code>
+          <span class="pane-metrics" id="metrics-star">0L</span>
+        </div>
         <div class="badges-right">
           <span class="delta-badge" id="delta-star"></span>
           <span class="status" id="status-star">Synced</span>
+          <button class="ds-icon-btn copy-code-btn" data-spoke="star" title="Copy Star Hub IR source code">Copy</button>
+          <button class="ds-icon-btn focus-pane-btn" data-spoke="star" title="Toggle single-pane focus for Star Hub IR">⤢</button>
         </div>
       </div>
-      <textarea id="ed-star" spellcheck="false"></textarea>
+      <div class="editor-body">
+        <div class="line-gutter" id="gutter-star" aria-hidden="true"><span>1</span></div>
+        <textarea id="ed-star" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
       <div class="diag-bar" id="diag-star"></div>
     </section>
   </main>
+
+  <!-- Drag-to-Resize Splitter Handle -->
+  <div class="dock-resizer" id="dock-resizer" title="Drag to resize Inspector Workbench Dock"></div>
 
   <!-- =========================================================================
        ZONE 4: CATEGORIZED INSPECTOR WORKBENCH DOCK
@@ -1157,78 +1768,78 @@
   <aside class="inspector-dock" id="inspector-dock">
     <div class="dock-nav">
       <div class="dock-tabs" id="dock-tabs">
-        <button class="dock-tab active" data-cat="runtime">⚡ Runtime & Debug</button>
-        <button class="dock-tab" data-cat="verify">🛡 Formal Verification</button>
-        <button class="dock-tab" data-cat="testing">🧪 Test, Repair & Synth</button>
-        <button class="dock-tab" data-cat="compiler">⚙️ Compiler IR & Opt</button>
-        <button class="dock-tab" data-cat="hardware">🖥 Silicon, GPU & ASM</button>
-        <button class="dock-tab" data-cat="crypto">🔐 Crypto, Quantum & AI</button>
-        <button class="dock-tab" data-cat="all">All Tools (35)</button>
+        <button class="dock-tab active" data-cat="runtime">Runtime &amp; Debug <span class="tab-count">4</span></button>
+        <button class="dock-tab" data-cat="verify">Formal Verification <span class="tab-count">6</span></button>
+        <button class="dock-tab" data-cat="testing">Test, Repair &amp; Synth <span class="tab-count">6</span></button>
+        <button class="dock-tab" data-cat="compiler">Compiler IR &amp; Opt <span class="tab-count">7</span></button>
+        <button class="dock-tab" data-cat="hardware">Silicon, GPU &amp; ASM <span class="tab-count">5</span></button>
+        <button class="dock-tab" data-cat="crypto">Crypto, Quantum &amp; AI <span class="tab-count">9</span></button>
+        <button class="dock-tab" data-cat="all">All Engines <span class="tab-count">37</span></button>
       </div>
       <div class="dock-search-wrap">
-        <input type="text" id="tool-search" placeholder="Filter 35 analysis engines..." />
-        <button id="close-all-drawers-btn" title="Collapse active inspector panel">▾ Hide Inspector</button>
+        <input type="text" id="tool-search" placeholder="Filter 37 analysis engines..." />
+        <button class="ds-icon-btn" id="dock-expand-btn" title="Toggle tall inspector view">⤢ Expand</button>
+        <button class="ds-icon-btn" id="close-all-drawers-btn" title="Collapse active inspector panel">▾ Minimize</button>
       </div>
     </div>
 
     <!-- Categorized Tool Bar (All original button IDs preserved) -->
     <div class="controls" id="tool-strip">
       <!-- Runtime & Debug -->
-      <button data-cat="runtime" class="wasm-btn" id="wasm-btn" title="Compile Central Hub AST directly to W3C WebAssembly 1.0 binary (.wasm) + .wat & execute in V8 / Browser Wasm VM">📦 WebAssembly (.wasm)</button>
-      <button data-cat="runtime" class="debug-btn" id="debug-btn" title="Scrub forward & backward through execution steps across all 13 languages simultaneously & compute dynamic backward slices">⏱ Time-Travel Debugger</button>
-      <button data-cat="runtime" class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph & hotspots">🔍 Trace & Coverage</button>
-      <button data-cat="runtime" class="trace-btn" id="complexity-btn" title="Profile static & empirical Big-O complexity, cyclomatic complexity, gas cost & 13-spoke code density">📈 Big-O & Gas Profiler</button>
+      <button data-cat="runtime" class="wasm-btn" id="wasm-btn" title="Compile Central Hub AST directly to W3C WebAssembly 1.0 binary (.wasm) + .wat &amp; execute in V8 / Browser Wasm VM">WebAssembly (.wasm)</button>
+      <button data-cat="runtime" class="debug-btn" id="debug-btn" title="Scrub forward &amp; backward through execution steps across all 13 languages simultaneously &amp; compute dynamic backward slices">Time-Travel Debugger</button>
+      <button data-cat="runtime" class="trace-btn" id="trace-btn" title="Inspect Hub AST statement coverage, call graph &amp; hotspots">Trace &amp; Coverage</button>
+      <button data-cat="runtime" class="trace-btn" id="complexity-btn" title="Profile static &amp; empirical Big-O complexity, cyclomatic complexity, gas cost &amp; 13-spoke code density">Big-O &amp; Gas Profiler</button>
 
       <!-- Formal Verification -->
-      <button data-cat="verify" class="verify-btn hidden-by-cat" id="verify-btn" title="Prove div-by-zero, bounds & assertions via interval abstract interpretation + concolic witnesses">🛡 Symbolic Safety</button>
-      <button data-cat="verify" class="verify-btn hidden-by-cat" id="contracts-btn" title="Infer Hoare Logic Design-by-Contract specifications (requires, loop_invariant, ensures) & verify Dijkstra Weakest-Precondition VCs across 13 languages">📜 Hoare Contracts</button>
-      <button data-cat="verify" class="verify-btn hidden-by-cat" id="refinement-btn" title="Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 Export & 13-Spoke Dependent / Branded Type Synthesizer">💎 Liquid Types & CHC</button>
-      <button data-cat="verify" class="verify-btn hidden-by-cat" id="seplogic-btn" title="Reynolds Separation Logic (emp, x ↦ v, P * Q, P -* Q) Symbolic Heap Frame Prover, Boyland Fractional Borrow Permission Verifier & 13-Spoke Zero-Copy Region Synthesizer">🧩 Separation Logic (P * Q)</button>
-      <button data-cat="verify" class="verify-btn hidden-by-cat" id="wcet-btn" title="Floyd-Turing well-founded ranking function termination prover & IPET symbolic BCET/WCET timing bound analyzer">⏳ Termination & WCET</button>
-      <button data-cat="verify" class="verify-btn hidden-by-cat" id="modelcheck-btn" title="Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability & TLA+ Spec Synthesizer">📐 TLA+ Model Check</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="verify-btn" title="Prove div-by-zero, bounds &amp; assertions via interval abstract interpretation + concolic witnesses">Symbolic Safety</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="contracts-btn" title="Infer Hoare Logic Design-by-Contract specifications (requires, loop_invariant, ensures) &amp; verify Dijkstra Weakest-Precondition VCs across 13 languages">Hoare Contracts (WP)</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="refinement-btn" title="Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 Export &amp; 13-Spoke Dependent / Branded Type Synthesizer">Liquid Types &amp; CHC</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="seplogic-btn" title="Reynolds Separation Logic (emp, x ↦ v, P * Q, P -* Q) Symbolic Heap Frame Prover, Boyland Fractional Borrow Permission Verifier &amp; 13-Spoke Zero-Copy Region Synthesizer">Separation Logic (P * Q)</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="wcet-btn" title="Floyd-Turing well-founded ranking function termination prover &amp; IPET symbolic BCET/WCET timing bound analyzer">Termination &amp; WCET</button>
+      <button data-cat="verify" class="verify-btn hidden-by-cat" id="modelcheck-btn" title="Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability &amp; TLA+ Spec Synthesizer">TLA+ Model Check</button>
 
       <!-- Test, Repair & Synth -->
-      <button data-cat="testing" class="verify-btn hidden-by-cat" id="qc-btn" title="Run property-based QuickCheck, invariant discovery & minimal counterexample shrinking across all 13 languages">🎲 QuickCheck Shrinker</button>
-      <button data-cat="testing" class="trace-btn hidden-by-cat" id="concolic-btn" title="Whitebox concolic path exploration, boundary-negation solver & path-covering unit test synthesis across all 13 languages">🧭 Concolic Path Explorer</button>
-      <button data-cat="testing" class="mut-btn hidden-by-cat" id="mut-btn" title="Run sub-ms Hub AST mutation testing & auto-synthesize missing boundary unit tests">🧬 Mutation Testing</button>
-      <button data-cat="testing" class="mut-btn hidden-by-cat" id="repair-btn" title="Localize failing unit tests or refuted safety obligations & synthesize a 4-gate verified AST patch across all 13 languages">🩹 CEGIS Auto-Repair</button>
-      <button data-cat="testing" class="wasm-btn hidden-by-cat" id="synth-btn" title="Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages">✨ PBE Program Synth</button>
-      <button data-cat="testing" class="merge-btn hidden-by-cat" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 13 languages">🔀 3-Way AST Merge</button>
+      <button data-cat="testing" class="verify-btn hidden-by-cat" id="qc-btn" title="Run property-based QuickCheck, invariant discovery &amp; minimal counterexample shrinking across all 13 languages">QuickCheck Shrinker</button>
+      <button data-cat="testing" class="trace-btn hidden-by-cat" id="concolic-btn" title="Whitebox concolic path exploration, boundary-negation solver &amp; path-covering unit test synthesis across all 13 languages">Concolic Path Explorer</button>
+      <button data-cat="testing" class="mut-btn hidden-by-cat" id="mut-btn" title="Run sub-ms Hub AST mutation testing &amp; auto-synthesize missing boundary unit tests">Mutation Testing</button>
+      <button data-cat="testing" class="mut-btn hidden-by-cat" id="repair-btn" title="Localize failing unit tests or refuted safety obligations &amp; synthesize a 4-gate verified AST patch across all 13 languages">CEGIS Auto-Repair</button>
+      <button data-cat="testing" class="wasm-btn hidden-by-cat" id="synth-btn" title="Programming-by-Example (PBE) Observational-Equivalence Inductive Program Synthesizer across all 13 languages">PBE Program Synth</button>
+      <button data-cat="testing" class="merge-btn hidden-by-cat" id="merge-btn" title="Fork the current Hub into two different languages, edit both concurrently, and 3-way merge across all 13 languages">3-Way AST Merge</button>
 
       <!-- Compiler IR & Opt -->
-      <button data-cat="compiler" class="wasm-btn hidden-by-cat" id="egraph-btn" title="Equality Saturation & Congruence-Closure E-Graph Superoptimizer across all 13 languages">🔮 E-Graph Superopt</button>
-      <button data-cat="compiler" class="opt-btn hidden-by-cat" id="peval-btn" title="Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer & Loop Unroller across all 13 languages">⚡ Futamura Partial Eval</button>
-      <button data-cat="compiler" class="trace-btn hidden-by-cat" id="ssa-btn" title="Compute Cytron Static Single Assignment (SSA) form, Dominance Frontiers, φ-nodes, Liveness & Def-Use chains">🧬 Cytron SSA & Liveness</button>
-      <button data-cat="compiler" class="trace-btn hidden-by-cat" id="cfg-btn" title="Inspect Control-Flow Graphs, Dominator Trees, Natural Loop Back-Edges, Mermaid & Graphviz DOT">🕸 CFG & Dominators</button>
-      <button data-cat="compiler" class="wasm-btn hidden-by-cat" id="polyhedral-btn" title="Polyhedral loop dependence analysis, associative monoid reduction recognition, Brent Work-Span & 13-spoke SIMD / Map-Reduce vectorizer">🧮 Polyhedral SIMD</button>
-      <button data-cat="compiler" class="opt-btn hidden-by-cat" id="escape-btn" title="Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO & 13-Spoke Stack/Arena Lifetime Optimizer">📦 Escape & SROA</button>
-      <button data-cat="compiler" class="opt-btn hidden-by-cat" id="automata-btn" title="Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Branchless Lookup Table Vectorizer">🤖 Minimal DFA & L*</button>
+      <button data-cat="compiler" class="wasm-btn hidden-by-cat" id="egraph-btn" title="Equality Saturation &amp; Congruence-Closure E-Graph Superoptimizer across all 13 languages">E-Graph Superopt</button>
+      <button data-cat="compiler" class="opt-btn hidden-by-cat" id="peval-btn" title="Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer &amp; Loop Unroller across all 13 languages">Futamura Partial Eval</button>
+      <button data-cat="compiler" class="trace-btn hidden-by-cat" id="ssa-btn" title="Compute Cytron Static Single Assignment (SSA) form, Dominance Frontiers, φ-nodes, Liveness &amp; Def-Use chains">Cytron SSA &amp; Liveness</button>
+      <button data-cat="compiler" class="trace-btn hidden-by-cat" id="cfg-btn" title="Inspect Control-Flow Graphs, Dominator Trees, Natural Loop Back-Edges, Mermaid &amp; Graphviz DOT">CFG &amp; Dominators</button>
+      <button data-cat="compiler" class="wasm-btn hidden-by-cat" id="polyhedral-btn" title="Polyhedral loop dependence analysis, associative monoid reduction recognition, Brent Work-Span &amp; 13-spoke SIMD / Map-Reduce vectorizer">Polyhedral SIMD</button>
+      <button data-cat="compiler" class="opt-btn hidden-by-cat" id="escape-btn" title="Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO &amp; 13-Spoke Stack/Arena Lifetime Optimizer">Escape &amp; SROA</button>
+      <button data-cat="compiler" class="opt-btn hidden-by-cat" id="automata-btn" title="Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer &amp; 13-Spoke Branchless Lookup Table Vectorizer">Minimal DFA &amp; L*</button>
 
       <!-- Silicon, GPU & ASM -->
-      <button data-cat="hardware" class="wasm-btn hidden-by-cat" id="hls-btn" title="High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility Force-Directed FSMD Scheduler, FPGA LUT6/FF/DSP48E2/BRAM36 Estimator & Synthesizable IEEE-1800 SystemVerilog RTL Generator">🔌 HLS SystemVerilog RTL</button>
-      <button data-cat="hardware" class="opt-btn hidden-by-cat" id="gpu-btn" title="32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA C++/PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C), Warp Divergence & Shared-Memory 32-Bank Conflict Analyzer">🚀 GPU SIMT (CUDA/WGSL/MSL)</button>
-      <button data-cat="hardware" class="wasm-btn hidden-by-cat" id="regalloc-btn" title="Chaitin-Briggs Kempe-stack graph-coloring & Poletto-Sarkar linear-scan register allocator + Dual-Target AArch64 / x86_64 Native Assembly">🎛 RegAlloc & ARM64/x86</button>
-      <button data-cat="hardware" class="wasm-btn hidden-by-cat" id="microarch-btn" title="4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Hardware Simulator">🖥 Superscalar CPU Sim</button>
-      <button data-cat="hardware" class="opt-btn hidden-by-cat" id="schedule-btn" title="Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Pipeline Stall Eliminator">📐 DAG List Scheduler</button>
+      <button data-cat="hardware" class="wasm-btn hidden-by-cat" id="hls-btn" title="High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility Force-Directed FSMD Scheduler, FPGA LUT6/FF/DSP48E2/BRAM36 Estimator &amp; Synthesizable IEEE-1800 SystemVerilog RTL Generator">HLS SystemVerilog RTL</button>
+      <button data-cat="hardware" class="opt-btn hidden-by-cat" id="gpu-btn" title="32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA C++/PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C), Warp Divergence &amp; Shared-Memory 32-Bank Conflict Analyzer">GPU SIMT (CUDA/WGSL/MSL)</button>
+      <button data-cat="hardware" class="wasm-btn hidden-by-cat" id="regalloc-btn" title="Chaitin-Briggs Kempe-stack graph-coloring &amp; Poletto-Sarkar linear-scan register allocator + Dual-Target AArch64 / x86_64 Native Assembly">RegAlloc &amp; ARM64/x86</button>
+      <button data-cat="hardware" class="wasm-btn hidden-by-cat" id="microarch-btn" title="4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor &amp; 8-Way Set-Associative L1D Cache Hardware Simulator">Superscalar CPU Sim</button>
+      <button data-cat="hardware" class="opt-btn hidden-by-cat" id="schedule-btn" title="Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler &amp; Pipeline Stall Eliminator">DAG List Scheduler</button>
 
       <!-- Crypto, Quantum & AI -->
-      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="fhe-btn" title="Fully Homomorphic Encryption (FHE) Ring-LWE (BFV/BGV/CKKS/TFHE) Blinded Circuit Compiler, Noise-Budget Tracker, Relinearization & Programmable Bootstrapping Scheduler">🛡 FHE Ring-LWE & TFHE</button>
-      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="zk-btn" title="Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Witness Verifier & Circom 2.0 Synthesizer">🔐 ZK R1CS & Circom</button>
-      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="quantum-btn" title="Reversible Bennett-Toffoli Quantum Circuit Compiler (F -> Copy -> F† Uncomputation), Grover Amplitude Amplification Oracle & OpenQASM 3.0 Synthesizer">⚛ Quantum & OpenQASM 3</button>
-      <button data-cat="crypto" class="verify-btn hidden-by-cat" id="security-btn" title="Denning lattice information-flow taint analysis, sanitizer verification & constant-time side-channel auditor">🔒 Taint & Constant-Time</button>
-      <button data-cat="crypto" class="trace-btn hidden-by-cat" id="prob-btn" title="Probabilistic Programming, Metropolis-Hastings MCMC + Importance Sampling, Shannon Entropy H(X)/H(Y) & Mutual-Information QIF Leakage Quantifier">🎲 MCMC & Shannon Entropy</button>
-      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="autodiff-btn" title="Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer">∇ AutoDiff & Wengert Tape</button>
-      <button data-cat="crypto" class="verify-btn hidden-by-cat" id="stability-btn" title="IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f & Quantization Auditor">🔬 Lipschitz & Stability</button>
-      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="actors-btn" title="Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer">📡 Actors & Vector Clocks</button>
-      <button data-cat="crypto" class="opt-btn hidden-by-cat" id="sql-btn" title="Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer & 13-Spoke SQL / DataFrame Synthesizer">🗄 Relational SQL Pushdown</button>
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="fhe-btn" title="Fully Homomorphic Encryption (FHE) Ring-LWE (BFV/BGV/CKKS/TFHE) Blinded Circuit Compiler, Noise-Budget Tracker, Relinearization &amp; Programmable Bootstrapping Scheduler">FHE Ring-LWE &amp; TFHE</button>
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="zk-btn" title="Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Witness Verifier &amp; Circom 2.0 Synthesizer">ZK R1CS &amp; Circom</button>
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="quantum-btn" title="Reversible Bennett-Toffoli Quantum Circuit Compiler (F -> Copy -> F† Uncomputation), Grover Amplitude Amplification Oracle &amp; OpenQASM 3.0 Synthesizer">Quantum &amp; OpenQASM 3</button>
+      <button data-cat="crypto" class="verify-btn hidden-by-cat" id="security-btn" title="Denning lattice information-flow taint analysis, sanitizer verification &amp; constant-time side-channel auditor">Taint &amp; Constant-Time</button>
+      <button data-cat="crypto" class="trace-btn hidden-by-cat" id="prob-btn" title="Probabilistic Programming, Metropolis-Hastings MCMC + Importance Sampling, Shannon Entropy H(X)/H(Y) &amp; Mutual-Information QIF Leakage Quantifier">MCMC &amp; Shannon Entropy</button>
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="autodiff-btn" title="Forward-Mode Dual-Number &amp; Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer">AutoDiff &amp; Wengert Tape</button>
+      <button data-cat="crypto" class="verify-btn hidden-by-cat" id="stability-btn" title="IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f &amp; Quantization Auditor">Lipschitz &amp; Stability</button>
+      <button data-cat="crypto" class="wasm-btn hidden-by-cat" id="actors-btn" title="Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover &amp; 13-Spoke Actor / Channel Synthesizer">Actors &amp; Vector Clocks</button>
+      <button data-cat="crypto" class="opt-btn hidden-by-cat" id="sql-btn" title="Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer &amp; 13-Spoke SQL / DataFrame Synthesizer">Relational SQL Pushdown</button>
     </div>
 
-    <!-- Single-Active Inspector Drawer Container -->
     <div class="dock-drawers" id="dock-drawers">
       <section id="fhe-drawer">
         <div class="run-header">
           <span id="fhe-summary">🛡 Fully Homomorphic Encryption (FHE) Ring-LWE (BFV/BGV/CKKS/TFHE) Blinded Circuit Compiler, Noise-Budget Tracker & Relinearization / Bootstrapping Scheduler...</span>
-          <button onclick="document.getElementById('fhe-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="fhe-cards"></div>
       </section>
@@ -1236,7 +1847,7 @@
       <section id="seplogic-drawer">
         <div class="run-header">
           <span id="seplogic-summary">🧩 Reynolds Separation Logic (emp, x ↦ v, P * Q, P -* Q) Symbolic Heap Frame Prover, Boyland Fractional Borrow Verifier & 13-Spoke Zero-Copy Region Synthesizer...</span>
-          <button onclick="document.getElementById('seplogic-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="seplogic-cards"></div>
       </section>
@@ -1244,7 +1855,7 @@
       <section id="hls-drawer">
         <div class="run-header">
           <span id="hls-summary">🔌 High-Level Synthesis (HLS) Hardware Compiler, ASAP/ALAP Mobility Force-Directed FSMD Scheduler, FPGA LUT6/FF/DSP48E2/BRAM36 Estimator & Synthesizable IEEE-1800 SystemVerilog RTL Generator...</span>
-          <button onclick="document.getElementById('hls-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="hls-cards"></div>
       </section>
@@ -1252,7 +1863,7 @@
       <section id="gpu-drawer">
         <div class="run-header">
           <span id="gpu-summary">🚀 32-Lane Warp SIMT GPU Compute Kernel Synthesizer (CUDA PTX, WebGPU WGSL, Apple Metal MSL, OpenCL C), Warp Divergence & Shared-Memory 32-Bank Conflict Analyzer...</span>
-          <button onclick="document.getElementById('gpu-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="gpu-cards"></div>
       </section>
@@ -1260,7 +1871,7 @@
       <section id="quantum-drawer">
         <div class="run-header">
           <span id="quantum-summary">⚛ Reversible Bennett-Toffoli Quantum Circuit Compiler (F ➔ CNOT Copy ➔ F† Uncomputation), Grover Phase Oracle & OpenQASM 3.0 Synthesizer...</span>
-          <button onclick="document.getElementById('quantum-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="quantum-cards"></div>
       </section>
@@ -1268,7 +1879,7 @@
       <section id="automata-drawer">
         <div class="run-header">
           <span id="automata-summary">🤖 Angluin L* Active Automaton Learner, Myhill-Nerode Minimal DFA Synthesizer & 13-Spoke Branchless Lookup Table Vectorizer...</span>
-          <button onclick="document.getElementById('automata-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="automata-cards"></div>
       </section>
@@ -1276,7 +1887,7 @@
       <section id="refinement-drawer">
         <div class="run-header">
           <span id="refinement-summary">💎 Liquid Refinement Types ({ ν: T | φ(ν) }), Constrained Horn Clause (CHC) Fixpoint Solver, SMT-LIB2 HORN Export & 13-Spoke Dependent / Branded Types...</span>
-          <button onclick="document.getElementById('refinement-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="refinement-cards"></div>
       </section>
@@ -1284,7 +1895,7 @@
       <section id="prob-drawer">
         <div class="run-header">
           <span id="prob-summary">🎲 Probabilistic Programming, Metropolis-Hastings MCMC Sampling, Shannon Entropy H(X)/H(Y) & Mutual-Information QIF Leakage Quantifier...</span>
-          <button onclick="document.getElementById('prob-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="prob-cards"></div>
       </section>
@@ -1292,7 +1903,7 @@
       <section id="zk-drawer">
         <div class="run-header">
           <span id="zk-summary">🔐 Rank-1 Constraint System (R1CS) Arithmetic Circuit Compiler over F_p (p=2^61-1), Groth16 / Plonk Gate Arithmetizer & Zero-Knowledge Witness Verifier...</span>
-          <button onclick="document.getElementById('zk-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="zk-cards"></div>
       </section>
@@ -1300,7 +1911,7 @@
       <section id="sql-drawer">
         <div class="run-header">
           <span id="sql-summary">🗄 Relational Algebra (σ, π, Γ), Selection Pushdown, Vectorized Columnar Batch Optimizer & 13-Spoke SQL / DataFrame Synthesizer...</span>
-          <button onclick="document.getElementById('sql-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="sql-cards"></div>
       </section>
@@ -1308,7 +1919,7 @@
       <section id="actors-drawer">
         <div class="run-header">
           <span id="actors-summary">📡 Lamport Vector-Clock Happens-Before (→) Race Detector, Deadlock Prover & 13-Spoke Actor / Channel Synthesizer...</span>
-          <button onclick="document.getElementById('actors-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="actors-cards"></div>
       </section>
@@ -1316,7 +1927,7 @@
       <section id="modelcheck-drawer">
         <div class="run-header">
           <span id="modelcheck-summary">📐 Explicit-State Bounded Model Checker (Kripke Structure), Temporal Safety (□I), Liveness (□◇), Linearizability & TLA+ Spec...</span>
-          <button onclick="document.getElementById('modelcheck-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="modelcheck-cards"></div>
       </section>
@@ -1326,7 +1937,7 @@
           <span id="autodiff-summary">∇ Forward-Mode Dual-Number & Reverse-Mode Wengert-Tape Automatic Differentiation + 13-Spoke Gradient Synthesizer...</span>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="wasm-btn" id="autodiff-inject-btn">∇ Inject Synthesized Gradient Function + Test Into All 13 Spokes</button>
-            <button onclick="document.getElementById('autodiff-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="autodiff-cards"></div>
@@ -1335,7 +1946,7 @@
       <section id="stability-drawer">
         <div class="run-header">
           <span id="stability-summary">🔬 IEEE-754 / Fixed-Point Numerical Stability, Condition Number κ_f, Lipschitz Bound L_f & Quantization Auditor...</span>
-          <button onclick="document.getElementById('stability-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="stability-cards"></div>
       </section>
@@ -1343,7 +1954,7 @@
       <section id="microarch-drawer">
         <div class="run-header">
           <span id="microarch-summary">🖥 4-Wide Out-of-Order Superscalar CPU Pipeline, 2-Bit Bimodal Branch Predictor & 8-Way Set-Associative L1D Cache Simulator...</span>
-          <button onclick="document.getElementById('microarch-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="microarch-cards"></div>
       </section>
@@ -1351,7 +1962,7 @@
       <section id="schedule-drawer">
         <div class="run-header">
           <span id="schedule-summary">📐 Gibbons-Muchnick Critical-Path DAG List Instruction Scheduler & Pipeline Stall Eliminator...</span>
-          <button onclick="document.getElementById('schedule-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="schedule-cards"></div>
       </section>
@@ -1362,7 +1973,7 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="wasm-btn" id="regalloc-k8-btn">K = 8 Registers (Standard)</button>
             <button class="mut-btn" id="regalloc-k3-btn">K = 3 Registers (Kempe Spill Stress-Test)</button>
-            <button onclick="document.getElementById('regalloc-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="regalloc-cards"></div>
@@ -1371,7 +1982,7 @@
       <section id="escape-drawer">
         <div class="run-header">
           <span id="escape-summary">📦 Interprocedural Escape Analysis, Scalar Replacement of Aggregates (SROA), RVO & 13-Spoke Stack/Arena Optimizer...</span>
-          <button onclick="document.getElementById('escape-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="escape-cards"></div>
       </section>
@@ -1379,7 +1990,7 @@
       <section id="polyhedral-drawer">
         <div class="run-header">
           <span id="polyhedral-summary">🧮 Polyhedral Loop Dependence, Associative Monoid Reduction & 13-Spoke SIMD / Map-Reduce Vectorizer...</span>
-          <button onclick="document.getElementById('polyhedral-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="polyhedral-cards"></div>
       </section>
@@ -1387,7 +1998,7 @@
       <section id="wcet-drawer">
         <div class="run-header">
           <span id="wcet-summary">⏳ Floyd-Turing Well-Founded Ranking Function Termination Prover & IPET Symbolic BCET/WCET Analyzer...</span>
-          <button onclick="document.getElementById('wcet-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="wcet-cards"></div>
       </section>
@@ -1397,7 +2008,7 @@
           <span id="egraph-summary">🔮 Equality Saturation & Congruence-Closure E-Graph Superoptimizer...</span>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="wasm-btn" id="egraph-apply-btn">🔮 Apply Minimum-Gas AST Across All 13 Spokes</button>
-            <button onclick="document.getElementById('egraph-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="egraph-cards"></div>
@@ -1408,7 +2019,7 @@
           <span id="peval-summary">⚡ Futamura Partial Evaluator, Interprocedural Constant/Enum Specializer & Loop Unroller...</span>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="opt-btn" id="peval-apply-btn">⚡ Apply Specialized Residual Program Across All 13 Spokes</button>
-            <button onclick="document.getElementById('peval-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="peval-cards"></div>
@@ -1419,7 +2030,7 @@
           <span id="concolic-summary">🧭 Whitebox Concolic Path Explorer, Boundary-Negation Solver & Path-Covering Unit Test Synthesizer...</span>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="wasm-btn" id="concolic-inject-btn">🧪 Inject Path-Covering Unit Tests Into All 13 Spokes</button>
-            <button onclick="document.getElementById('concolic-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="concolic-cards"></div>
@@ -1428,7 +2039,7 @@
       <section id="security-drawer">
         <div class="run-header">
           <span id="security-summary">🔒 Denning Lattice Information-Flow Taint, Sanitizer Verification & Constant-Time Side-Channel Auditor...</span>
-          <button onclick="document.getElementById('security-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="security-cards"></div>
       </section>
@@ -1436,7 +2047,7 @@
       <section id="contracts-drawer">
         <div class="run-header">
           <span id="contracts-summary">📜 Hoare-Logic Design-by-Contract (`requires` / `loop_invariant` / `ensures`) & Weakest-Precondition (`WP`) VC Verifier...</span>
-          <button onclick="document.getElementById('contracts-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="contracts-cards"></div>
       </section>
@@ -1444,7 +2055,7 @@
       <section id="ssa-drawer">
         <div class="run-header">
           <span id="ssa-summary">🧬 Cytron Static Single Assignment (SSA), Dominance Frontiers, `φ`-Nodes, Liveness & Def-Use Chains...</span>
-          <button onclick="document.getElementById('ssa-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="ssa-cards"></div>
       </section>
@@ -1456,7 +2067,7 @@
             <input type="text" id="synth-spec-input" value="clamp_bonus(score: Int, cap: Int) -> Int | (40, 100) => 80; (75, 100) => 100; (-15, 60) => 0; (0, 50) => 0" style="width:420px;" />
             <button class="wasm-btn" id="synth-run-btn">✨ Synthesize & Inject Into 13 Spokes</button>
             <button id="synth-list-btn">📋 List Fold Preset (sum_above)</button>
-            <button onclick="document.getElementById('synth-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="synth-cards"></div>
@@ -1465,7 +2076,7 @@
       <section id="cfg-drawer">
         <div class="run-header">
           <span id="cfg-summary">🕸 Control-Flow Graph (CFG), Dominator Tree, Natural Loop Detector & Mermaid/Graphviz DOT Exporter...</span>
-          <button onclick="document.getElementById('cfg-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="cfg-cards"></div>
       </section>
@@ -1475,7 +2086,7 @@
           <span id="repair-summary">🩹 Counterexample-Guided Automated Program Repair (CEGIS) across all 13 languages...</span>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="mut-btn" id="repair-demo-btn">🧪 Inject Bug & Auto-Repair</button>
-            <button onclick="document.getElementById('repair-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="repair-cards"></div>
@@ -1484,7 +2095,7 @@
       <section id="complexity-drawer">
         <div class="run-header">
           <span id="complexity-summary">📈 Asymptotic Big-O, Cyclomatic Complexity, Gas Profiler & 13-Spoke Code Density...</span>
-          <button onclick="document.getElementById('complexity-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="complexity-cards"></div>
       </section>
@@ -1492,7 +2103,7 @@
       <section id="qc-drawer">
         <div class="run-header">
           <span id="qc-summary">🎲 Polyglot Property-Based QuickCheck, Invariant Discovery & Minimal Counterexample Shrinker...</span>
-          <button onclick="document.getElementById('qc-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="qc-cards"></div>
       </section>
@@ -1507,7 +2118,7 @@
             <button id="debug-next-btn">⏭ Next</button>
             <input type="text" id="debug-slice-input" placeholder="var or step:N" style="width:130px;" />
             <button class="debug-btn" id="debug-slice-btn">🎯 Slice</button>
-            <button onclick="document.getElementById('debug-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="debug-cards"></div>
@@ -1518,7 +2129,7 @@
           <span id="wasm-summary">📦 Zero-Dependency WebAssembly 1.0 Binary (.wasm) & Text (.wat) Compiler...</span>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="wasm-btn" id="wasm-browser-btn">⚡ Run .wasm in Browser</button>
-            <button onclick="document.getElementById('wasm-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="wasm-cards"></div>
@@ -1530,7 +2141,7 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button id="merge-fork-btn">↻ Fork Current Hub</button>
             <button class="merge-btn" id="merge-exec-btn">🔀 Merge Concurrent Edits Across All 13 Languages</button>
-            <button onclick="document.getElementById('merge-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="merge-grid">
@@ -1555,7 +2166,7 @@
       <section id="verify-drawer">
         <div class="run-header">
           <span id="verify-summary">Running Hub interval abstract interpretation & concolic witness search...</span>
-          <button onclick="document.getElementById('verify-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="verify-cards"></div>
       </section>
@@ -1565,7 +2176,7 @@
           <span id="mut-summary">Running semantic Hub AST mutation suite...</span>
           <div style="display:flex;gap:8px;">
             <button class="mut-btn" id="harden-btn">🛡 Auto-Harden Tests Across 13 Languages</button>
-            <button onclick="document.getElementById('mut-drawer').style.display='none'">Close</button>
+            <button onclick="closeAllDrawers()">Close</button>
           </div>
         </div>
         <div class="run-cards" id="mut-cards"></div>
@@ -1574,7 +2185,7 @@
       <section id="trace-drawer">
         <div class="run-header">
           <span id="trace-summary">Tracing Hub AST execution & coverage...</span>
-          <button onclick="document.getElementById('trace-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="trace-cards"></div>
       </section>
@@ -1582,12 +2193,76 @@
       <section id="run-drawer">
         <div class="run-header">
           <span id="run-summary">Executing across Hub VM, Wasm, rustc, zig, clang -std=c11, clang++, swiftc, javac, go, python3, ruby, luajit, perl, and node...</span>
-          <button onclick="document.getElementById('run-drawer').style.display='none'">Close</button>
+          <button onclick="closeAllDrawers()">Close</button>
         </div>
         <div class="run-cards" id="run-cards"></div>
       </section>
     </div>
   </aside>
+
+  <!-- =========================================================================
+       MODAL 1: COMMAND PALETTE (⌘K / Ctrl+K)
+       ========================================================================= -->
+  <div class="ds-modal-backdrop" id="cmd-modal">
+    <div class="cmd-palette" role="dialog" aria-label="Command Palette">
+      <div class="cmd-input-row">
+        <span style="color:var(--muted);font-weight:700;">⌘</span>
+        <input type="text" id="cmd-input" placeholder="Jump to any analysis engine, language spoke, layout, or preset..." autocomplete="off" />
+        <kbd class="ds-kbd">ESC</kbd>
+      </div>
+      <div class="cmd-list" id="cmd-list"></div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       MODAL 2: STARLANG DESIGN SYSTEM (SLDS v1.0) SPECIFICATION SHEET
+       ========================================================================= -->
+  <div class="ds-modal-backdrop" id="ds-modal">
+    <div class="ds-sheet" role="dialog" aria-label="StarLang Design System">
+      <div class="ds-sheet-hdr">
+        <div>
+          <strong style="font-size:13.5px;">✦ StarLang Design System (SLDS v1.0)</strong>
+          <span style="color:var(--muted);font-size:11.5px;margin-left:8px;">Minimalist Dark-on-Light Polyglot Workbench Tokens &amp; Architecture</span>
+        </div>
+        <button class="ds-icon-btn" id="ds-close-btn">✕ Close</button>
+      </div>
+      <div class="ds-sheet-body">
+        <div class="ds-token-card">
+          <h4>1. Surface &amp; Ink Tokens</h4>
+          <div class="ds-swatch-row"><span class="ds-swatch" style="background:#09090b;"></span><span>--text / --primary-bg (#09090b · Zinc-950)</span></div>
+          <div class="ds-swatch-row"><span class="ds-swatch" style="background:#334155;"></span><span>--text-secondary (#334155 · Slate-700)</span></div>
+          <div class="ds-swatch-row"><span class="ds-swatch" style="background:#ffffff;"></span><span>--surface (#ffffff · Pure White Card)</span></div>
+          <div class="ds-swatch-row"><span class="ds-swatch" style="background:#f8fafc;"></span><span>--bg (#f8fafc · Cool Alabaster Canvas)</span></div>
+          <div class="ds-swatch-row"><span class="ds-swatch" style="background:#e2e8f0;"></span><span>--border (#e2e8f0 · 1px Hairline Divider)</span></div>
+        </div>
+        <div class="ds-token-card">
+          <h4>2. Semantic Verification Palette</h4>
+          <div class="ds-swatch-row"><span class="ds-swatch" style="background:#ecfdf5;border-color:#047857;"></span><span style="color:#047857;font-weight:600;">--ok (#047857 · Proven Safe / Synced)</span></div>
+          <div class="ds-swatch-row"><span class="ds-swatch" style="background:#fffbeb;border-color:#b45309;"></span><span style="color:#b45309;font-weight:600;">--lift (#b45309 · Active Put Lens / Warn)</span></div>
+          <div class="ds-swatch-row"><span class="ds-swatch" style="background:#fff1f2;border-color:#be123c;"></span><span style="color:#be123c;font-weight:600;">--err (#be123c · Refuted / Syntax Hold)</span></div>
+          <div class="ds-swatch-row"><span class="ds-swatch" style="background:#eff6ff;border-color:#2563eb;"></span><span style="color:#2563eb;font-weight:600;">--accent (#2563eb · Telemetry &amp; Delta)</span></div>
+        </div>
+        <div class="ds-token-card">
+          <h4>3. Information Architecture Hierarchy</h4>
+          <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.55;">
+            <div><strong>Zone 1 (Top Bar · 50px):</strong> Identity, Hover Topology Map, Presets, Live Hub Telemetry, Global CTA.</div>
+            <div><strong>Zone 2 (Workspace Bar · 40px):</strong> 5 Layout Modes (Focus 1, Pair 2, Split 3, Quad 4, All 13) + 13 Spoke Pills.</div>
+            <div><strong>Zone 3 (Code Canvas):</strong> Synchronized Line-Number Gutters, Active-Line Debugger Highlight, Copy &amp; Maximize.</div>
+            <div><strong>Zone 4 (Resizable Dock):</strong> 6 Domain Tabs, 37 Engines, Single-Drawer Orchestration &amp; 1-Click Card Copy.</div>
+          </div>
+        </div>
+        <div class="ds-token-card">
+          <h4>4. Keyboard Shortcuts</h4>
+          <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.8;">
+            <div><kbd class="ds-kbd">⌘K</kbd> / <kbd class="ds-kbd">Ctrl+K</kbd> — Open Command Palette</div>
+            <div><kbd class="ds-kbd">⌘Enter</kbd> / <kbd class="ds-kbd">Ctrl+Enter</kbd> — Run All 14 Execution Engines</div>
+            <div><kbd class="ds-kbd">Esc</kbd> — Close Modal or Collapse Active Inspector Drawer</div>
+            <div><kbd class="ds-kbd">Tab</kbd> — Idiomatic Per-Language Indentation inside Editors</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script>
     const SPOKES = ["rust", "zig", "c", "cpp", "swift", "java", "go", "python", "ruby", "lua", "perl", "typescript", "star"];
@@ -1605,21 +2280,105 @@
     let lastDebugReport = null;
     let debounceTimer = null;
     let currentLayoutMode = "split";
-    let activeSpokeOrder = ["rust", "python", "typescript"];
+    let preFocusLayoutMode = "split";
+    let activeSpokeOrder = ["rust", "python", "typescript", "zig"];
+    const activeHighlightLine = {};
     const prevTexts = {};
+
+    /* =========================================================================
+       SYNCHRONIZED LINE-NUMBER GUTTERS & METRICS FOR ALL 13 SPOKE EDITORS
+       ========================================================================= */
+    function updateSpokeGutter(spoke, highlightLine) {
+      const ed = document.getElementById(`ed-${spoke}`);
+      const gutter = document.getElementById(`gutter-${spoke}`);
+      const metrics = document.getElementById(`metrics-${spoke}`);
+      if (!ed || !gutter) return;
+
+      if (typeof highlightLine === "number") {
+        activeHighlightLine[spoke] = highlightLine;
+      } else if (highlightLine === null) {
+        delete activeHighlightLine[spoke];
+      }
+
+      const text = ed.value || "";
+      const lines = text.split("\n");
+      const lineCount = lines.length;
+      const byteCount = new Blob([text]).size;
+      if (metrics) {
+        metrics.textContent = `${lineCount}L · ${byteCount}B`;
+      }
+
+      const hl = activeHighlightLine[spoke] || 0;
+      const spans = [];
+      for (let i = 1; i <= lineCount; i++) {
+        if (i === hl) {
+          spans.push(`<span class="active-line">${i}</span>`);
+        } else {
+          spans.push(`<span>${i}</span>`);
+        }
+      }
+      gutter.innerHTML = spans.join("");
+      gutter.scrollTop = ed.scrollTop;
+    }
+
+    SPOKES.forEach(spoke => {
+      const ed = document.getElementById(`ed-${spoke}`);
+      const gutter = document.getElementById(`gutter-${spoke}`);
+      if (ed && gutter) {
+        ed.addEventListener("scroll", () => {
+          gutter.scrollTop = ed.scrollTop;
+        });
+        ed.addEventListener("input", () => {
+          updateSpokeGutter(spoke);
+        });
+      }
+    });
+
+    // Copy Code & Single-Pane Focus buttons on each Editor Header
+    document.querySelectorAll(".copy-code-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const s = btn.dataset.spoke;
+        const ed = document.getElementById(`ed-${s}`);
+        if (!ed) return;
+        try {
+          await navigator.clipboard.writeText(ed.value);
+          const orig = btn.textContent;
+          btn.textContent = "✓ Copied";
+          setTimeout(() => { btn.textContent = orig; }, 1200);
+        } catch (_) {}
+      });
+    });
+
+    document.querySelectorAll(".focus-pane-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const s = btn.dataset.spoke;
+        if (currentLayoutMode === "focus" && activeSpokeOrder[0] === s) {
+          applyLayoutMode(preFocusLayoutMode || "split");
+        } else {
+          preFocusLayoutMode = currentLayoutMode === "focus" ? "split" : currentLayoutMode;
+          activeSpokeOrder = [s, ...activeSpokeOrder.filter(x => x !== s)];
+          applyLayoutMode("focus");
+        }
+      });
+    });
 
     /* =========================================================================
        UI / UX INFORMATION ARCHITECTURE CONTROLLERS
        ========================================================================= */
+    const dockDrawersEl = document.getElementById("dock-drawers");
+    dockDrawersEl.classList.add("collapsed");
+
     function closeAllDrawers() {
       ALL_DRAWER_IDS.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = "none";
       });
+      dockDrawersEl.classList.add("collapsed");
       document.querySelectorAll("#tool-strip button").forEach(b => b.classList.remove("active-tool"));
     }
 
     function openExclusiveDrawer(drawerId, btnId) {
+      dockDrawersEl.classList.remove("collapsed");
       ALL_DRAWER_IDS.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = (id === drawerId) ? "block" : "none";
@@ -1627,6 +2386,19 @@
       document.querySelectorAll("#tool-strip button").forEach(b => {
         b.classList.toggle("active-tool", b.id === btnId);
       });
+      if (btnId) {
+        const btn = document.getElementById(btnId);
+        if (btn && btn.dataset.cat) {
+          const catTab = document.querySelector(`.dock-tab[data-cat="${btn.dataset.cat}"]`);
+          if (catTab && !document.querySelector('.dock-tab[data-cat="all"]').classList.contains("active")) {
+            document.querySelectorAll(".dock-tab").forEach(t => t.classList.remove("active"));
+            catTab.classList.add("active");
+            document.querySelectorAll("#tool-strip button").forEach(b => {
+              b.classList.toggle("hidden-by-cat", b.dataset.cat !== btn.dataset.cat);
+            });
+          }
+        }
+      }
     }
 
     // Automatically ensure only one inspector drawer is open at a time
@@ -1642,6 +2414,65 @@
 
     document.getElementById("close-all-drawers-btn").addEventListener("click", closeAllDrawers);
 
+    let dockExpanded = false;
+    document.getElementById("dock-expand-btn").addEventListener("click", () => {
+      dockExpanded = !dockExpanded;
+      dockDrawersEl.classList.remove("collapsed");
+      document.documentElement.style.setProperty("--dock-body-height", dockExpanded ? "52vh" : "260px");
+      document.getElementById("dock-expand-btn").textContent = dockExpanded ? "⤡ Compact" : "⤢ Expand";
+    });
+
+    // Drag-to-resize Dock Splitter
+    (function initDockResizer() {
+      const resizer = document.getElementById("dock-resizer");
+      let dragging = false;
+      resizer.addEventListener("mousedown", e => {
+        dragging = true;
+        resizer.classList.add("dragging");
+        dockDrawersEl.classList.remove("collapsed");
+        e.preventDefault();
+      });
+      window.addEventListener("mousemove", e => {
+        if (!dragging) return;
+        const fromBottom = window.innerHeight - e.clientY - 82;
+        const clamped = Math.max(100, Math.min(window.innerHeight * 0.68, fromBottom));
+        document.documentElement.style.setProperty("--dock-body-height", `${Math.round(clamped)}px`);
+      });
+      window.addEventListener("mouseup", () => {
+        if (dragging) {
+          dragging = false;
+          resizer.classList.remove("dragging");
+        }
+      });
+    })();
+
+    // Auto-inject 1-click Copy button into every rendered .run-card
+    const cardObserver = new MutationObserver(mutations => {
+      mutations.forEach(m => {
+        m.addedNodes.forEach(node => {
+          if (node.nodeType === 1 && node.classList.contains("run-card") && !node.querySelector(".card-copy-btn")) {
+            const cp = document.createElement("button");
+            cp.className = "card-copy-btn";
+            cp.textContent = "Copy";
+            cp.title = "Copy card output";
+            cp.addEventListener("click", async () => {
+              const pre = node.querySelector("pre");
+              if (!pre) return;
+              try {
+                await navigator.clipboard.writeText(pre.textContent);
+                cp.textContent = "✓ Copied";
+                setTimeout(() => { cp.textContent = "Copy"; }, 1200);
+              } catch (_) {}
+            });
+            node.appendChild(cp);
+          }
+        });
+      });
+    });
+    document.querySelectorAll(".run-cards").forEach(el => {
+      cardObserver.observe(el, { childList: true });
+    });
+
     // Category Tabs in Inspector Dock
     document.querySelectorAll(".dock-tab").forEach(tab => {
       tab.addEventListener("click", () => {
@@ -1656,7 +2487,7 @@
       });
     });
 
-    // Live Search Filter across all 35 tools
+    // Live Search Filter across all 37 tools
     document.getElementById("tool-search").addEventListener("input", e => {
       const q = e.target.value.trim().toLowerCase();
       if (q.length > 0) {
@@ -1674,11 +2505,11 @@
       document.getElementById("refactor-bar").classList.toggle("open");
     });
 
-    // Workspace Layout Mode Switcher (Focus 1, Pair 2, Split 3, All 13)
+    // Workspace Layout Mode Switcher (Focus 1, Pair 2, Split 3, Quad 4, All 13)
     function applyLayoutMode(mode) {
       currentLayoutMode = mode;
       const grid = document.getElementById("editor-grid");
-      grid.classList.remove("mode-focus", "mode-pair", "mode-split", "mode-all");
+      grid.classList.remove("mode-focus", "mode-pair", "mode-split", "mode-quad", "mode-all");
       grid.classList.add(`mode-${mode}`);
       document.querySelectorAll(".layout-btn").forEach(b => {
         b.classList.toggle("active", b.dataset.layout === mode);
@@ -1691,7 +2522,10 @@
           if (pill) pill.classList.add("on");
         });
       } else {
-        const limit = mode === "focus" ? 1 : (mode === "pair" ? 2 : 3);
+        const limit = mode === "focus" ? 1 : (mode === "pair" ? 2 : (mode === "quad" ? 4 : 3));
+        SPOKES.forEach(s => {
+          if (!activeSpokeOrder.includes(s)) activeSpokeOrder.push(s);
+        });
         const visible = activeSpokeOrder.slice(0, limit);
         SPOKES.forEach(s => {
           const isVis = visible.includes(s);
@@ -1875,6 +2709,7 @@
         pane.classList.add("has-error");
         status.className = "status error";
         status.textContent = `Syntax Hold (L${data.diagnostic.line})`;
+        updateSpokeGutter(spoke, data.diagnostic.line);
         diag.textContent = `Line ${data.diagnostic.line}, Col ${data.diagnostic.col}: ${data.diagnostic.message} — other 12 spokes held at last valid Hub AST`;
       }
     }
@@ -3477,7 +4312,152 @@
     }
 
     document.getElementById("run-btn").addEventListener("click", triggerRunAll);
+
+    // Additional Telemetry Pill Shortcuts
+    document.getElementById("test-pill").addEventListener("click", () => {
+      document.getElementById("qc-btn").click();
+    });
+    document.getElementById("vm-preview").addEventListener("click", () => {
+      document.getElementById("debug-btn").click();
+    });
+
+    // Hook into applySnapshot and renderDebugStep to keep line gutters & active line highlights synced
+    const _origApplySnapshot = applySnapshot;
+    applySnapshot = function(snap, skipSpoke) {
+      _origApplySnapshot(snap, skipSpoke);
+      SPOKES.forEach(s => updateSpokeGutter(s, null));
+    };
+
+    const _origRenderDebugStep = renderDebugStep;
+    renderDebugStep = function(idx) {
+      _origRenderDebugStep(idx);
+      if (lastDebugReport && lastDebugReport.steps && lastDebugReport.steps.length > 0) {
+        const clamped = Math.max(0, Math.min(lastDebugReport.steps.length - 1, idx));
+        const st = lastDebugReport.steps[clamped];
+        SPOKES.forEach(sp => {
+          const ln = st.spoke_lines && st.spoke_lines[sp];
+          updateSpokeGutter(sp, ln || null);
+        });
+      }
+    };
+
+    /* =========================================================================
+       COMMAND PALETTE (⌘K) & DESIGN SYSTEM MODAL CONTROLLERS
+       ========================================================================= */
+    const cmdModal = document.getElementById("cmd-modal");
+    const cmdInput = document.getElementById("cmd-input");
+    const cmdList = document.getElementById("cmd-list");
+    const dsModal = document.getElementById("ds-modal");
+    let cmdItems = [];
+    let cmdSelectedIdx = 0;
+
+    function buildCommandItems() {
+      const items = [
+        { label: "▶ Run All 14 Execution Engines", cat: "Global", action: () => triggerRunAll() },
+        { label: "⚡ Optimize Hub AST (Constant Fold & Dead-Branch Prune)", cat: "Global", action: () => document.getElementById("opt-btn").click() },
+        { label: "✎ Toggle Semantic Cross-Language Refactor Bar", cat: "Global", action: () => document.getElementById("toggle-refactor-btn").click() },
+        { label: "✦ View StarLang Design System (SLDS v1.0)", cat: "Design System", action: () => dsModal.classList.add("open") },
+        { label: "Layout: Focus (1 Pane)", cat: "Workspace", action: () => applyLayoutMode("focus") },
+        { label: "Layout: Pair (2 Panes Side-by-Side)", cat: "Workspace", action: () => applyLayoutMode("pair") },
+        { label: "Layout: Split (3 Panes Workbench)", cat: "Workspace", action: () => applyLayoutMode("split") },
+        { label: "Layout: Quad (4 Panes 2x2 Grid)", cat: "Workspace", action: () => applyLayoutMode("quad") },
+        { label: "Layout: All 13 Languages Grid", cat: "Workspace", action: () => applyLayoutMode("all") }
+      ];
+      document.querySelectorAll("#tool-strip button").forEach(btn => {
+        items.push({
+          label: btn.textContent.trim() + " — " + (btn.title || "").split(",")[0],
+          cat: (btn.dataset.cat || "tool").toUpperCase(),
+          action: () => btn.click()
+        });
+      });
+      SPOKES.forEach(s => {
+        items.push({
+          label: `Focus Language Spoke: ${s.toUpperCase()}`,
+          cat: "Spoke",
+          action: () => {
+            activeSpokeOrder = [s, ...activeSpokeOrder.filter(x => x !== s)];
+            applyLayoutMode(currentLayoutMode === "all" ? "split" : currentLayoutMode);
+          }
+        });
+      });
+      return items;
+    }
+
+    function renderCommandPalette(filterText) {
+      const all = buildCommandItems();
+      const q = (filterText || "").trim().toLowerCase();
+      cmdItems = q ? all.filter(it => (it.label + " " + it.cat).toLowerCase().includes(q)) : all;
+      cmdSelectedIdx = 0;
+      cmdList.innerHTML = "";
+      cmdItems.slice(0, 24).forEach((it, idx) => {
+        const row = document.createElement("div");
+        row.className = "cmd-item" + (idx === cmdSelectedIdx ? " selected" : "");
+        row.innerHTML = `<span>${it.label}</span><span class="cmd-item-cat">${it.cat}</span>`;
+        row.addEventListener("click", () => {
+          cmdModal.classList.remove("open");
+          it.action();
+        });
+        cmdList.appendChild(row);
+      });
+    }
+
+    function openCommandPalette() {
+      cmdModal.classList.add("open");
+      cmdInput.value = "";
+      renderCommandPalette("");
+      setTimeout(() => cmdInput.focus(), 10);
+    }
+
+    document.getElementById("cmd-palette-btn").addEventListener("click", openCommandPalette);
+    cmdInput.addEventListener("input", e => renderCommandPalette(e.target.value));
+    cmdModal.addEventListener("click", e => {
+      if (e.target === cmdModal) cmdModal.classList.remove("open");
+    });
+
+    document.getElementById("ds-open-btn").addEventListener("click", () => dsModal.classList.add("open"));
+    document.getElementById("ds-close-btn").addEventListener("click", () => dsModal.classList.remove("open"));
+    dsModal.addEventListener("click", e => {
+      if (e.target === dsModal) dsModal.classList.remove("open");
+    });
+
     window.addEventListener("keydown", e => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (cmdModal.classList.contains("open")) {
+          cmdModal.classList.remove("open");
+        } else {
+          openCommandPalette();
+        }
+        return;
+      }
+      if (cmdModal.classList.contains("open")) {
+        const visibleCount = Math.min(cmdItems.length, 24);
+        if (e.key === "ArrowDown" && visibleCount > 0) {
+          e.preventDefault();
+          cmdSelectedIdx = (cmdSelectedIdx + 1) % visibleCount;
+          [...cmdList.children].forEach((c, i) => c.classList.toggle("selected", i === cmdSelectedIdx));
+        } else if (e.key === "ArrowUp" && visibleCount > 0) {
+          e.preventDefault();
+          cmdSelectedIdx = (cmdSelectedIdx - 1 + visibleCount) % visibleCount;
+          [...cmdList.children].forEach((c, i) => c.classList.toggle("selected", i === cmdSelectedIdx));
+        } else if (e.key === "Enter" && cmdItems[cmdSelectedIdx]) {
+          e.preventDefault();
+          const chosen = cmdItems[cmdSelectedIdx];
+          cmdModal.classList.remove("open");
+          chosen.action();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          cmdModal.classList.remove("open");
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        if (dsModal.classList.contains("open")) {
+          dsModal.classList.remove("open");
+        } else {
+          closeAllDrawers();
+        }
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
         triggerRunAll();
