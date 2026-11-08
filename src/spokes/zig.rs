@@ -104,6 +104,21 @@ impl ZigFormatter {
         )
     }
 
+    fn target_ty(&self, target: &AssignTarget) -> Option<Type> {
+        let target_expr = match target {
+            AssignTarget::Var(v) => Expr::Var(v.clone()),
+            AssignTarget::Field { base, field } => Expr::FieldAccess {
+                base: Box::new(Expr::Var(base.clone())),
+                field: field.clone(),
+            },
+            AssignTarget::Index { base, index } => Expr::Index {
+                base: Box::new(Expr::Var(base.clone())),
+                index: Box::new(index.clone()),
+            },
+        };
+        self.expr_ty(&target_expr)
+    }
+
     fn fmt_type(ty: &Type) -> String {
         match ty {
             Type::Int => "i64".to_string(),
@@ -194,12 +209,20 @@ impl ZigFormatter {
                         self.local_env.insert(name.clone(), t);
                     }
                 }
-                Stmt::Assign { target, value, .. } => {
+                Stmt::Assign {
+                    target, op, value, ..
+                } => {
                     if let AssignTarget::Index { index, .. } = target {
                         u.need_list = true;
                         self.scan_expr(index, u);
                     }
                     self.scan_expr(value, u);
+                    if *op == AssignOp::AddAssign
+                        && (self.target_ty(target) == Some(Type::Str)
+                            || self.expr_ty(value) == Some(Type::Str))
+                    {
+                        u.need_str_concat = true;
+                    }
                 }
                 Stmt::If {
                     cond,
@@ -298,7 +321,7 @@ impl ZigFormatter {
             Expr::Binary { op, left, right } => {
                 self.scan_expr(left, u);
                 self.scan_expr(right, u);
-                let lty = self.expr_ty(left);
+                let lty = self.expr_ty(left).or_else(|| self.expr_ty(right));
                 match op {
                     BinOp::Add if lty == Some(Type::Str) => {
                         u.need_str_concat = true;
@@ -722,52 +745,93 @@ fn starNeq(a: anytype, b: @TypeOf(a)) bool {
             }
             Stmt::Assign {
                 target, op, value, ..
-            } => match target {
-                AssignTarget::Index { base, index } => {
-                    let idx_s = self.fmt_expr(index);
-                    let val_s = self.fmt_expr(value);
-                    match op {
-                        AssignOp::Set => {
-                            out.push_str(&format!("{}{}.set({}, {});\n", pad, base, idx_s, val_s));
+            } => {
+                let is_str = self.target_ty(target) == Some(Type::Str)
+                    || self.expr_ty(value) == Some(Type::Str);
+                match target {
+                    AssignTarget::Index { base, index } => {
+                        let idx_s = self.fmt_expr(index);
+                        let val_s = self.fmt_expr(value);
+                        match op {
+                            AssignOp::Set => {
+                                out.push_str(&format!(
+                                    "{}{}.set({}, {});\n",
+                                    pad, base, idx_s, val_s
+                                ));
+                            }
+                            AssignOp::AddAssign if is_str => {
+                                out.push_str(&format!(
+                                    "{}{}.set({}, starStrConcat({}.get({}), {}));\n",
+                                    pad, base, idx_s, base, idx_s, val_s
+                                ));
+                            }
+                            AssignOp::AddAssign => {
+                                out.push_str(&format!(
+                                    "{}{}.set({}, {}.get({}) + ({}));\n",
+                                    pad, base, idx_s, base, idx_s, val_s
+                                ));
+                            }
+                            AssignOp::SubAssign => {
+                                out.push_str(&format!(
+                                    "{}{}.set({}, {}.get({}) - ({}));\n",
+                                    pad, base, idx_s, base, idx_s, val_s
+                                ));
+                            }
                         }
-                        AssignOp::AddAssign => {
+                    }
+                    AssignTarget::Var(v) => {
+                        if *op == AssignOp::AddAssign && is_str {
                             out.push_str(&format!(
-                                "{}{}.set({}, {}.get({}) + ({}));\n",
-                                pad, base, idx_s, base, idx_s, val_s
+                                "{}{} = starStrConcat({}, {});\n",
+                                pad,
+                                v,
+                                v,
+                                self.fmt_expr(value)
+                            ));
+                        } else {
+                            let op_s = match op {
+                                AssignOp::Set => "=",
+                                AssignOp::AddAssign => "+=",
+                                AssignOp::SubAssign => "-=",
+                            };
+                            out.push_str(&format!(
+                                "{}{} {} {};\n",
+                                pad,
+                                v,
+                                op_s,
+                                self.fmt_expr(value)
                             ));
                         }
-                        AssignOp::SubAssign => {
+                    }
+                    AssignTarget::Field { base, field } => {
+                        if *op == AssignOp::AddAssign && is_str {
                             out.push_str(&format!(
-                                "{}{}.set({}, {}.get({}) - ({}));\n",
-                                pad, base, idx_s, base, idx_s, val_s
+                                "{}{}.{} = starStrConcat({}.{}, {});\n",
+                                pad,
+                                base,
+                                field,
+                                base,
+                                field,
+                                self.fmt_expr(value)
+                            ));
+                        } else {
+                            let op_s = match op {
+                                AssignOp::Set => "=",
+                                AssignOp::AddAssign => "+=",
+                                AssignOp::SubAssign => "-=",
+                            };
+                            out.push_str(&format!(
+                                "{}{}.{} {} {};\n",
+                                pad,
+                                base,
+                                field,
+                                op_s,
+                                self.fmt_expr(value)
                             ));
                         }
                     }
                 }
-                AssignTarget::Var(v) => {
-                    let op_s = match op {
-                        AssignOp::Set => "=",
-                        AssignOp::AddAssign => "+=",
-                        AssignOp::SubAssign => "-=",
-                    };
-                    out.push_str(&format!("{}{} {} {};\n", pad, v, op_s, self.fmt_expr(value)));
-                }
-                AssignTarget::Field { base, field } => {
-                    let op_s = match op {
-                        AssignOp::Set => "=",
-                        AssignOp::AddAssign => "+=",
-                        AssignOp::SubAssign => "-=",
-                    };
-                    out.push_str(&format!(
-                        "{}{}.{} {} {};\n",
-                        pad,
-                        base,
-                        field,
-                        op_s,
-                        self.fmt_expr(value)
-                    ));
-                }
-            },
+            }
             Stmt::If {
                 cond,
                 then_body,
@@ -2302,8 +2366,22 @@ impl<'a> ZigParser<'a> {
         };
 
         if let Some(op) = assign_op {
+            let starts_with_str_concat =
+                matches!(self.peek_kind(), Some(ZTokKind::Ident(s)) if s == "starStrConcat");
             let rhs = self.parse_expr()?;
             self.expect(&ZTokKind::Semi, "';' after assignment")?;
+            let (final_op, final_rhs) = if op == AssignOp::Set && starts_with_str_concat {
+                match rhs {
+                    Expr::Binary {
+                        op: BinOp::Add,
+                        left,
+                        right,
+                    } if *left == lhs => (AssignOp::AddAssign, *right),
+                    other => (op, other),
+                }
+            } else {
+                (op, rhs)
+            };
             let target = match lhs {
                 Expr::Var(v) => AssignTarget::Var(v),
                 Expr::FieldAccess { base, field } => match *base {
@@ -2315,8 +2393,8 @@ impl<'a> ZigParser<'a> {
             return Ok(Some(Stmt::Assign {
                 id: 0,
                 target,
-                op,
-                value: rhs,
+                op: final_op,
+                value: final_rhs,
                 meta: Metadata::new(),
             }));
         }

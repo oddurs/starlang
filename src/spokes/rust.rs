@@ -106,6 +106,21 @@ impl RustFmtCtx {
         )
     }
 
+    fn target_ty(&self, target: &AssignTarget) -> Option<Type> {
+        let target_expr = match target {
+            AssignTarget::Var(v) => Expr::Var(v.clone()),
+            AssignTarget::Field { base, field } => Expr::FieldAccess {
+                base: Box::new(Expr::Var(base.clone())),
+                field: field.clone(),
+            },
+            AssignTarget::Index { base, index } => Expr::Index {
+                base: Box::new(Expr::Var(base.clone())),
+                index: Box::new(index.clone()),
+            },
+        };
+        self.expr_ty(&target_expr)
+    }
+
     fn is_copy_ty(&self, ty: &Type) -> bool {
         match ty {
             Type::Int | Type::Float | Type::Bool | Type::Void => true,
@@ -307,13 +322,19 @@ impl RustFmtCtx {
                         format!("{}[{}]", base, idx_str)
                     }
                 };
-                out.push_str(&format!(
-                    "{}{} {} {};\n",
-                    pad,
-                    tgt,
-                    op_str,
+                let rhs_str = if *op == AssignOp::AddAssign
+                    && (self.target_ty(target) == Some(Type::Str)
+                        || self.expr_ty(value) == Some(Type::Str))
+                {
+                    match value {
+                        Expr::Str(s) => format!("\"{}\"", escape_str(s)),
+                        Expr::Var(v) if self.borrowed_locals.contains(v) => v.clone(),
+                        _ => format!("&{}", self.fmt_expr(value)),
+                    }
+                } else {
                     self.fmt_owned_expr(value)
-                ));
+                };
+                out.push_str(&format!("{}{} {} {};\n", pad, tgt, op_str, rhs_str));
             }
             Stmt::If {
                 cond,

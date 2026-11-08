@@ -18,7 +18,7 @@ impl LanguageLens for PythonLens {
 
     fn get(&self, hub: &HubModule) -> String {
         let mut ctx = PyFmtCtx::from_hub(hub);
-        let need_bool_str = ctx.scan_module_bool_str(hub);
+        let (need_bool_str, need_idiv, need_irem) = ctx.scan_module_helpers(hub);
         let mut out = String::new();
         let has_structs = hub.items.iter().any(|i| matches!(i, Item::Struct(_)));
         let has_enums = hub.items.iter().any(|i| matches!(i, Item::Enum(_)));
@@ -34,6 +34,16 @@ impl LanguageLens for PythonLens {
         if need_bool_str {
             out.push_str(
                 "def _star_bool_str(b: bool) -> str:\n    if b:\n        return \"true\"\n    return \"false\"\n\n\n",
+            );
+        }
+        if need_idiv {
+            out.push_str(
+                "def _star_idiv(a: int, b: int) -> int:\n    if (a < 0) != (b < 0):\n        return -(abs(a) // abs(b))\n    return abs(a) // abs(b)\n\n\n",
+            );
+        }
+        if need_irem {
+            out.push_str(
+                "def _star_irem(a: int, b: int) -> int:\n    if a < 0:\n        return -(abs(a) % abs(b))\n    return abs(a) % abs(b)\n\n\n",
             );
         }
 
@@ -185,8 +195,8 @@ impl PyFmtCtx {
         )
     }
 
-    fn scan_module_bool_str(&mut self, hub: &HubModule) -> bool {
-        let mut needed = false;
+    fn scan_module_helpers(&mut self, hub: &HubModule) -> (bool, bool, bool) {
+        let mut helpers = (false, false, false);
         for item in &hub.items {
             match item {
                 Item::Function(f) => {
@@ -194,34 +204,34 @@ impl PyFmtCtx {
                     for p in &f.params {
                         self.local_env.insert(p.name.clone(), p.ty.clone());
                     }
-                    self.scan_stmts_bool_str(&f.body, &mut needed);
+                    self.scan_stmts_helpers(&f.body, &mut helpers);
                 }
                 Item::Test(t) => {
                     self.local_env.clear();
-                    self.scan_stmts_bool_str(&t.body, &mut needed);
+                    self.scan_stmts_helpers(&t.body, &mut helpers);
                 }
                 _ => {}
             }
         }
-        needed
+        helpers
     }
 
-    fn scan_stmts_bool_str(&mut self, stmts: &[Stmt], needed: &mut bool) {
+    fn scan_stmts_helpers(&mut self, stmts: &[Stmt], helpers: &mut (bool, bool, bool)) {
         for s in stmts {
             match s {
                 Stmt::Let {
                     name, ty, value, ..
                 } => {
-                    self.scan_expr_bool_str(value, needed);
+                    self.scan_expr_helpers(value, helpers);
                     if let Some(t) = ty.clone().or_else(|| self.expr_ty(value)) {
                         self.local_env.insert(name.clone(), t);
                     }
                 }
                 Stmt::Assign { target, value, .. } => {
                     if let AssignTarget::Index { index, .. } = target {
-                        self.scan_expr_bool_str(index, needed);
+                        self.scan_expr_helpers(index, helpers);
                     }
-                    self.scan_expr_bool_str(value, needed);
+                    self.scan_expr_helpers(value, helpers);
                 }
                 Stmt::If {
                     cond,
@@ -229,36 +239,36 @@ impl PyFmtCtx {
                     else_body,
                     ..
                 } => {
-                    self.scan_expr_bool_str(cond, needed);
+                    self.scan_expr_helpers(cond, helpers);
                     let saved = self.local_env.clone();
-                    self.scan_stmts_bool_str(then_body, needed);
+                    self.scan_stmts_helpers(then_body, helpers);
                     self.local_env = saved.clone();
-                    self.scan_stmts_bool_str(else_body, needed);
+                    self.scan_stmts_helpers(else_body, helpers);
                     self.local_env = saved;
                 }
                 Stmt::Match { expr, arms, .. } => {
-                    self.scan_expr_bool_str(expr, needed);
+                    self.scan_expr_helpers(expr, helpers);
                     for arm in arms {
                         let saved = self.local_env.clone();
-                        self.scan_stmts_bool_str(&arm.body, needed);
+                        self.scan_stmts_helpers(&arm.body, helpers);
                         self.local_env = saved;
                     }
                 }
                 Stmt::While { cond, body, .. } => {
-                    self.scan_expr_bool_str(cond, needed);
+                    self.scan_expr_helpers(cond, helpers);
                     let saved = self.local_env.clone();
-                    self.scan_stmts_bool_str(body, needed);
+                    self.scan_stmts_helpers(body, helpers);
                     self.local_env = saved;
                 }
                 Stmt::ForEach {
                     var, iter, body, ..
                 } => {
-                    self.scan_expr_bool_str(iter, needed);
+                    self.scan_expr_helpers(iter, helpers);
                     let saved = self.local_env.clone();
                     if let Some(Type::List(elem)) = self.expr_ty(iter) {
                         self.local_env.insert(var.clone(), *elem);
                     }
-                    self.scan_stmts_bool_str(body, needed);
+                    self.scan_stmts_helpers(body, helpers);
                     self.local_env = saved;
                 }
                 Stmt::ForRange {
@@ -268,84 +278,89 @@ impl PyFmtCtx {
                     body,
                     ..
                 } => {
-                    self.scan_expr_bool_str(start, needed);
-                    self.scan_expr_bool_str(end, needed);
+                    self.scan_expr_helpers(start, helpers);
+                    self.scan_expr_helpers(end, helpers);
                     let saved = self.local_env.clone();
                     self.local_env.insert(var.clone(), Type::Int);
-                    self.scan_stmts_bool_str(body, needed);
+                    self.scan_stmts_helpers(body, helpers);
                     self.local_env = saved;
                 }
-                Stmt::Assert { cond, .. } => self.scan_expr_bool_str(cond, needed),
+                Stmt::Assert { cond, .. } => self.scan_expr_helpers(cond, helpers),
                 Stmt::AssertEq { left, right, .. } => {
-                    self.scan_expr_bool_str(left, needed);
-                    self.scan_expr_bool_str(right, needed);
+                    self.scan_expr_helpers(left, helpers);
+                    self.scan_expr_helpers(right, helpers);
                 }
                 Stmt::Return {
                     value: Some(e), ..
                 }
-                | Stmt::Expr { expr: e, .. } => self.scan_expr_bool_str(e, needed),
+                | Stmt::Expr { expr: e, .. } => self.scan_expr_helpers(e, helpers),
                 _ => {}
             }
         }
     }
 
-    fn scan_expr_bool_str(&self, expr: &Expr, needed: &mut bool) {
+    fn scan_expr_helpers(&self, expr: &Expr, helpers: &mut (bool, bool, bool)) {
         match expr {
             Expr::List(items) => {
                 for it in items {
-                    self.scan_expr_bool_str(it, needed);
+                    self.scan_expr_helpers(it, helpers);
                 }
             }
             Expr::StructInit { fields, .. } => {
                 for (_, v) in fields {
-                    self.scan_expr_bool_str(v, needed);
+                    self.scan_expr_helpers(v, helpers);
                 }
             }
-            Expr::FieldAccess { base, .. } => self.scan_expr_bool_str(base, needed),
+            Expr::FieldAccess { base, .. } => self.scan_expr_helpers(base, helpers),
             Expr::Index { base, index } => {
-                self.scan_expr_bool_str(base, needed);
-                self.scan_expr_bool_str(index, needed);
+                self.scan_expr_helpers(base, helpers);
+                self.scan_expr_helpers(index, helpers);
             }
-            Expr::Unary { expr: inner, .. } => self.scan_expr_bool_str(inner, needed),
-            Expr::Binary { left, right, .. } => {
-                self.scan_expr_bool_str(left, needed);
-                self.scan_expr_bool_str(right, needed);
+            Expr::Unary { expr: inner, .. } => self.scan_expr_helpers(inner, helpers),
+            Expr::Binary { op, left, right } => {
+                match op {
+                    BinOp::IntDiv => helpers.1 = true,
+                    BinOp::Mod => helpers.2 = true,
+                    _ => {}
+                }
+                self.scan_expr_helpers(left, helpers);
+                self.scan_expr_helpers(right, helpers);
             }
             Expr::Call { args, .. } => {
                 for a in args {
-                    self.scan_expr_bool_str(a, needed);
+                    self.scan_expr_helpers(a, helpers);
                 }
             }
             Expr::Intrinsic(intr) => match intr.as_ref() {
                 Intrinsic::Print(args) => {
                     for a in args {
                         if self.expr_ty(a) == Some(Type::Bool) {
-                            *needed = true;
+                            helpers.0 = true;
                         }
-                        self.scan_expr_bool_str(a, needed);
+                        self.scan_expr_helpers(a, helpers);
                     }
                 }
                 Intrinsic::ToStr(e) => {
                     if self.expr_ty(e) == Some(Type::Bool) {
-                        *needed = true;
+                        helpers.0 = true;
                     }
-                    self.scan_expr_bool_str(e, needed);
+                    self.scan_expr_helpers(e, helpers);
                 }
                 Intrinsic::Len(e)
                 | Intrinsic::Abs(e)
                 | Intrinsic::Upper(e)
-                | Intrinsic::Lower(e) => self.scan_expr_bool_str(e, needed),
+                | Intrinsic::Lower(e) => self.scan_expr_helpers(e, helpers),
                 Intrinsic::Min(a, b) | Intrinsic::Max(a, b) => {
-                    self.scan_expr_bool_str(a, needed);
-                    self.scan_expr_bool_str(b, needed);
+                    self.scan_expr_helpers(a, helpers);
+                    self.scan_expr_helpers(b, helpers);
                 }
                 Intrinsic::Push { list, value } => {
-                    self.scan_expr_bool_str(list, needed);
-                    self.scan_expr_bool_str(value, needed);
+                    self.scan_expr_helpers(list, helpers);
+                    self.scan_expr_helpers(value, helpers);
                 }
                 Intrinsic::Contains { haystack, needle } => {
-                    self.scan_expr_bool_str(haystack, needed);
-                    self.scan_expr_bool_str(needle, needed);
+                    self.scan_expr_helpers(haystack, helpers);
+                    self.scan_expr_helpers(needle, helpers);
                 }
             },
             _ => {}
@@ -617,6 +632,12 @@ impl PyFmtCtx {
                 }
             },
             Expr::Binary { op, left, right } => {
+                if *op == BinOp::IntDiv {
+                    return format!("_star_idiv({}, {})", self.fmt_expr(left), self.fmt_expr(right));
+                }
+                if *op == BinOp::Mod {
+                    return format!("_star_irem({}, {})", self.fmt_expr(left), self.fmt_expr(right));
+                }
                 let wrap_low_prec = |e: &Expr| -> Option<String> {
                     if !matches!(op, BinOp::And | BinOp::Or) {
                         if let Expr::Intrinsic(intr) = e {
@@ -1175,7 +1196,10 @@ impl PyParser {
                 );
                 module.items.push(Item::Struct(s));
             } else if self.eat_kw("def") {
-                if matches!(self.peek_kind(), Some(PTokKind::Ident(s)) if s == "_star_bool_str") {
+                if matches!(
+                    self.peek_kind(),
+                    Some(PTokKind::Ident(s)) if s == "_star_bool_str" || s == "_star_idiv" || s == "_star_irem"
+                ) {
                     self.skip_indented_suite()?;
                     continue;
                 }
@@ -1894,6 +1918,24 @@ impl PyParser {
                     let mut args = self.parse_expr_list(&PTokKind::RParen)?;
                     return match (ident.as_str(), args.len()) {
                         ("_star_bool_str", 1) => Ok(args.pop().unwrap()),
+                        ("_star_idiv", 2) => {
+                            let right = Box::new(args.pop().unwrap());
+                            let left = Box::new(args.pop().unwrap());
+                            Ok(Expr::Binary {
+                                op: BinOp::IntDiv,
+                                left,
+                                right,
+                            })
+                        }
+                        ("_star_irem", 2) => {
+                            let right = Box::new(args.pop().unwrap());
+                            let left = Box::new(args.pop().unwrap());
+                            Ok(Expr::Binary {
+                                op: BinOp::Mod,
+                                left,
+                                right,
+                            })
+                        }
                         ("len", 1) => Ok(Expr::intrinsic(Intrinsic::Len(args.pop().unwrap()))),
                         ("abs", 1) => Ok(Expr::intrinsic(Intrinsic::Abs(args.pop().unwrap()))),
                         ("str", 1) => Ok(Expr::intrinsic(Intrinsic::ToStr(args.pop().unwrap()))),

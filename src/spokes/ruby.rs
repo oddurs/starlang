@@ -15,7 +15,18 @@ impl LanguageLens for RubyLens {
     }
 
     fn get(&self, hub: &HubModule) -> String {
+        let (need_idiv, need_irem) = scan_ruby_helpers(hub);
         let mut out = String::new();
+        if need_idiv {
+            out.push_str(
+                "def _star_idiv(a, b)\n  if (a < 0) != (b < 0)\n    return -(a.abs / b.abs)\n  end\n  return a.abs / b.abs\nend\n\n",
+            );
+        }
+        if need_irem {
+            out.push_str(
+                "def _star_irem(a, b)\n  if a < 0\n    return -(a.abs % b.abs)\n  end\n  return a.abs % b.abs\nend\n\n",
+            );
+        }
 
         for (idx, item) in hub.items.iter().enumerate() {
             if idx > 0 {
@@ -70,6 +81,125 @@ impl LanguageLens for RubyLens {
         };
         let parsed = parser.parse_module()?;
         Ok(reconcile_modules(parsed, prev_hub, SpokeId::Ruby))
+    }
+}
+
+fn scan_ruby_helpers(hub: &HubModule) -> (bool, bool) {
+    let mut helpers = (false, false);
+    for item in &hub.items {
+        match item {
+            Item::Function(f) => scan_ruby_stmts(&f.body, &mut helpers),
+            Item::Test(t) => scan_ruby_stmts(&t.body, &mut helpers),
+            _ => {}
+        }
+    }
+    helpers
+}
+
+fn scan_ruby_stmts(stmts: &[Stmt], helpers: &mut (bool, bool)) {
+    for s in stmts {
+        match s {
+            Stmt::Let { value, .. } => scan_ruby_expr(value, helpers),
+            Stmt::Assign { target, value, .. } => {
+                if let AssignTarget::Index { index, .. } = target {
+                    scan_ruby_expr(index, helpers);
+                }
+                scan_ruby_expr(value, helpers);
+            }
+            Stmt::If {
+                cond,
+                then_body,
+                else_body,
+                ..
+            } => {
+                scan_ruby_expr(cond, helpers);
+                scan_ruby_stmts(then_body, helpers);
+                scan_ruby_stmts(else_body, helpers);
+            }
+            Stmt::Match { expr, arms, .. } => {
+                scan_ruby_expr(expr, helpers);
+                for arm in arms {
+                    scan_ruby_stmts(&arm.body, helpers);
+                }
+            }
+            Stmt::While { cond, body, .. } | Stmt::ForEach { iter: cond, body, .. } => {
+                scan_ruby_expr(cond, helpers);
+                scan_ruby_stmts(body, helpers);
+            }
+            Stmt::ForRange {
+                start, end, body, ..
+            } => {
+                scan_ruby_expr(start, helpers);
+                scan_ruby_expr(end, helpers);
+                scan_ruby_stmts(body, helpers);
+            }
+            Stmt::Assert { cond, .. } => scan_ruby_expr(cond, helpers),
+            Stmt::AssertEq { left, right, .. } => {
+                scan_ruby_expr(left, helpers);
+                scan_ruby_expr(right, helpers);
+            }
+            Stmt::Return {
+                value: Some(e), ..
+            }
+            | Stmt::Expr { expr: e, .. } => scan_ruby_expr(e, helpers),
+            _ => {}
+        }
+    }
+}
+
+fn scan_ruby_expr(expr: &Expr, helpers: &mut (bool, bool)) {
+    match expr {
+        Expr::List(items) | Expr::Call { args: items, .. } => {
+            for it in items {
+                scan_ruby_expr(it, helpers);
+            }
+        }
+        Expr::StructInit { fields, .. } => {
+            for (_, v) in fields {
+                scan_ruby_expr(v, helpers);
+            }
+        }
+        Expr::FieldAccess { base, .. } | Expr::Unary { expr: base, .. } => {
+            scan_ruby_expr(base, helpers);
+        }
+        Expr::Index { base, index } => {
+            scan_ruby_expr(base, helpers);
+            scan_ruby_expr(index, helpers);
+        }
+        Expr::Binary { op, left, right } => {
+            match op {
+                BinOp::IntDiv => helpers.0 = true,
+                BinOp::Mod => helpers.1 = true,
+                _ => {}
+            }
+            scan_ruby_expr(left, helpers);
+            scan_ruby_expr(right, helpers);
+        }
+        Expr::Intrinsic(intr) => match intr.as_ref() {
+            Intrinsic::Print(args) => {
+                for a in args {
+                    scan_ruby_expr(a, helpers);
+                }
+            }
+            Intrinsic::Len(e)
+            | Intrinsic::Abs(e)
+            | Intrinsic::Upper(e)
+            | Intrinsic::Lower(e)
+            | Intrinsic::ToStr(e) => scan_ruby_expr(e, helpers),
+            Intrinsic::Min(a, b) | Intrinsic::Max(a, b) => {
+                scan_ruby_expr(a, helpers);
+                scan_ruby_expr(b, helpers);
+            }
+            Intrinsic::Push { list, value } => {
+                scan_ruby_expr(list, helpers);
+                scan_ruby_expr(value, helpers);
+            }
+            Intrinsic::Contains { haystack, needle } => {
+                scan_ruby_expr(haystack, helpers);
+                scan_ruby_expr(needle, helpers);
+            }
+        },
+        _ => {}
     }
 }
 
@@ -413,6 +543,12 @@ fn fmt_expr(expr: &Expr) -> String {
             },
         },
         Expr::Binary { op, left, right } => {
+            if *op == BinOp::IntDiv {
+                return format!("_star_idiv({}, {})", fmt_expr(left), fmt_expr(right));
+            }
+            if *op == BinOp::Mod {
+                return format!("_star_irem({}, {})", fmt_expr(left), fmt_expr(right));
+            }
             let l_str = if needs_parens(left, *op, false) {
                 format!("({})", fmt_expr(left))
             } else {
@@ -1129,6 +1265,13 @@ impl RubyParser {
             }
 
             if self.eat_kw("def") {
+                if matches!(
+                    self.peek_kind(),
+                    Some(RbTokKind::Ident(s)) if s == "_star_idiv" || s == "_star_irem"
+                ) {
+                    self.skip_until_matching_end()?;
+                    continue;
+                }
                 let item = self.parse_fn_or_test(comments, &type_annots)?;
                 module.items.push(item);
                 continue;
@@ -2053,6 +2196,24 @@ impl RubyParser {
                         }
                     }
                     self.expect(&RbTokKind::RParen, "')'")?;
+                    if ident == "_star_idiv" && args.len() == 2 {
+                        let right = Box::new(args.pop().unwrap());
+                        let left = Box::new(args.pop().unwrap());
+                        return Ok(Expr::Binary {
+                            op: BinOp::IntDiv,
+                            left,
+                            right,
+                        });
+                    }
+                    if ident == "_star_irem" && args.len() == 2 {
+                        let right = Box::new(args.pop().unwrap());
+                        let left = Box::new(args.pop().unwrap());
+                        return Ok(Expr::Binary {
+                            op: BinOp::Mod,
+                            left,
+                            right,
+                        });
+                    }
                     return Ok(Expr::Call { func: ident, args });
                 }
 

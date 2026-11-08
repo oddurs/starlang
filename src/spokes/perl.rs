@@ -348,6 +348,21 @@ impl<'a> PerlFormatter<'a> {
         )
     }
 
+    fn target_type(&self, target: &AssignTarget) -> Option<Type> {
+        let target_expr = match target {
+            AssignTarget::Var(v) => Expr::Var(v.clone()),
+            AssignTarget::Field { base, field } => Expr::FieldAccess {
+                base: Box::new(Expr::Var(base.clone())),
+                field: field.clone(),
+            },
+            AssignTarget::Index { base, index } => Expr::Index {
+                base: Box::new(Expr::Var(base.clone())),
+                index: Box::new(index.clone()),
+            },
+        };
+        self.expr_type(&target_expr)
+    }
+
     fn is_str_expr(&self, expr: &Expr) -> bool {
         if self.expr_type(expr) == Some(Type::Str) {
             return true;
@@ -434,10 +449,14 @@ impl<'a> PerlFormatter<'a> {
                         out.push_str(&format!("{}{} = {};\n", pad, tgt_str, self.fmt_expr(value)));
                     }
                     AssignOp::AddAssign => {
+                        let is_str =
+                            self.target_type(target) == Some(Type::Str) || self.is_str_expr(value);
+                        let op_str = if is_str { ".=" } else { "+=" };
                         out.push_str(&format!(
-                            "{}{} += {};\n",
+                            "{}{} {} {};\n",
                             pad,
                             tgt_str,
+                            op_str,
                             self.fmt_expr(value)
                         ));
                     }

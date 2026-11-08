@@ -267,6 +267,21 @@ impl CFmtCtx {
         )
     }
 
+    fn target_ty(&self, target: &AssignTarget) -> Option<Type> {
+        let target_expr = match target {
+            AssignTarget::Var(v) => Expr::Var(v.clone()),
+            AssignTarget::Field { base, field } => Expr::FieldAccess {
+                base: Box::new(Expr::Var(base.clone())),
+                field: field.clone(),
+            },
+            AssignTarget::Index { base, index } => Expr::Index {
+                base: Box::new(Expr::Var(base.clone())),
+                index: Box::new(index.clone()),
+            },
+        };
+        self.expr_ty(&target_expr)
+    }
+
     fn type_slug(ty: &Type) -> String {
         match ty {
             Type::Int => "int64_t".to_string(),
@@ -494,11 +509,21 @@ impl CFmtCtx {
                         self.local_env.insert(name.clone(), t);
                     }
                 }
-                Stmt::Assign { target, value, .. } => {
+                Stmt::Assign {
+                    target, op, value, ..
+                } => {
                     if let AssignTarget::Index { index, .. } = target {
                         self.scan_expr(index, usage, list_elems, defined_fns, current_fn);
                     }
                     self.scan_expr(value, usage, list_elems, defined_fns, current_fn);
+                    if *op == AssignOp::AddAssign
+                        && (self.target_ty(target) == Some(Type::Str)
+                            || self.expr_ty(value) == Some(Type::Str))
+                    {
+                        usage.need_str_concat = true;
+                        usage.headers.insert("stdlib.h");
+                        usage.headers.insert("string.h");
+                    }
                 }
                 Stmt::If {
                     cond,
@@ -902,13 +927,26 @@ impl CFmtCtx {
                         format!("{}.data[{}]", base, self.fmt_expr(index))
                     }
                 };
-                out.push_str(&format!(
-                    "{}{} {} {};\n",
-                    pad,
-                    tgt,
-                    op_str,
-                    self.fmt_expr(value)
-                ));
+                if *op == AssignOp::AddAssign
+                    && (self.target_ty(target) == Some(Type::Str)
+                        || self.expr_ty(value) == Some(Type::Str))
+                {
+                    out.push_str(&format!(
+                        "{}{} = star_str_concat({}, {});\n",
+                        pad,
+                        tgt,
+                        tgt,
+                        self.fmt_expr(value)
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{}{} {} {};\n",
+                        pad,
+                        tgt,
+                        op_str,
+                        self.fmt_expr(value)
+                    ));
+                }
             }
             Stmt::If {
                 cond,
@@ -2341,8 +2379,22 @@ impl CParser {
         };
 
         if let Some(op) = assign_op {
+            let starts_with_str_concat =
+                matches!(self.peek_kind(), Some(CTokKind::Ident(s)) if s == "star_str_concat");
             let rhs = self.parse_expr()?;
             self.expect(&CTokKind::Semi, "';' after assignment")?;
+            let (final_op, final_rhs) = if op == AssignOp::Set && starts_with_str_concat {
+                match rhs {
+                    Expr::Binary {
+                        op: BinOp::Add,
+                        left,
+                        right,
+                    } if *left == lhs => (AssignOp::AddAssign, *right),
+                    other => (op, other),
+                }
+            } else {
+                (op, rhs)
+            };
             let target = match lhs {
                 Expr::Var(v) => AssignTarget::Var(v),
                 Expr::FieldAccess { base, field } => match *base {
@@ -2361,8 +2413,8 @@ impl CParser {
             return Ok(Some(Stmt::Assign {
                 id: 0,
                 target,
-                op,
-                value: rhs,
+                op: final_op,
+                value: final_rhs,
                 meta: Metadata::new(),
             }));
         }

@@ -3047,13 +3047,20 @@ fn reference_based_starlang_differential_validation_and_14_engine_torture_suite(
   (let batch (list (neg 5) 0 10 (neg 20) 7 (neg 99) 50))
   (let-mut pkt (call score_batch batch RouteMode::Direct "Alpha"))
   (add! (field pkt weight) 2)
+  (add! (field pkt tag) "-OK")
+  (let-mut notes (list "n0" "n1"))
+  (add! (index notes 0) "!")
+  (let-mut summary (index notes 0))
+  (add! summary "-done")
+  (let neg_q (// (neg 7) 2))
+  (let neg_r (% (neg 7) 2))
   (let has_ten (contains batch 10))
   (let has_al (contains (get-field pkt tag) "AL"))
   (let-mut flag_score 0)
   (if (and (and has_ten has_al) (not (contains batch 999)))
     (then
       (set! flag_score 11)))
-  (print (get-field pkt id) (get-field pkt weight) (get-field pkt tag) flag_score (to-str (- 100 (- 30 10))) has_ten (to-str (not has_ten))))
+  (print (get-field pkt id) (get-field pkt weight) (get-field pkt tag) summary neg_q neg_r flag_score (to-str (- 100 (- 30 10))) has_ten (to-str (not has_ten))))
 
 (test reference_oracle_invariants
   (let batch (list (neg 5) 0 10 (neg 20) 7))
@@ -3061,6 +3068,8 @@ fn reference_based_starlang_differential_validation_and_14_engine_torture_suite(
   (assert-eq (get-field pkt id) 4)
   (assert-eq (get-field pkt weight) 228)
   (assert-eq (get-field pkt tag) "BETA")
+  (assert-eq (// (neg 7) 2) (neg 3))
+  (assert-eq (% (neg 7) 2) (neg 1))
   (assert (contains batch (neg 5)))
   (assert (not (contains batch 999))))
 "#;
@@ -3080,7 +3089,7 @@ fn reference_based_starlang_differential_validation_and_14_engine_torture_suite(
     // Ground-truth Hub VM reference oracle
     let ref_snap = engine.snapshot();
     assert!(ref_snap.live_eval.ok, "{:?}", ref_snap.live_eval.error);
-    let expected_stdout = "4 420 ALPHA 11 80 true false";
+    let expected_stdout = "4 420 ALPHA-OK n0!-done -3 -1 11 80 true false";
     assert_eq!(ref_snap.live_eval.stdout.trim(), expected_stdout);
     assert_eq!(ref_snap.test_results.len(), 1);
     assert!(

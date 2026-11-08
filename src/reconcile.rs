@@ -509,7 +509,7 @@ fn reconcile_stmts(
                         && target == ptarget
                         && matches!(
                             edited_spoke,
-                            SpokeId::Zig | SpokeId::Java | SpokeId::Lua
+                            SpokeId::Zig | SpokeId::C | SpokeId::Java | SpokeId::Lua
                         )
                     {
                         if let Expr::Binary {
